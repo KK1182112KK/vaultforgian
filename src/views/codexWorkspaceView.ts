@@ -135,6 +135,16 @@ function formatCompactTimestamp(value: number | null, locale: SupportedLocale, c
   });
 }
 
+function bindKeyboardActivation(element: HTMLElement, action: () => void): void {
+  element.tabIndex = 0;
+  element.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      action();
+    }
+  });
+}
+
 export class CodexWorkspaceView extends ItemView {
   private unsubscribe: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -539,6 +549,11 @@ export class CodexWorkspaceView extends ItemView {
 
     const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? state.tabs[0] ?? null;
     this.activeTabId = activeTab?.id ?? null;
+    if (activeTab?.studyWorkflow) {
+      this.inputAreaEl.dataset.workflow = activeTab.studyWorkflow;
+    } else {
+      delete this.inputAreaEl.dataset.workflow;
+    }
 
     this.renderTabs(state);
     this.renderIngestHubPanel(activeTab);
@@ -600,7 +615,9 @@ export class CodexWorkspaceView extends ItemView {
         cls += " obsidian-codex__tab-badge-attention";
       }
 
-      const badge = badges.createDiv({ cls, text: String(index + 1) });
+      const badge = badges.createEl("button", { cls, text: String(index + 1) });
+      badge.type = "button";
+      badge.ariaLabel = tab.title || `${copy.workspace.title} ${index + 1}`;
       badge.title = tab.title || `${copy.workspace.header.newTab} ${index + 1}`;
       badge.addEventListener("click", () => {
         this.closeStatusMenu();
@@ -632,6 +649,8 @@ export class CodexWorkspaceView extends ItemView {
     if (!targetPath) {
       this.contextRowEl.classList.remove("has-content");
       this.referenceDocEl.onclick = null;
+      this.referenceDocEl.onkeydown = null;
+      this.referenceDocEl.tabIndex = -1;
       return;
     }
 
@@ -640,6 +659,13 @@ export class CodexWorkspaceView extends ItemView {
     this.referenceDocEl.title = targetPath;
     this.referenceDocEl.onclick = () => {
       void this.openTargetNote();
+    };
+    this.referenceDocEl.tabIndex = 0;
+    this.referenceDocEl.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        void this.openTargetNote();
+      }
     };
 
     const iconEl = this.referenceDocEl.createDiv({ cls: "obsidian-codex__reference-doc-icon" });
@@ -692,6 +718,7 @@ export class CodexWorkspaceView extends ItemView {
     const activeWorkflow = this.service.getActiveStudyWorkflow();
     const studyHubState = this.service.getStudyHubState();
     const isCollapsed = studyHubState.isCollapsed;
+    this.ingestHubPanelEl.dataset.workflow = activeWorkflow ?? "";
     this.ingestHubPanelEl.classList.toggle("is-collapsed", isCollapsed);
 
     const headerEl = this.ingestHubPanelEl.createDiv({ cls: "obsidian-codex__ingest-hub-header" });
@@ -747,6 +774,7 @@ export class CodexWorkspaceView extends ItemView {
       const cardEl = cardsEl.createDiv({
         cls: `obsidian-codex__ingest-hub-card${workflow.kind === activeWorkflow ? " is-active" : ""}`,
       });
+      cardEl.dataset.workflow = workflow.kind;
       const cardHeadEl = cardEl.createDiv({ cls: "obsidian-codex__ingest-hub-card-head" });
       cardHeadEl.createSpan({ cls: "obsidian-codex__ingest-hub-card-title", text: workflow.label });
       if (workflow.attachRecommended) {
@@ -885,6 +913,9 @@ export class CodexWorkspaceView extends ItemView {
       cls: `obsidian-codex__smart-set-card${isActive ? " is-active" : ""}`,
     });
     cardEl.addEventListener("click", () => {
+      this.service.activateSmartSet(smartSet.id);
+    });
+    bindKeyboardActivation(cardEl, () => {
       this.service.activateSmartSet(smartSet.id);
     });
 
@@ -1326,6 +1357,7 @@ export class CodexWorkspaceView extends ItemView {
     this.workflowBriefEl.empty();
     if (!activeTab?.studyWorkflow) {
       this.workflowBriefEl.classList.remove("is-visible");
+      delete this.workflowBriefEl.dataset.workflow;
       return;
     }
 
@@ -1344,6 +1376,7 @@ export class CodexWorkspaceView extends ItemView {
     }, locale);
 
     this.workflowBriefEl.classList.add("is-visible");
+    this.workflowBriefEl.dataset.workflow = activeTab.studyWorkflow;
     const headerEl = this.workflowBriefEl.createDiv({ cls: "obsidian-codex__workflow-brief-header" });
     headerEl.createSpan({
       cls: "obsidian-codex__workflow-brief-badge",
@@ -1760,7 +1793,8 @@ export class CodexWorkspaceView extends ItemView {
       ? [getStudyWorkflowQuickAction(activeTab.studyWorkflow, locale)]
       : copy.workspace.welcomeSuggestions;
     for (const suggestion of suggestions) {
-      const chip = quickActions.createDiv({ cls: "obsidian-codex__suggestion-chip", text: suggestion });
+      const chip = quickActions.createEl("button", { cls: "obsidian-codex__suggestion-chip", text: suggestion });
+      chip.type = "button";
       chip.addEventListener("click", () => {
         this.inputEl.value = suggestion;
         const tabId = this.activeTabId ?? this.service.getActiveTab()?.id;
@@ -2017,6 +2051,7 @@ export class CodexWorkspaceView extends ItemView {
 
     for (const option of options) {
       const item = menu.createDiv({ cls: "obsidian-codex__status-menu-item" });
+      item.tabIndex = 0;
       const leading = item.createSpan({ cls: "obsidian-codex__status-menu-leading", text: option.iconText ?? "" });
       if (!option.iconText) {
         leading.addClass("is-empty");
@@ -2030,6 +2065,13 @@ export class CodexWorkspaceView extends ItemView {
         event.stopPropagation();
         option.onSelect();
         this.closeStatusMenu();
+      });
+      item.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          option.onSelect();
+          this.closeStatusMenu();
+        }
       });
     }
 

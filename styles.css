@@ -1,12 +1,30 @@
 .obsidian-codex {
-  --obsidian-codex-brand: #10a37f;
-  --obsidian-codex-brand-rgb: 16, 163, 127;
+  --obsidian-codex-brand: #e5484d;
+  --obsidian-codex-brand-rgb: 229, 72, 77;
+  --obsidian-codex-highlight: #ffd166;
+  --obsidian-codex-highlight-rgb: 255, 209, 102;
+  --obsidian-codex-edge-rgb: 255, 255, 255;
+  --obsidian-codex-panel-bg: color-mix(in srgb, var(--background-primary) 88%, #090c13 12%);
+  --obsidian-codex-panel-bg-strong: color-mix(in srgb, var(--background-primary) 82%, #070910 18%);
+  --obsidian-codex-panel-bg-soft: color-mix(in srgb, var(--background-secondary) 88%, #0d1119 12%);
+  --obsidian-codex-panel-border: color-mix(in srgb, var(--background-modifier-border) 58%, rgba(var(--obsidian-codex-brand-rgb), 0.54) 42%);
+  --obsidian-codex-panel-border-subtle: color-mix(
+    in srgb,
+    var(--background-modifier-border) 76%,
+    rgba(var(--obsidian-codex-brand-rgb), 0.24) 24%
+  );
+  --obsidian-codex-panel-shadow: 0 16px 34px rgba(7, 10, 18, 0.26);
+  --obsidian-codex-cut-size: 16px;
+  --obsidian-codex-radius-sm: 6px;
+  --obsidian-codex-radius-md: 8px;
+  --obsidian-codex-radius-lg: 12px;
   height: 100%;
   padding: 0;
   overflow: hidden;
   background:
-    radial-gradient(circle at top right, rgba(var(--obsidian-codex-brand-rgb), 0.08), transparent 28%),
-    linear-gradient(180deg, rgba(var(--obsidian-codex-brand-rgb), 0.02), transparent 220px),
+    radial-gradient(circle at 88% 2%, rgba(var(--obsidian-codex-brand-rgb), 0.18), transparent 24%),
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 22%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.14), transparent 220px),
     var(--background-primary);
 }
 
@@ -17,102 +35,266 @@
   overflow: hidden;
 }
 
+.obsidian-codex__input-area,
+.obsidian-codex__ingest-hub-panel,
+.obsidian-codex__smart-set-panel,
+.obsidian-codex__changes-tray,
+.obsidian-codex__conversation-summary,
+.obsidian-codex__activity-card,
+.obsidian-codex__approval-card,
+.obsidian-codex__workflow-brief,
+.obsidian-codex__selection-preview,
+.obsidian-codex__campaign-card,
+.obsidian-codex__recipe-card,
+.obsidian-codex__status-menu {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.obsidian-codex__input-area::before,
+.obsidian-codex__ingest-hub-panel::before,
+.obsidian-codex__smart-set-panel::before,
+.obsidian-codex__changes-tray::before,
+.obsidian-codex__conversation-summary::before,
+.obsidian-codex__activity-card::before,
+.obsidian-codex__approval-card::before,
+.obsidian-codex__workflow-brief::before,
+.obsidian-codex__selection-preview::before,
+.obsidian-codex__campaign-card::before,
+.obsidian-codex__recipe-card::before,
+.obsidian-codex__status-menu::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--obsidian-codex-edge-rgb), 0),
+    rgba(var(--obsidian-codex-edge-rgb), 0.32),
+    rgba(var(--obsidian-codex-brand-rgb), 0.58),
+    rgba(var(--obsidian-codex-edge-rgb), 0)
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.obsidian-codex__input-area::after,
+.obsidian-codex__ingest-hub-panel::after,
+.obsidian-codex__smart-set-panel::after,
+.obsidian-codex__changes-tray::after,
+.obsidian-codex__conversation-summary::after,
+.obsidian-codex__activity-card::after,
+.obsidian-codex__approval-card::after,
+.obsidian-codex__workflow-brief::after,
+.obsidian-codex__selection-preview::after,
+.obsidian-codex__campaign-card::after,
+.obsidian-codex__recipe-card::after,
+.obsidian-codex__status-menu::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 72px;
+  height: 72px;
+  background: linear-gradient(
+    135deg,
+    transparent 0 42%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.34) 43%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.12) 58%,
+    transparent 59%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.obsidian-codex__input-area > *,
+.obsidian-codex__ingest-hub-panel > *,
+.obsidian-codex__smart-set-panel > *,
+.obsidian-codex__changes-tray > *,
+.obsidian-codex__conversation-summary > *,
+.obsidian-codex__activity-card > *,
+.obsidian-codex__approval-card > *,
+.obsidian-codex__workflow-brief > *,
+.obsidian-codex__selection-preview > *,
+.obsidian-codex__campaign-card > *,
+.obsidian-codex__recipe-card > *,
+.obsidian-codex__status-menu > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-workflow="lecture"] {
+  --obsidian-codex-accent-rgb: 255, 94, 98;
+}
+
+[data-workflow="review"] {
+  --obsidian-codex-accent-rgb: 94, 202, 255;
+}
+
+[data-workflow="paper"] {
+  --obsidian-codex-accent-rgb: 255, 205, 92;
+}
+
+[data-workflow="homework"] {
+  --obsidian-codex-accent-rgb: 112, 237, 161;
+}
+
+.obsidian-codex button:focus-visible,
+.obsidian-codex [tabindex="0"]:focus-visible,
+.obsidian-codex textarea:focus-visible,
+.obsidian-codex input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px rgba(var(--obsidian-codex-highlight-rgb), 0.88),
+    0 0 0 5px rgba(var(--obsidian-codex-brand-rgb), 0.24);
+}
+
 .obsidian-codex__header {
   display: flex;
   align-items: center;
-  padding: 0 12px 12px 12px;
+  gap: 12px;
+  padding: 10px 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 18%);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.04), transparent 72%),
+    linear-gradient(90deg, rgba(var(--obsidian-codex-brand-rgb), 0.1), transparent 24%);
 }
 
 .obsidian-codex__title-slot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex: 1;
   min-width: 0;
 }
 
 .obsidian-codex__title-text {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   flex-shrink: 0;
+  color: color-mix(in srgb, var(--text-normal) 90%, rgba(var(--obsidian-codex-highlight-rgb), 0.44) 10%);
 }
 
 .obsidian-codex__tab-bar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 .obsidian-codex__tab-badges {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .obsidian-codex__tab-badge {
+  appearance: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  border: 2px solid var(--background-modifier-border);
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   cursor: pointer;
   color: var(--text-muted);
-  background: var(--background-primary);
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
+  clip-path: polygon(0 22%, 18% 0, 100% 0, 100% 78%, 82% 100%, 0 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 6px 14px rgba(5, 8, 16, 0.12);
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease,
+    background 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .obsidian-codex__tab-badge:hover {
-  background: var(--background-modifier-hover);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 12%);
   color: var(--text-normal);
+  transform: translateY(-1px);
 }
 
 .obsidian-codex__tab-badge-active {
-  border-color: var(--interactive-accent);
-  color: var(--text-normal);
+  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.74);
+  color: #fff8f2;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.12), transparent 40%),
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.18), transparent 48%),
+    linear-gradient(180deg, color-mix(in srgb, var(--obsidian-codex-brand) 82%, white 18%), var(--obsidian-codex-brand));
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.14),
+    0 10px 18px rgba(var(--obsidian-codex-brand-rgb), 0.2);
 }
 
 .obsidian-codex__tab-badge-streaming {
-  border-color: var(--obsidian-codex-brand);
+  border-color: color-mix(in srgb, var(--obsidian-codex-highlight) 62%, rgba(var(--obsidian-codex-brand-rgb), 0.86) 38%);
+  color: var(--text-normal);
 }
 
 .obsidian-codex__tab-badge-attention {
-  border-color: var(--text-error);
+  border-color: color-mix(in srgb, var(--text-error) 78%, rgba(var(--obsidian-codex-highlight-rgb), 0.22) 22%);
+  color: var(--text-error);
 }
 
 .obsidian-codex__header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex-shrink: 0;
   margin-inline-start: auto;
-  padding-top: 4px;
 }
 
 .obsidian-codex__header-btn {
+  appearance: none;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 34px;
+  height: 34px;
   padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  border-radius: var(--obsidian-codex-radius-md);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.15s ease;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 8px 16px rgba(5, 8, 16, 0.08);
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .obsidian-codex__header-btn:hover:not(:disabled) {
   color: var(--text-normal);
+  border-color: var(--obsidian-codex-panel-border);
+  transform: translateY(-1px);
 }
 
 .obsidian-codex__header-btn:disabled {
   opacity: 0.45;
   cursor: default;
+  box-shadow: none;
 }
 
 .obsidian-codex__header-btn svg {
@@ -151,11 +333,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 18px;
-  color: var(--obsidian-codex-brand);
-  background: rgba(var(--obsidian-codex-brand-rgb), 0.1);
+  width: 60px;
+  height: 60px;
+  border: 1px solid var(--obsidian-codex-panel-border);
+  border-radius: var(--obsidian-codex-radius-lg);
+  color: #fff8f2;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.12), transparent 40%),
+    linear-gradient(140deg, rgba(var(--obsidian-codex-highlight-rgb), 0.16), transparent 40%),
+    linear-gradient(180deg, color-mix(in srgb, var(--obsidian-codex-brand) 82%, white 18%), var(--obsidian-codex-brand));
+  clip-path: polygon(0 18%, 18% 0, 100% 0, 100% 82%, 82% 100%, 0 100%);
+  box-shadow: 0 14px 26px rgba(var(--obsidian-codex-brand-rgb), 0.22);
 }
 
 .obsidian-codex__welcome-logo svg {
@@ -180,10 +368,13 @@
   gap: 8px;
   width: min(100%, 74ch);
   margin-inline: auto;
-  padding: 10px 12px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
-  background: color-mix(in srgb, var(--background-secondary) 95%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 5%);
+  padding: 11px 13px;
+  border-radius: var(--obsidian-codex-radius-lg);
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 28%),
+    var(--obsidian-codex-panel-bg-soft);
+  box-shadow: var(--obsidian-codex-panel-shadow);
 }
 
 .obsidian-codex__conversation-summary-meta {
@@ -204,9 +395,10 @@
 .obsidian-codex__conversation-summary-chip {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--background-primary) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 12%);
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, rgba(var(--obsidian-codex-brand-rgb), 0.28) 28%);
+  border-radius: var(--obsidian-codex-radius-sm);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 12%);
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
@@ -228,21 +420,37 @@
 }
 
 .obsidian-codex__suggestion-chip {
+  appearance: none;
   display: inline-flex;
   align-items: center;
-  padding: 7px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 999px;
-  background: var(--background-secondary);
+  justify-content: center;
+  padding: 8px 13px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  border-radius: var(--obsidian-codex-radius-md);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
   color: var(--text-normal);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 8px 16px rgba(5, 8, 16, 0.08);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .obsidian-codex__suggestion-chip:hover {
-  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.3);
-  background: color-mix(in srgb, var(--background-secondary) 86%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 14%);
+  border-color: var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 12%);
+  transform: translateY(-1px);
 }
 
 .obsidian-codex__message {
@@ -280,10 +488,11 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--background-secondary);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background: var(--obsidian-codex-panel-bg-soft);
   color: var(--text-muted);
 }
 
@@ -294,19 +503,32 @@
 
 .obsidian-codex__avatar-assistant {
   color: var(--obsidian-codex-brand);
-  background: rgba(var(--obsidian-codex-brand-rgb), 0.1);
+  border-color: color-mix(in srgb, var(--obsidian-codex-panel-border) 82%, rgba(var(--obsidian-codex-highlight-rgb), 0.18) 18%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 18%);
 }
 
 .obsidian-codex__message-content {
+  position: relative;
   max-width: min(100%, 74ch);
-  padding: 10px 13px;
-  border-radius: 14px;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
+  padding: 11px 14px;
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 44%),
+    var(--obsidian-codex-panel-bg-soft);
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  box-shadow: 0 12px 24px rgba(7, 10, 18, 0.08);
   font-size: 12.25px;
   line-height: 1.55;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.obsidian-codex__message-content::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: rgba(var(--obsidian-codex-brand-rgb), 0.38);
 }
 
 .obsidian-codex__message-body {
@@ -343,13 +565,20 @@
 }
 
 .obsidian-codex__message-content--user {
-  background: color-mix(in srgb, var(--background-secondary) 85%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 15%);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 18%);
+  border-color: color-mix(in srgb, var(--obsidian-codex-panel-border) 78%, rgba(var(--obsidian-codex-highlight-rgb), 0.22) 22%);
+}
+
+.obsidian-codex__message-content--user::before {
+  inset: 0 0 0 auto;
 }
 
 .obsidian-codex__message-content--user.is-selection-context {
   max-width: min(100%, 62ch);
   padding: 8px 10px;
-  background: color-mix(in srgb, var(--background-secondary) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 8%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 8%);
   border-style: dashed;
 }
 
@@ -403,7 +632,9 @@
 .obsidian-codex__message-content--tool,
 .obsidian-codex__message-content--shell,
 .obsidian-codex__message-content--diff {
-  background: color-mix(in srgb, var(--background-secondary) 88%, transparent);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 44%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 90%, transparent);
 }
 
 .obsidian-codex__message-content--reasoning {
@@ -416,8 +647,8 @@
 .obsidian-codex__message-content--system {
   width: 100%;
   color: var(--text-error);
-  background: color-mix(in srgb, var(--background-secondary) 84%, rgba(220, 53, 69, 0.08) 16%);
-  border-color: color-mix(in srgb, var(--background-modifier-border) 76%, rgba(220, 53, 69, 0.3) 24%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(220, 53, 69, 0.12) 18%);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 66%, rgba(220, 53, 69, 0.34) 34%);
 }
 
 .obsidian-codex__message-content--waiting {
@@ -431,17 +662,22 @@
 .obsidian-codex__approval-card {
   width: min(100%, 68ch);
   max-width: 100%;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 12%);
-  background: color-mix(in srgb, var(--background-secondary) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.04) 8%);
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 44%),
+    var(--obsidian-codex-panel-bg-soft);
+  box-shadow: var(--obsidian-codex-panel-shadow);
   font-size: 11.5px;
   line-height: 1.48;
 }
 
 .obsidian-codex__approval-card {
-  border-color: color-mix(in srgb, var(--background-modifier-border) 72%, rgba(236, 179, 0, 0.36) 28%);
-  background: color-mix(in srgb, var(--background-secondary) 90%, rgba(236, 179, 0, 0.08) 10%);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 62%, rgba(236, 179, 0, 0.42) 38%);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.14), transparent 36%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 88%, rgba(236, 179, 0, 0.12) 12%);
 }
 
 .obsidian-codex__activity-head {
@@ -545,10 +781,12 @@
   justify-content: space-between;
   gap: 10px;
   width: min(100%, 68ch);
-  padding: 8px 12px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 76%, rgba(236, 179, 0, 0.24) 24%);
-  background: color-mix(in srgb, var(--background-secondary) 92%, rgba(236, 179, 0, 0.06) 8%);
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 64%, rgba(236, 179, 0, 0.32) 36%);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.12), transparent 38%),
+    var(--obsidian-codex-panel-bg-soft);
 }
 
 .obsidian-codex__approval-batch-label {
@@ -572,9 +810,9 @@
   gap: 5px;
   margin-top: 8px;
   padding: 8px;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 86%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 14%);
-  background: color-mix(in srgb, var(--background-primary) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.05) 8%);
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, rgba(var(--obsidian-codex-brand-rgb), 0.24) 28%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 8%);
 }
 
 .obsidian-codex__approval-impact-item {
@@ -591,24 +829,58 @@
 
 .obsidian-codex__approval-btn {
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--interactive-accent) 38%, var(--background-modifier-border) 62%);
-  background: color-mix(in srgb, var(--background-primary) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 18%);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 18%);
   color: var(--text-normal);
-  border-radius: 999px;
-  padding: 5px 10px;
+  border-radius: 7px;
+  padding: 6px 11px;
   font-size: 10.75px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   line-height: 1.2;
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 8px 16px rgba(5, 8, 16, 0.08);
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.1s ease,
+    box-shadow 0.1s ease,
+    color 0.1s ease;
+}
+
+.obsidian-codex__approval-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(var(--obsidian-codex-brand-rgb), 0.68);
+  z-index: 0;
 }
 
 .obsidian-codex__approval-btn:hover {
-  background: color-mix(in srgb, var(--background-primary) 74%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 26%);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 76%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 24%);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.1),
+    0 12px 20px rgba(5, 8, 16, 0.12);
 }
 
 .obsidian-codex__approval-btn.is-muted {
   color: var(--text-muted);
-  border-color: var(--background-modifier-border);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 86%, rgba(var(--obsidian-codex-edge-rgb), 0.12) 14%);
+}
+
+.obsidian-codex__approval-btn.is-muted::before {
+  background: rgba(var(--obsidian-codex-edge-rgb), 0.18);
 }
 
 .obsidian-codex__message-content.is-pending {
@@ -662,49 +934,52 @@
 .obsidian-codex__input-area {
   position: relative;
   margin: 0 14px 14px;
-  padding: 8px 14px 10px;
-  border-radius: 22px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, rgba(var(--obsidian-codex-brand-rgb), 0.22) 20%);
-  background: color-mix(in srgb, var(--background-primary) 90%, white 10%);
-  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+  padding: 10px 14px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 36%),
+    var(--obsidian-codex-panel-bg-strong);
+  box-shadow: 0 24px 40px rgba(7, 10, 18, 0.18);
 }
 
 body.theme-dark .obsidian-codex__input-area {
-  background: color-mix(in srgb, var(--background-primary) 92%, black 8%);
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.1), transparent 24%),
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 36%),
+    color-mix(in srgb, var(--background-primary) 84%, #02040a 16%);
+  box-shadow: 0 24px 40px rgba(0, 0, 0, 0.34);
 }
 
 .obsidian-codex__input-area.is-plan-mode {
   border-color: rgba(110, 255, 172, 0.78);
   box-shadow:
-    0 0 0 1px rgba(110, 255, 172, 0.36),
-    0 0 18px rgba(64, 255, 154, 0.26),
-    0 0 38px rgba(46, 204, 113, 0.22),
-    0 18px 36px rgba(15, 23, 42, 0.1);
+    0 0 0 1px rgba(110, 255, 172, 0.28),
+    0 16px 34px rgba(64, 255, 154, 0.12),
+    0 24px 42px rgba(15, 23, 42, 0.16);
 }
 
 body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   box-shadow:
-    0 0 0 1px rgba(110, 255, 172, 0.42),
-    0 0 20px rgba(64, 255, 154, 0.28),
-    0 0 42px rgba(46, 204, 113, 0.22),
-    0 18px 36px rgba(0, 0, 0, 0.32);
+    0 0 0 1px rgba(110, 255, 172, 0.34),
+    0 16px 34px rgba(64, 255, 154, 0.14),
+    0 24px 42px rgba(0, 0, 0, 0.36);
 }
 
 .obsidian-codex__input-area:focus-within {
-  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.32);
+  border-color: rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.62);
   box-shadow:
-    0 0 0 4px rgba(var(--obsidian-codex-brand-rgb), 0.08),
-    0 18px 36px rgba(15, 23, 42, 0.1);
+    0 0 0 1px rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.3),
+    0 24px 40px rgba(7, 10, 18, 0.2);
 }
 
 .obsidian-codex__input-area.is-plan-mode:focus-within {
   border-color: rgba(110, 255, 172, 0.88);
   box-shadow:
-    0 0 0 2px rgba(110, 255, 172, 0.22),
-    0 0 24px rgba(64, 255, 154, 0.32),
-    0 0 48px rgba(46, 204, 113, 0.24),
-    0 18px 36px rgba(15, 23, 42, 0.12);
+    0 0 0 1px rgba(110, 255, 172, 0.28),
+    0 18px 36px rgba(64, 255, 154, 0.16),
+    0 24px 42px rgba(15, 23, 42, 0.2);
 }
 
 .obsidian-codex__slash-menu {
@@ -721,15 +996,25 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   display: grid;
   gap: 3px;
   padding: 10px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  background: var(--background-secondary);
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
   cursor: pointer;
+  transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease;
 }
 
 .obsidian-codex__slash-item.is-selected {
-  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.32);
-  background: color-mix(in srgb, var(--background-secondary) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 16%);
+  border-color: color-mix(
+    in srgb,
+    var(--obsidian-codex-panel-border) 78%,
+    rgba(var(--obsidian-codex-highlight-rgb), 0.22) 22%
+  );
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.12), transparent 34%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
+  transform: translateX(2px);
 }
 
 .obsidian-codex__slash-item-head {
@@ -777,10 +1062,17 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   display: none;
   gap: 6px;
   margin-bottom: 8px;
-  padding: 9px 11px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 18%);
-  background: color-mix(in srgb, var(--background-secondary) 94%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 6%);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--background-modifier-border) 62%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.34) 38%
+  );
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.14), transparent 34%),
+    var(--obsidian-codex-panel-bg-soft);
+  box-shadow: 0 14px 26px rgba(7, 10, 18, 0.12);
 }
 
 .obsidian-codex__workflow-brief.is-visible {
@@ -797,13 +1089,19 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__workflow-brief-badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
-  border-radius: 999px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.42);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--text-normal);
-  background: color-mix(in srgb, var(--background-primary) 78%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 22%);
+  background: color-mix(
+    in srgb,
+    var(--obsidian-codex-panel-bg) 78%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.18) 22%
+  );
 }
 
 .obsidian-codex__workflow-brief-summary,
@@ -835,9 +1133,9 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   align-items: center;
   gap: 5px;
   padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.2) 18%);
-  background: color-mix(in srgb, var(--background-secondary) 93%, rgba(var(--obsidian-codex-brand-rgb), 0.07) 7%);
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 74%, rgba(var(--obsidian-codex-brand-rgb), 0.26) 26%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 8%);
 }
 
 .obsidian-codex__instruction-chip-text {
@@ -868,10 +1166,13 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   display: none;
   gap: 8px;
   margin-bottom: 8px;
-  padding: 8px 10px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 18%);
-  background: color-mix(in srgb, var(--background-secondary) 94%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 6%);
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 36%),
+    var(--obsidian-codex-panel-bg-soft);
+  box-shadow: 0 12px 22px rgba(7, 10, 18, 0.08);
 }
 
 .obsidian-codex__selection-preview.is-visible {
@@ -880,17 +1181,20 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__plan-mode-text {
   position: absolute;
-  top: -14px;
-  left: 16px;
+  top: -12px;
+  left: 14px;
   z-index: 2;
-  padding: 0;
+  padding: 4px 8px;
   margin: 0;
-  color: #3bcf80;
+  border-radius: 6px;
+  border: 1px solid rgba(110, 255, 172, 0.46);
+  color: #b6ffd2;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.1em;
-  text-transform: none;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-strong) 84%, rgba(64, 255, 154, 0.16) 16%);
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -935,18 +1239,19 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   height: 18px;
   padding: 0;
   margin-left: auto;
-  border: none;
-  border-radius: 50%;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
 
 .obsidian-codex__selection-preview-remove:hover,
 .obsidian-codex__selection-preview-remove:focus-visible {
   color: var(--text-normal);
-  background: rgba(148, 163, 184, 0.16);
+  border-color: var(--obsidian-codex-panel-border-subtle);
+  background: rgba(148, 163, 184, 0.14);
   outline: none;
 }
 
@@ -983,11 +1288,17 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   gap: 12px;
   margin: 4px 0 14px;
   padding: 12px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, rgba(var(--obsidian-codex-brand-rgb), 0.24) 20%);
+  border-radius: 12px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--background-modifier-border) 58%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.4) 42%
+  );
   background:
-    linear-gradient(180deg, rgba(var(--obsidian-codex-brand-rgb), 0.08), transparent 140px),
-    color-mix(in srgb, var(--background-secondary) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 8%);
+    linear-gradient(135deg, rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.14), transparent 26%),
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
+  box-shadow: var(--obsidian-codex-panel-shadow);
 }
 
 .obsidian-codex__ingest-hub-panel.is-collapsed {
@@ -1031,8 +1342,9 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__ingest-hub-title {
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--text-normal);
 }
 
@@ -1043,24 +1355,31 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__ingest-hub-toggle {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   position: absolute;
   top: 0;
   right: 0;
-  width: 28px;
-  height: 28px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 18%);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--background-primary) 90%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 10%);
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    var(--obsidian-codex-panel-bg);
   color: var(--text-muted);
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 8px 14px rgba(5, 8, 16, 0.08);
 }
 
 .obsidian-codex__ingest-hub-toggle:hover {
   color: var(--text-normal);
-  border-color: color-mix(in srgb, var(--background-modifier-border) 60%, rgba(var(--obsidian-codex-brand-rgb), 0.32) 40%);
+  border-color: var(--obsidian-codex-panel-border);
+  transform: translateY(-1px);
 }
 
 .obsidian-codex__ingest-hub-cards {
@@ -1070,17 +1389,53 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__ingest-hub-card {
+  position: relative;
   display: grid;
   gap: 10px;
-  padding: 11px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
-  background: color-mix(in srgb, var(--background-primary) 90%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 10%);
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--background-modifier-border) 72%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.24) 28%
+  );
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.08), transparent 34%),
+    var(--obsidian-codex-panel-bg);
+  box-shadow: 0 12px 22px rgba(7, 10, 18, 0.08);
+  transition:
+    border-color 0.1s ease,
+    background 0.1s ease,
+    transform 0.1s ease,
+    box-shadow 0.1s ease;
+}
+
+.obsidian-codex__ingest-hub-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.66);
+}
+
+.obsidian-codex__ingest-hub-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(
+    in srgb,
+    var(--background-modifier-border) 54%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.38) 46%
+  );
 }
 
 .obsidian-codex__ingest-hub-card.is-active {
-  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.38);
-  box-shadow: 0 0 0 1px rgba(var(--obsidian-codex-brand-rgb), 0.12);
+  border-color: rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.54);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.14), transparent 30%),
+    var(--obsidian-codex-panel-bg);
+  transform: translateY(-1px) translateX(2px);
+  box-shadow:
+    0 0 0 1px rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.18),
+    0 16px 28px rgba(7, 10, 18, 0.14);
 }
 
 .obsidian-codex__ingest-hub-card-head,
@@ -1093,20 +1448,23 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__ingest-hub-card-title {
-  font-size: 11.5px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-normal);
 }
 
 .obsidian-codex__ingest-hub-card-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 68%, rgba(var(--obsidian-codex-highlight-rgb), 0.26) 32%);
   font-size: 10px;
   font-weight: 700;
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--background-secondary) 85%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 15%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 84%, rgba(var(--obsidian-codex-highlight-rgb), 0.16) 16%);
 }
 
 .obsidian-codex__ingest-hub-card-desc {
@@ -1130,9 +1488,12 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   gap: 10px;
   margin: 4px 0 14px;
   padding: 10px 12px;
-  border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 18%);
-  background: color-mix(in srgb, var(--background-secondary) 94%, rgba(var(--obsidian-codex-brand-rgb), 0.05) 6%);
+  border-radius: 12px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 26%),
+    var(--obsidian-codex-panel-bg-soft);
+  box-shadow: var(--obsidian-codex-panel-shadow);
 }
 
 .obsidian-codex__smart-set-panel.is-visible {
@@ -1190,12 +1551,13 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__vault-surgeon-pill {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, rgba(var(--obsidian-codex-brand-rgb), 0.24) 28%);
   font-size: 10px;
   font-weight: 700;
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--background-primary) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 12%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 12%);
 }
 
 .obsidian-codex__vault-surgeon-scope,
@@ -1217,8 +1579,8 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__smart-set-title {
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 800;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -1230,11 +1592,12 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   min-width: 18px;
   height: 18px;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, rgba(var(--obsidian-codex-brand-rgb), 0.28) 30%);
   font-size: 10px;
   font-weight: 700;
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--background-primary) 86%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 14%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg) 86%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 14%);
 }
 
 .obsidian-codex__smart-set-list {
@@ -1243,24 +1606,45 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__smart-set-card {
+  position: relative;
   display: grid;
   gap: 8px;
-  padding: 10px 11px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 86%, transparent);
-  background: color-mix(in srgb, var(--background-primary) 95%, rgba(var(--obsidian-codex-brand-rgb), 0.03) 5%);
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 36%),
+    var(--obsidian-codex-panel-bg);
   cursor: pointer;
-  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+  box-shadow: 0 12px 22px rgba(7, 10, 18, 0.08);
+  transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.obsidian-codex__smart-set-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(var(--obsidian-codex-brand-rgb), 0.58);
 }
 
 .obsidian-codex__smart-set-card:hover {
-  border-color: color-mix(in srgb, var(--background-modifier-border) 62%, rgba(var(--obsidian-codex-brand-rgb), 0.32) 38%);
-  background: color-mix(in srgb, var(--background-primary) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 8%);
+  border-color: var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.1), transparent 34%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 90%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 10%);
+  transform: translateY(-1px);
 }
 
 .obsidian-codex__smart-set-card.is-active {
-  border-color: color-mix(in srgb, rgba(var(--obsidian-codex-brand-rgb), 0.55) 58%, var(--background-modifier-border) 42%);
-  background: color-mix(in srgb, var(--background-primary) 89%, rgba(var(--obsidian-codex-brand-rgb), 0.09) 11%);
+  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.56);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.14), transparent 30%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 12%);
+  transform: translateX(2px);
+  box-shadow:
+    0 0 0 1px rgba(var(--obsidian-codex-brand-rgb), 0.16),
+    0 16px 28px rgba(7, 10, 18, 0.14);
 }
 
 .obsidian-codex__smart-set-card-head,
@@ -1279,8 +1663,10 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__smart-set-card-title {
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-normal);
 }
 
@@ -1300,9 +1686,10 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__smart-set-card-drift span {
   display: inline-flex;
   align-items: center;
-  padding: 2px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--background-secondary) 86%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 14%);
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 74%, rgba(var(--obsidian-codex-brand-rgb), 0.22) 26%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 86%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 14%);
 }
 
 .obsidian-codex__smart-set-card-actions {
@@ -1322,31 +1709,39 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__campaign-card {
   display: grid;
   gap: 8px;
-  padding: 10px 11px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, rgba(var(--obsidian-codex-brand-rgb), 0.2) 22%);
-  background: color-mix(in srgb, var(--background-secondary) 91%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 9%);
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.1), transparent 32%),
+    var(--obsidian-codex-panel-bg-soft);
 }
 
 .obsidian-codex__recipe-card {
   display: grid;
   gap: 8px;
   width: 100%;
-  padding: 10px 11px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 18%);
-  background: color-mix(in srgb, var(--background-primary) 95%, rgba(var(--obsidian-codex-brand-rgb), 0.04) 6%);
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 32%),
+    var(--obsidian-codex-panel-bg);
   cursor: pointer;
-  transition: border-color 0.14s ease, background 0.14s ease;
+  box-shadow: 0 12px 22px rgba(7, 10, 18, 0.08);
+  transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease;
 }
 
 .obsidian-codex__recipe-card:hover {
-  border-color: color-mix(in srgb, var(--background-modifier-border) 62%, rgba(var(--obsidian-codex-brand-rgb), 0.3) 38%);
+  border-color: var(--obsidian-codex-panel-border);
+  transform: translateY(-1px);
 }
 
 .obsidian-codex__recipe-card.is-active {
-  border-color: color-mix(in srgb, rgba(var(--obsidian-codex-brand-rgb), 0.52) 58%, var(--background-modifier-border) 42%);
-  background: color-mix(in srgb, var(--background-primary) 91%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 9%);
+  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.54);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.14), transparent 30%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.1) 12%);
 }
 
 .obsidian-codex__campaign-head {
@@ -1362,9 +1757,9 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__campaign-title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
   color: var(--text-muted);
   text-transform: uppercase;
 }
@@ -1424,9 +1819,9 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   gap: 8px;
   align-items: start;
   padding: 7px 8px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--background-primary) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.04) 8%);
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 8%);
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 22%);
 }
 
 .obsidian-codex__campaign-item-body {
@@ -1459,10 +1854,13 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   display: none;
   gap: 8px;
   margin-bottom: 8px;
-  padding: 8px 10px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 20%);
-  background: color-mix(in srgb, var(--background-secondary) 95%, rgba(var(--obsidian-codex-brand-rgb), 0.05) 5%);
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 30%),
+    var(--obsidian-codex-panel-bg-soft);
+  box-shadow: 0 14px 24px rgba(7, 10, 18, 0.1);
 }
 
 .obsidian-codex__changes-tray.is-visible {
@@ -1490,20 +1888,33 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   min-width: 18px;
   height: 18px;
   padding: 0 6px;
-  border-radius: 999px;
-  background: rgba(var(--obsidian-codex-brand-rgb), 0.1);
-  color: var(--obsidian-codex-brand);
+  border-radius: 6px;
+  border: 1px solid rgba(var(--obsidian-codex-brand-rgb), 0.26);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 18%);
+  color: var(--text-normal);
   font-size: 10px;
   font-weight: 700;
 }
 
 .obsidian-codex__change-card {
+  position: relative;
   display: grid;
   gap: 5px;
-  padding: 8px 9px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 16%);
-  background: color-mix(in srgb, var(--background-primary) 90%, rgba(var(--obsidian-codex-brand-rgb), 0.04) 10%);
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, rgba(var(--obsidian-codex-brand-rgb), 0.24) 28%);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 34%),
+    var(--obsidian-codex-panel-bg);
+  box-shadow: 0 10px 18px rgba(7, 10, 18, 0.08);
+}
+
+.obsidian-codex__change-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(var(--obsidian-codex-brand-rgb), 0.62);
 }
 
 .obsidian-codex__change-card-head {
@@ -1547,8 +1958,8 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   max-height: 144px;
   overflow: auto;
   padding: 8px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 92%, transparent);
   color: var(--text-muted);
   font-family: var(--font-monospace);
   font-size: 10.5px;
@@ -1566,24 +1977,57 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__change-card-btn {
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--interactive-accent) 38%, var(--background-modifier-border) 62%);
-  background: color-mix(in srgb, var(--background-primary) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 18%);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 18%);
   color: var(--text-normal);
-  border-radius: 999px;
-  padding: 5px 10px;
+  border-radius: 7px;
+  padding: 6px 11px;
   font-size: 10.75px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   line-height: 1.2;
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 8px 16px rgba(5, 8, 16, 0.08);
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.1s ease,
+    box-shadow 0.1s ease,
+    color 0.1s ease;
+}
+
+.obsidian-codex__change-card-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(var(--obsidian-codex-brand-rgb), 0.68);
 }
 
 .obsidian-codex__change-card-btn:hover {
-  background: color-mix(in srgb, var(--background-primary) 74%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 26%);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 76%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 24%);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.1),
+    0 12px 20px rgba(5, 8, 16, 0.12);
 }
 
 .obsidian-codex__change-card-btn.is-muted {
   color: var(--text-muted);
-  border-color: var(--background-modifier-border);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 86%, rgba(var(--obsidian-codex-edge-rgb), 0.12) 14%);
+}
+
+.obsidian-codex__change-card-btn.is-muted::before {
+  background: rgba(var(--obsidian-codex-edge-rgb), 0.18);
 }
 
 .obsidian-codex__attachment-chip {
@@ -1591,10 +2035,12 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   align-items: center;
   gap: 6px;
   max-width: min(100%, 220px);
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 18%);
-  background: color-mix(in srgb, var(--background-secondary) 93%, rgba(var(--obsidian-codex-brand-rgb), 0.05) 7%);
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 76%, rgba(var(--obsidian-codex-brand-rgb), 0.2) 24%);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 90%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 10%);
 }
 
 .obsidian-codex__attachment-chip-icon {
@@ -1624,8 +2070,8 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   height: 16px;
   padding: 0;
   margin-left: auto;
-  border: none;
-  border-radius: 50%;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -1634,7 +2080,8 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__attachment-chip-remove:hover,
 .obsidian-codex__attachment-chip-remove:focus-visible {
   color: var(--text-normal);
-  background: rgba(148, 163, 184, 0.16);
+  border-color: var(--obsidian-codex-panel-border-subtle);
+  background: rgba(148, 163, 184, 0.14);
   outline: none;
 }
 
@@ -1648,11 +2095,20 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   align-items: center;
   gap: 8px;
   max-width: min(100%, 420px);
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 20%);
-  background: color-mix(in srgb, var(--background-secondary) 94%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 6%);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
   cursor: pointer;
+  box-shadow: 0 8px 16px rgba(7, 10, 18, 0.08);
+  transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease;
+}
+
+.obsidian-codex__reference-doc:hover {
+  border-color: var(--obsidian-codex-panel-border);
+  transform: translateY(-1px);
 }
 
 .obsidian-codex__reference-doc-icon {
@@ -1702,18 +2158,19 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   width: 18px;
   height: 18px;
   padding: 0;
-  border: none;
-  border-radius: 50%;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
 
 .obsidian-codex__reference-doc-remove:hover,
 .obsidian-codex__reference-doc-remove:focus-visible {
   color: var(--text-normal);
-  background: rgba(148, 163, 184, 0.16);
+  border-color: var(--obsidian-codex-panel-border-subtle);
+  background: rgba(148, 163, 184, 0.14);
   outline: none;
 }
 
@@ -1736,6 +2193,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__attach-btn {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1744,18 +2202,27 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   width: 42px;
   height: 42px;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 16%);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 10px 18px rgba(5, 8, 16, 0.08);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
 }
 
 .obsidian-codex__attach-btn:hover:not(:disabled),
 .obsidian-codex__attach-btn:focus-visible {
   color: var(--text-normal);
-  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.18);
+  border-color: var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.1) 16%);
+  transform: translateY(-1px);
   outline: none;
 }
 
@@ -1797,6 +2264,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__send-btn {
+  appearance: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1805,11 +2273,15 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   width: 42px;
   height: 42px;
   padding: 0;
-  border: none;
-  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--obsidian-codex-brand) 72%, rgba(var(--obsidian-codex-highlight-rgb), 0.22) 28%);
+  border-radius: 8px;
   color: #fff;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--obsidian-codex-brand) 78%, white 22%), var(--obsidian-codex-brand));
-  box-shadow: 0 12px 22px rgba(var(--obsidian-codex-brand-rgb), 0.24);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.14), transparent 40%),
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.18), transparent 44%),
+    linear-gradient(180deg, color-mix(in srgb, var(--obsidian-codex-brand) 76%, white 24%), var(--obsidian-codex-brand));
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 6px 50%);
+  box-shadow: 0 14px 24px rgba(var(--obsidian-codex-brand-rgb), 0.24);
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.16s ease, filter 0.16s ease;
 }
@@ -1839,8 +2311,8 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
-  padding: 8px 0 0;
-  border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
+  padding: 10px 0 0;
+  border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 74%, rgba(var(--obsidian-codex-brand-rgb), 0.24) 26%);
   background: transparent;
 }
 
@@ -1881,28 +2353,40 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__status-picker {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--background-secondary) 88%, transparent);
+  padding: 6px 9px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  border-radius: 7px;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
   color: var(--text-normal);
   cursor: pointer;
   user-select: none;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.06),
+    0 8px 16px rgba(5, 8, 16, 0.08);
   transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
 }
 
 .obsidian-codex__status-picker:hover:not(:disabled) {
-  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.14);
-  background: color-mix(in srgb, var(--background-secondary) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.08) 16%);
+  border-color: var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.1) 16%);
 }
 
 .obsidian-codex__status-picker.is-open {
-  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.24);
-  background: color-mix(in srgb, var(--background-secondary) 80%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 20%);
-  box-shadow: 0 0 0 3px rgba(var(--obsidian-codex-brand-rgb), 0.08);
+  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.34);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 78%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 22%);
+  box-shadow:
+    0 0 0 1px rgba(var(--obsidian-codex-brand-rgb), 0.18),
+    0 12px 20px rgba(5, 8, 16, 0.1);
 }
 
 .obsidian-codex__status-picker:disabled {
@@ -2083,15 +2567,21 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__yolo-control {
   margin-left: auto;
+  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px 6px 12px;
-  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 16%);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+  padding: 7px 9px 7px 12px;
+  border: 1px solid var(--obsidian-codex-panel-border-subtle);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
+    var(--obsidian-codex-panel-bg-soft);
   cursor: pointer;
   user-select: none;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.06),
+    0 10px 18px rgba(5, 8, 16, 0.08);
   transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
@@ -2101,7 +2591,9 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__yolo-control.is-active {
   border-color: rgba(var(--obsidian-codex-brand-rgb), 0.36);
-  background: color-mix(in srgb, var(--background-secondary) 76%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 24%);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 72%, rgba(var(--obsidian-codex-brand-rgb), 0.22) 28%);
   box-shadow: 0 10px 22px rgba(var(--obsidian-codex-brand-rgb), 0.16);
 }
 
@@ -2120,11 +2612,12 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__yolo-state {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, rgba(var(--obsidian-codex-edge-rgb), 0.16) 28%);
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--background-primary);
+  background: var(--obsidian-codex-panel-bg);
 }
 
 .obsidian-codex__yolo-control.is-active .obsidian-codex__yolo-state {
@@ -2166,10 +2659,12 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   bottom: 100%;
   margin-bottom: 8px;
   width: 220px;
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.22);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 44%),
+    var(--obsidian-codex-panel-bg-soft);
+  border: 1px solid var(--obsidian-codex-panel-border);
+  border-radius: 10px;
+  box-shadow: 0 -10px 24px rgba(0, 0, 0, 0.24);
   overflow: hidden;
   z-index: 30;
 }
@@ -2177,11 +2672,11 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__status-menu-title {
   padding: 10px 12px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--background-modifier-border);
+  letter-spacing: 0.1em;
+  border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 76%, rgba(var(--obsidian-codex-brand-rgb), 0.22) 24%);
 }
 
 .obsidian-codex__status-menu-item {
@@ -2190,11 +2685,12 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   gap: 10px;
   padding: 9px 12px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
 }
 
 .obsidian-codex__status-menu-item:hover {
-  background: var(--background-modifier-hover);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 18%);
+  transform: translateX(2px);
 }
 
 .obsidian-codex__status-menu-leading {
@@ -2223,6 +2719,40 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__status-menu-check svg {
   width: 14px;
   height: 14px;
+}
+
+.obsidian-codex__status-menu-item:focus-visible {
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 18%);
+  transform: translateX(2px);
+}
+
+.obsidian-codex__tab-badge:active,
+.obsidian-codex__header-btn:active,
+.obsidian-codex__suggestion-chip:active,
+.obsidian-codex__change-card-btn:active,
+.obsidian-codex__approval-btn:active,
+.obsidian-codex__attach-btn:active,
+.obsidian-codex__send-btn:active,
+.obsidian-codex__status-picker:active,
+.obsidian-codex__yolo-control:active,
+.obsidian-codex__ingest-hub-toggle:active {
+  transform: translateY(0) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .obsidian-codex *,
+  .obsidian-codex *::before,
+  .obsidian-codex *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .obsidian-codex__waiting-dot,
+  .obsidian-codex__status-bar.is-streaming .obsidian-codex__status-picker-thinking .obsidian-codex__status-picker-value {
+    animation: none !important;
+  }
 }
 
 @media (max-width: 720px) {
