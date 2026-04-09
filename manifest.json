@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-codex-study",
+  "name": "Obsidian Codex Study",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Study-first Codex workspace for Obsidian with ingest workflows, persistent chat tabs, and local Codex CLI threads.",
+  "author": "OpenAI",
+  "isDesktopOnly": true
+}
