@@ -1,9 +1,10 @@
 {
   "id": "obsidian-codex-study",
-  "name": "Obsidian Codex Study",
+  "name": "Codex Noteforge",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
-  "description": "Study-first Codex workspace for Obsidian with ingest workflows, persistent chat tabs, and local Codex CLI threads.",
-  "author": "OpenAI",
+  "description": "Codex CLI inside Obsidian: study workflows, persistent chat tabs, plan mode, and reviewable note patches.",
+  "author": "KK1182112KK",
+  "authorUrl": "https://github.com/KK1182112KK",
   "isDesktopOnly": true
 }

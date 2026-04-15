@@ -4,25 +4,20 @@ import { expandCodexPrompt, resolveCodexPromptCommand, type CodexPromptDefinitio
 import type { SlashCommandDefinition } from "./slashCommandCatalog";
 import { getSlashCommandCatalog, matchSlashCommands } from "./slashCommandCatalog";
 import type { InstalledSkillDefinition } from "./skillCatalog";
-import type { PatchProposal, SmartSet } from "../model/types";
+import type { PatchProposal } from "../model/types";
 
-export type SmartSetLocalActionType = "create" | "run" | "drift" | "campaign";
+export type SlashLocalActionType = "fork" | "resume" | "compact" | "apply_latest_patch";
 
-export interface SmartSetLocalAction {
-  type: SmartSetLocalActionType;
-  query?: string;
-  smartSetId?: string;
+export interface SlashLocalAction {
+  type: SlashLocalActionType;
 }
 
 export interface SlashExpansion {
   command: string | null;
   prompt: string;
   skillPrompt: string;
-  campaignSeed?: {
-    query: string;
-    targetPaths: string[];
-  };
-  localAction?: SmartSetLocalAction;
+  studyRecipeId?: string;
+  localAction?: SlashLocalAction;
 }
 
 export interface SlashContext {
@@ -36,8 +31,6 @@ export interface SlashContext {
   installedSkills?: InstalledSkillDefinition[];
   commands?: readonly SlashCommandDefinition[];
   patchBasket?: readonly PatchProposal[];
-  smartSets?: readonly SmartSet[];
-  activeSmartSetId?: string | null;
 }
 
 function formatFileContext(label: string, file: TFile, content: string): string {
@@ -88,6 +81,71 @@ function splitCommand(input: string): { command: string | null; rest: string } {
   };
 }
 
+function matchesApplyLatestPatchIntent(input: string): boolean {
+  const normalized = input.trim();
+  if (!normalized) {
+    return false;
+  }
+  return [
+    /^(?:そのまま|じゃあ|では)?\s*(?:ノートに)?(?:反映|適用)(?:して|してください|してほしい|して下さい)?$/i,
+    /^apply (?:it|that|the patch)$/i,
+    /^go ahead and apply(?: it| the patch)?$/i,
+    /^apply latest patch$/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function resolveMatchedSlashCommand(command: string, commands: readonly SlashCommandDefinition[]): SlashCommandDefinition | null {
+  return commands.find((entry) => entry.command.toLowerCase() === command.toLowerCase()) ?? matchSlashCommands(command, commands)[0] ?? null;
+}
+
+function extractLeadingSkillAliasBlock(
+  input: string,
+  commands: readonly SlashCommandDefinition[],
+): { command: string; skillNames: string[]; rest: string } | null {
+  const lines = input.replace(/\r\n/g, "\n").split("\n");
+  const skillNames: string[] = [];
+  let firstCommand: string | null = null;
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]?.trim() ?? "";
+    if (!line) {
+      if (skillNames.length > 0) {
+        index += 1;
+        continue;
+      }
+      break;
+    }
+    const { command, rest } = splitCommand(line);
+    if (!command || rest.trim()) {
+      break;
+    }
+    const matched = resolveMatchedSlashCommand(command, commands);
+    if (matched?.mode !== "skill_alias" || !matched.skillName) {
+      break;
+    }
+    firstCommand ??= matched.command;
+    if (!skillNames.includes(matched.skillName)) {
+      skillNames.push(matched.skillName);
+    }
+    index += 1;
+  }
+
+  if (!firstCommand || skillNames.length === 0) {
+    return null;
+  }
+
+  while (index < lines.length && !(lines[index]?.trim() ?? "")) {
+    index += 1;
+  }
+
+  return {
+    command: firstCommand,
+    skillNames,
+    rest: lines.slice(index).join("\n").trim(),
+  };
+}
+
 function resolvePrimaryFile(context: SlashContext): TFile | null {
   return context.targetFile ?? context.currentFile ?? null;
 }
@@ -102,49 +160,6 @@ function formatList(label: string, items: readonly string[]): string {
 function getNoteStem(path: string): string {
   const base = basename(path);
   return base.slice(0, Math.max(0, base.length - extname(base).length));
-}
-
-async function collectSearchResultSet(
-  context: SlashContext,
-  query: string,
-  limit: number,
-): Promise<Array<{ path: string; preview: string; score: number }>> {
-  const normalizedQuery = query.trim().toLowerCase();
-  const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) {
-    throw new Error("Provide a search query.");
-  }
-
-  const results: Array<{ path: string; preview: string; score: number }> = [];
-  for (const file of context.app.vault.getMarkdownFiles()) {
-    const content = await context.app.vault.cachedRead(file);
-    const haystack = `${file.path}\n${content}`.toLowerCase();
-    if (!tokens.every((token) => haystack.includes(token))) {
-      continue;
-    }
-
-    const lines = content.replace(/\r\n/g, "\n").split("\n");
-    const preview =
-      lines.find((line) => tokens.every((token) => line.toLowerCase().includes(token)))?.trim() ||
-      lines.find((line) => tokens.some((token) => line.toLowerCase().includes(token)))?.trim() ||
-      file.path;
-    const fileBoost = file.path.toLowerCase().includes(normalizedQuery) ? 50 : 0;
-    const tokenHits = tokens.reduce((total, token) => total + (haystack.match(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))?.length ?? 0), 0);
-    results.push({
-      path: file.path,
-      preview,
-      score: fileBoost + tokenHits,
-    });
-  }
-
-  results.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
-  if (results.length === 0) {
-    throw new Error(`No notes matched "${query.trim()}".`);
-  }
-  if (results.length > limit) {
-    throw new Error(`Search matched ${results.length} notes. Refine the query to ${limit} or fewer notes.`);
-  }
-  return results;
 }
 
 function collectBacklinks(app: App, targetPath: string): { total: number; sources: string[] } {
@@ -302,34 +317,6 @@ async function buildBuiltInSlashPrompt(command: string, rest: string, context: S
     return { command, prompt, skillPrompt: rest };
   }
 
-  if (command === "/campaign") {
-    const results = await collectSearchResultSet(context, rest, 25);
-    const targetPaths = results.map((entry) => entry.path);
-    const prompt = [
-      `Refactor campaign query: ${rest.trim()}`,
-      `Target notes (${targetPaths.length})`,
-      ...targetPaths.map((path) => `- ${path}`),
-      "",
-      "Search previews",
-      ...results.slice(0, 12).map((entry) => `- ${entry.path}: ${entry.preview}`),
-      "",
-      "Prepare a coordinated refactor campaign for this exact note set.",
-      "Prefer a small number of high-value changes.",
-      "You may propose backlink-safe rename, move, property, and task changes with `obsidian-ops`.",
-      "You may propose note-body updates with `obsidian-patch`.",
-      "Explain the campaign briefly before the fenced blocks.",
-    ].join("\n");
-    return {
-      command,
-      prompt,
-      skillPrompt: rest.trim(),
-      campaignSeed: {
-        query: rest.trim(),
-        targetPaths,
-      },
-    };
-  }
-
   if (command === "/rename-plan" || command === "/move-plan" || command === "/property-plan" || command === "/task-plan") {
     if (!file) {
       throw new Error(`No current or reference note is available for ${command}.`);
@@ -359,41 +346,41 @@ async function buildBuiltInSlashPrompt(command: string, rest: string, context: S
   return null;
 }
 
-function resolveSmartSetByReference(context: SlashContext, reference: string): SmartSet | null {
-  const smartSets = context.smartSets ?? [];
-  const normalizedReference = reference.trim().toLowerCase();
-  if (!normalizedReference) {
-    const activeId = context.activeSmartSetId ?? null;
-    if (!activeId) {
-      return null;
-    }
-    return smartSets.find((entry) => entry.id === activeId) ?? null;
-  }
-
-  return (
-    smartSets.find((entry) => entry.id === normalizedReference) ??
-    smartSets.find((entry) => entry.title.trim().toLowerCase() === normalizedReference) ??
-    smartSets.find((entry) => entry.savedNotePath?.toLowerCase() === normalizedReference) ??
-    smartSets.find((entry) => entry.title.toLowerCase().includes(normalizedReference)) ??
-    smartSets.find((entry) => entry.naturalQuery.toLowerCase().includes(normalizedReference)) ??
-    null
-  );
-}
-
 export { getSlashCommandCatalog, matchSlashCommands };
 export type { SlashCommandDefinition };
 
 export async function expandSlashCommand(input: string, context: SlashContext): Promise<SlashExpansion> {
+  const commands = context.commands ?? getSlashCommandCatalog();
+  const leadingSkillAliases = extractLeadingSkillAliasBlock(input, commands);
+  if (leadingSkillAliases) {
+    const prompt =
+      leadingSkillAliases.rest ||
+      `Use ${leadingSkillAliases.skillNames.map((name) => `$${name}`).join(", ")} for this request.`;
+    return {
+      command: leadingSkillAliases.command,
+      prompt,
+      skillPrompt: [...leadingSkillAliases.skillNames.map((name) => `$${name}`), ...(leadingSkillAliases.rest ? [leadingSkillAliases.rest] : [])].join(
+        "\n",
+      ),
+    };
+  }
+
   const { command, rest } = splitCommand(input);
   if (command === null) {
+    if (matchesApplyLatestPatchIntent(input)) {
+      return {
+        command: null,
+        prompt: "",
+        skillPrompt: "",
+        localAction: {
+          type: "apply_latest_patch",
+        },
+      };
+    }
     return { command: null, prompt: input.trim(), skillPrompt: input.trim() };
   }
 
-  const commands = context.commands ?? getSlashCommandCatalog();
-  const matchedCommand =
-    commands.find((entry) => entry.command.toLowerCase() === command.toLowerCase()) ??
-    matchSlashCommands(command, commands)[0] ??
-    null;
+  const matchedCommand = resolveMatchedSlashCommand(command, commands);
 
   if (command === "/note") {
     if (!context.currentFile) {
@@ -433,34 +420,13 @@ export async function expandSlashCommand(input: string, context: SlashContext): 
     return builtInSlash;
   }
 
-  if (command === "/set") {
-    const query = rest.trim();
-    if (!query) {
-      throw new Error("Provide a query after /set.");
-    }
+  if (command === "/fork" || command === "/resume" || command === "/compact") {
     return {
       command,
       prompt: "",
       skillPrompt: "",
       localAction: {
-        type: "create",
-        query,
-      },
-    };
-  }
-
-  if (command === "/set-run" || command === "/set-drift" || command === "/set-campaign") {
-    const smartSet = resolveSmartSetByReference(context, rest);
-    if (!smartSet) {
-      throw new Error(rest.trim() ? `Smart Set not found: ${rest.trim()}` : "No active Smart Set.");
-    }
-    return {
-      command,
-      prompt: "",
-      skillPrompt: "",
-      localAction: {
-        type: command === "/set-run" ? "run" : command === "/set-drift" ? "drift" : "campaign",
-        smartSetId: smartSet.id,
+        type: command === "/fork" ? "fork" : command === "/resume" ? "resume" : "compact",
       },
     };
   }
@@ -472,6 +438,16 @@ export async function expandSlashCommand(input: string, context: SlashContext): 
       command: matchedCommand.command,
       prompt,
       skillPrompt,
+    };
+  }
+
+  if (matchedCommand?.mode === "study_recipe" && matchedCommand.recipeId && matchedCommand.recipePrompt) {
+    const prompt = [matchedCommand.recipePrompt.trim(), rest.trim()].filter(Boolean).join("\n\n");
+    return {
+      command: matchedCommand.command,
+      prompt,
+      skillPrompt: rest.trim(),
+      studyRecipeId: matchedCommand.recipeId,
     };
   }
 

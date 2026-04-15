@@ -1,6 +1,8 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { homedir } from "node:os";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type ObsidianCodexPlugin from "../main";
 import { DEFAULT_PRIMARY_MODEL, type PluginSettings } from "../model/types";
+import { normalizeCodexRuntime, sanitizeCodexExecutablePath, isUnsafeCodexExecutablePath } from "../util/codexLauncher";
 import { coerceModelForPicker, getFallbackModelCatalog } from "../util/models";
 import { getPermissionModeCatalog } from "../util/permissionMode";
 import { formatReasoningEffortLabel, REASONING_EFFORT_ORDER } from "../util/reasoning";
@@ -18,6 +20,18 @@ export class CodexSettingTab extends PluginSettingTab {
     const copy = this.plugin.getLocalizedCopy();
     containerEl.empty();
     containerEl.createEl("h2", { text: copy.settings.title });
+    const runtimeIssue = this.plugin.getRuntimeIssue();
+    if (runtimeIssue) {
+      const warningEl = containerEl.createDiv({ cls: "obsidian-codex__settings-warning" });
+      warningEl.createEl("strong", {
+        cls: "obsidian-codex__settings-warning-title",
+        text: copy.settings.runtimeWarningTitle,
+      });
+      warningEl.createDiv({
+        cls: "obsidian-codex__settings-warning-body",
+        text: runtimeIssue,
+      });
+    }
 
     new Setting(containerEl)
       .setName(copy.settings.languageName)
@@ -86,15 +100,44 @@ export class CodexSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName(copy.settings.codexCommandName)
-      .setDesc(copy.settings.codexCommandDesc)
-      .addText((component) => {
-        component.setValue(settings.codex.command);
+      .setName(copy.settings.codexRuntimeName)
+      .setDesc(copy.settings.codexRuntimeDesc)
+      .addDropdown((component) => {
+        component.addOption("native", "Native");
+        component.addOption("wsl", "WSL");
+        component.setValue(settings.codex.runtime);
         component.onChange(async (value) => {
+          this.plugin.clearBlockedLegacyLauncherWarning();
           await this.update({
             codex: {
               ...settings.codex,
-              command: value.trim() || "codex",
+              runtime: normalizeCodexRuntime(value),
+            },
+          });
+        });
+      });
+
+    new Setting(containerEl)
+      .setName(copy.settings.codexExecutableName)
+      .setDesc(copy.settings.codexExecutableDesc)
+      .addText((component) => {
+        component.setValue(settings.codex.executablePath);
+        component.onChange(async (value) => {
+          const executablePath = sanitizeCodexExecutablePath(value);
+          if (isUnsafeCodexExecutablePath(executablePath)) {
+            new Notice(
+              locale === "ja"
+                ? "Codex executable path には実行ファイルだけを指定してください。shell launcher は使えません。"
+                : "Codex executable path must point to a single executable. Shell launchers are not allowed.",
+            );
+            component.setValue(settings.codex.executablePath);
+            return;
+          }
+          this.plugin.clearBlockedLegacyLauncherWarning();
+          await this.update({
+            codex: {
+              ...settings.codex,
+              executablePath,
             },
           });
         });
@@ -107,8 +150,11 @@ export class CodexSettingTab extends PluginSettingTab {
         component.setValue(settings.extraSkillRoots.join("\n"));
         component.inputEl.rows = 4;
         component.onChange(async (value) => {
+          const vaultBasePath = ((this.app.vault as { adapter?: { basePath?: string } }).adapter?.basePath?.trim() ?? "");
           await this.update({
-            extraSkillRoots: normalizeConfiguredSkillRoots(value.split(/\r?\n/)),
+            extraSkillRoots: normalizeConfiguredSkillRoots(value.split(/\r?\n/), {
+              allowedRoots: [vaultBasePath, homedir()],
+            }),
           });
         });
       });

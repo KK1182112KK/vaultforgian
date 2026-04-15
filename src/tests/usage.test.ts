@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveAccountUsageFreshness,
   createEmptyAccountUsageSummary,
   createEmptyUsageSummary,
   extractUsageSummaryPatch,
   hasAccountUsageSummaryData,
   mergeAccountUsageSummary,
   mergeUsageSummary,
+  shouldPreferAccountUsageSummary,
 } from "../util/usage";
 
 describe("usage helpers", () => {
@@ -98,8 +100,68 @@ describe("usage helpers", () => {
       },
       source: "live",
       updatedAt: 123,
+      lastObservedAt: 123,
+      lastCheckedAt: null,
       threadId: "thread-123",
     });
     expect(hasAccountUsageSummaryData(merged)).toBe(true);
+  });
+
+  it("derives freshness from source and timestamps", () => {
+    expect(
+      deriveAccountUsageFreshness({
+        ...createEmptyAccountUsageSummary(),
+        limits: {
+          fiveHourPercent: 10,
+          weekPercent: null,
+          planType: "plus",
+        },
+        source: "live",
+        updatedAt: 1_000,
+        lastObservedAt: 1_000,
+        lastCheckedAt: 1_000,
+        threadId: "thread-1",
+      }, 2_000),
+    ).toBe("live");
+
+    expect(
+      deriveAccountUsageFreshness({
+        ...createEmptyAccountUsageSummary(),
+        limits: {
+          fiveHourPercent: 10,
+          weekPercent: null,
+          planType: "plus",
+        },
+        source: "idle_poll",
+        updatedAt: 1_000,
+        lastObservedAt: 1_000,
+        lastCheckedAt: 10_000,
+        threadId: "thread-1",
+      }, 20_000),
+    ).toBe("polled");
+  });
+
+  it("prefers newer or more authoritative account usage snapshots", () => {
+    const restored = {
+      ...createEmptyAccountUsageSummary(),
+      limits: {
+        fiveHourPercent: 55,
+        weekPercent: null,
+        planType: "plus",
+      },
+      source: "restored" as const,
+      updatedAt: 100,
+      lastObservedAt: 100,
+      lastCheckedAt: 100,
+      threadId: "thread-1",
+    };
+    const live = {
+      ...restored,
+      source: "live" as const,
+      updatedAt: 100,
+      lastObservedAt: 100,
+      lastCheckedAt: 100,
+    };
+    expect(shouldPreferAccountUsageSummary(restored, live)).toBe(true);
   });
 });

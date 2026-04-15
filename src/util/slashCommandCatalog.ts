@@ -1,12 +1,16 @@
+import type { StudyWorkflowKind } from "../model/types";
 import type { SupportedLocale } from "./i18n";
 
 export interface SlashCommandDefinition {
   command: string;
   label: string;
   description: string;
-  source?: "builtin" | "custom_prompt" | "skill_alias";
-  mode?: "context" | "proposal" | "prompt" | "skill_alias" | "campaign";
+  source?: "builtin" | "custom_prompt" | "skill_alias" | "study_recipe";
+  mode?: "context" | "proposal" | "prompt" | "skill_alias" | "study_recipe" | "session";
   skillName?: string;
+  recipeId?: string;
+  recipePrompt?: string;
+  studyWorkflow?: StudyWorkflowKind;
 }
 
 const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
@@ -67,39 +71,25 @@ const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
     mode: "context",
   },
   {
-    command: "/campaign",
-    label: "Refactor campaign",
-    description: "Build a coordinated refactor campaign from a search result set.",
+    command: "/fork",
+    label: "Fork conversation",
+    description: "Duplicate the current conversation into a new tab with a fresh thread.",
     source: "builtin",
-    mode: "campaign",
+    mode: "session",
   },
   {
-    command: "/set",
-    label: "Smart Set",
-    description: "Create a Smart Set from a natural-language query.",
+    command: "/resume",
+    label: "Resume thread",
+    description: "Open the current Codex thread in a new tab.",
     source: "builtin",
-    mode: "prompt",
+    mode: "session",
   },
   {
-    command: "/set-run",
-    label: "Run Smart Set",
-    description: "Refresh the active or named Smart Set.",
+    command: "/compact",
+    label: "Compact conversation",
+    description: "Summarize the current tab and stamp its conversation context.",
     source: "builtin",
-    mode: "prompt",
-  },
-  {
-    command: "/set-drift",
-    label: "Smart Set drift",
-    description: "Compare the active or named Smart Set against its last snapshot.",
-    source: "builtin",
-    mode: "prompt",
-  },
-  {
-    command: "/set-campaign",
-    label: "Smart Set campaign",
-    description: "Launch a refactor campaign from the active or named Smart Set snapshot.",
-    source: "builtin",
-    mode: "prompt",
+    mode: "session",
   },
   {
     command: "/rename-plan",
@@ -142,15 +132,13 @@ export function getSlashCommandCatalog(locale: SupportedLocale = "en"): readonly
       { ...SLASH_COMMANDS[5], label: "Diff", description: "現在または参照ノートの最新 Codex diff を添付します。" },
       { ...SLASH_COMMANDS[6], label: "未解決リンク", description: "現在または参照ノートの unresolved link を添付します。" },
       { ...SLASH_COMMANDS[7], label: "検索コンテキスト", description: "質問の前に vault 検索結果を添付します。" },
-      { ...SLASH_COMMANDS[8], label: "Refactor campaign", description: "検索結果セットから協調 refactor campaign を組み立てます。" },
-      { ...SLASH_COMMANDS[9], label: "Smart Set", description: "自然言語クエリから Smart Set を作成します。" },
-      { ...SLASH_COMMANDS[10], label: "Smart Set 実行", description: "アクティブまたは指定した Smart Set を更新します。" },
-      { ...SLASH_COMMANDS[11], label: "Smart Set drift", description: "アクティブまたは指定した Smart Set を前回 snapshot と比較します。" },
-      { ...SLASH_COMMANDS[12], label: "Smart Set campaign", description: "アクティブまたは指定した Smart Set snapshot から refactor campaign を開始します。" },
-      { ...SLASH_COMMANDS[13], label: "Rename plan", description: "backlink-safe な rename proposal を Codex に依頼します。" },
-      { ...SLASH_COMMANDS[14], label: "Move plan", description: "backlink-safe な move proposal を Codex に依頼します。" },
-      { ...SLASH_COMMANDS[15], label: "Property plan", description: "ノート property 更新 proposal を Codex に依頼します。" },
-      { ...SLASH_COMMANDS[16], label: "Task plan", description: "task 更新 proposal を Codex に依頼します。" },
+      { ...SLASH_COMMANDS[8], label: "Conversation を fork", description: "現在の conversation を新しいタブへ複製し、thread は新しく開始します。" },
+      { ...SLASH_COMMANDS[9], label: "Thread を再開", description: "現在の Codex thread を新しいタブで開きます。" },
+      { ...SLASH_COMMANDS[10], label: "Conversation を compact", description: "現在のタブを要約して conversation context を更新します。" },
+      { ...SLASH_COMMANDS[11], label: "Rename plan", description: "backlink-safe な rename proposal を Codex に依頼します。" },
+      { ...SLASH_COMMANDS[12], label: "Move plan", description: "backlink-safe な move proposal を Codex に依頼します。" },
+      { ...SLASH_COMMANDS[13], label: "Property plan", description: "ノート property 更新 proposal を Codex に依頼します。" },
+      { ...SLASH_COMMANDS[14], label: "Task plan", description: "task 更新 proposal を Codex に依頼します。" },
     ] as const;
   }
   return SLASH_COMMANDS;

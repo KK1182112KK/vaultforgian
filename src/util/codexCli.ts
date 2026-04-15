@@ -1,9 +1,13 @@
-import { quoteForBash, splitCommandString, toWslPath, usesWsl } from "./command";
+import type { CodexRuntime } from "../model/types";
+import { isWslPathLike, toWslPath } from "./command";
+import { DEFAULT_CODEX_EXECUTABLE } from "./codexLauncher";
 import type { ReasoningEffort } from "./reasoning";
 
 export type JsonOutputFlag = "--json" | "--experimental-json";
 
 export interface CodexExecOptions {
+  runtime: CodexRuntime;
+  executablePath: string;
   jsonOutputFlag: JsonOutputFlag;
   model: string;
   threadId?: string | null;
@@ -12,6 +16,7 @@ export interface CodexExecOptions {
   approvalPolicy?: "untrusted" | "on-failure" | "never";
   images?: string[];
   reasoningEffort?: ReasoningEffort | null;
+  fastMode?: boolean;
 }
 
 export interface CodexSpawnSpec {
@@ -21,20 +26,41 @@ export interface CodexSpawnSpec {
   launcherParts: string[];
 }
 
-const DEFAULT_CODEX_COMMAND = "codex";
-const BASH_LOGIN_FLAG = "-lc";
+const DEFAULT_WSL_EXECUTABLE = "wsl.exe";
 
-function usesBashLauncher(commandParts: string[]): boolean {
-  return commandParts.includes(BASH_LOGIN_FLAG);
+function usesWslRuntime(runtime: CodexRuntime): boolean {
+  return runtime === "wsl";
 }
 
-function buildCodexExecArgs(options: CodexExecOptions, launcherParts: string[]): string[] {
-  const workingDirectory = usesWsl(launcherParts)
+function resolveSpawnCwd(workingDirectory: string, runtime: CodexRuntime): string | undefined {
+  if (usesWslRuntime(runtime)) {
+    return undefined;
+  }
+  const normalized = workingDirectory.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (process.platform === "win32" && (normalized.startsWith("\\\\") || isWslPathLike(normalized))) {
+    return process.env.USERPROFILE?.trim() || undefined;
+  }
+  return workingDirectory;
+}
+
+function buildResumePermissionArgs(options: CodexExecOptions): string[] {
+  if (options.sandboxMode === "workspace-write" && options.approvalPolicy === "never") {
+    return ["--full-auto"];
+  }
+  return [];
+}
+
+function buildCodexExecArgs(options: CodexExecOptions): string[] {
+  const launcherParts = usesWslRuntime(options.runtime) ? [DEFAULT_WSL_EXECUTABLE] : [options.executablePath];
+  const workingDirectory = usesWslRuntime(options.runtime)
     ? toWslPath(options.workingDirectory, launcherParts)
     : options.workingDirectory;
   const imageArgs = (options.images ?? []).flatMap((imagePath) => [
     "-i",
-    usesWsl(launcherParts) ? toWslPath(imagePath, launcherParts) : imagePath,
+    usesWslRuntime(options.runtime) ? toWslPath(imagePath, launcherParts) : imagePath,
   ]);
   const configArgs = [
     "--config",
@@ -45,6 +71,7 @@ function buildCodexExecArgs(options: CodexExecOptions, launcherParts: string[]):
   if (options.reasoningEffort) {
     configArgs.push("--config", `model_reasoning_effort="${options.reasoningEffort}"`);
   }
+  configArgs.push("--config", `features.fast_mode=${options.fastMode ? "true" : "false"}`);
 
   if (options.threadId) {
     return [
@@ -54,6 +81,7 @@ function buildCodexExecArgs(options: CodexExecOptions, launcherParts: string[]):
       "-m",
       options.model,
       ...imageArgs,
+      ...buildResumePermissionArgs(options),
       "--skip-git-repo-check",
       ...configArgs,
       options.threadId,
@@ -68,7 +96,7 @@ function buildCodexExecArgs(options: CodexExecOptions, launcherParts: string[]):
     options.model,
     ...imageArgs,
     "-s",
-    options.sandboxMode ?? "workspace-write",
+    options.sandboxMode ?? "read-only",
     "-C",
     workingDirectory,
     "--skip-git-repo-check",
@@ -77,28 +105,23 @@ function buildCodexExecArgs(options: CodexExecOptions, launcherParts: string[]):
   ];
 }
 
-export function buildCodexSpawnSpec(commandText: string, options: CodexExecOptions): CodexSpawnSpec {
-  const launcherParts = splitCommandString(commandText.trim() || DEFAULT_CODEX_COMMAND);
-  const normalizedLauncherParts = launcherParts.length > 0 ? launcherParts : [DEFAULT_CODEX_COMMAND];
-  const codexArgs = buildCodexExecArgs(options, normalizedLauncherParts);
+export function buildCodexSpawnSpec(options: CodexExecOptions): CodexSpawnSpec {
+  const executablePath = options.executablePath.trim() || DEFAULT_CODEX_EXECUTABLE;
+  const codexArgs = buildCodexExecArgs(options);
 
-  if (usesWsl(normalizedLauncherParts) && usesBashLauncher(normalizedLauncherParts)) {
-    const bashIndex = normalizedLauncherParts.lastIndexOf(BASH_LOGIN_FLAG);
-    const prefixArgs = normalizedLauncherParts.slice(1, bashIndex + 1);
-    const shellPrefix = normalizedLauncherParts.slice(bashIndex + 1).join(" ").trim() || DEFAULT_CODEX_COMMAND;
-    const shellCommand = [shellPrefix, ...codexArgs.map((arg) => quoteForBash(arg))].join(" ").trim();
+  if (usesWslRuntime(options.runtime)) {
     return {
-      command: normalizedLauncherParts[0] ?? DEFAULT_CODEX_COMMAND,
-      args: [...prefixArgs, shellCommand],
-      launcherParts: normalizedLauncherParts,
+      command: DEFAULT_WSL_EXECUTABLE,
+      args: ["-e", executablePath, ...codexArgs],
+      launcherParts: [DEFAULT_WSL_EXECUTABLE, "-e", executablePath],
     };
   }
 
   return {
-    command: normalizedLauncherParts[0] ?? DEFAULT_CODEX_COMMAND,
-    args: [...normalizedLauncherParts.slice(1), ...codexArgs],
-    cwd: usesWsl(normalizedLauncherParts) ? undefined : options.workingDirectory,
-    launcherParts: normalizedLauncherParts,
+    command: executablePath,
+    args: codexArgs,
+    cwd: resolveSpawnCwd(options.workingDirectory, options.runtime),
+    launcherParts: [executablePath],
   };
 }
 

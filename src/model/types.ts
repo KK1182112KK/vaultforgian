@@ -1,9 +1,11 @@
 import type { ReasoningEffort } from "../util/reasoning";
 import type { PermissionMode } from "../util/permissionMode";
+import type { SourceAcquisitionMode } from "../util/sourceAcquisition";
 
 export const DEFAULT_PRIMARY_MODEL = "gpt-5.4";
 export const DEFAULT_MINI_MODEL = "gpt-5.4-mini";
 export type UiLanguageSetting = "app" | "en" | "ja";
+export type CodexRuntime = "native" | "wsl";
 
 export type AgentStatus = "ready" | "busy" | "waiting_approval" | "error" | "missing_login";
 export type RuntimeMode = "normal" | "skill";
@@ -23,10 +25,13 @@ export interface PluginSettings {
   defaultReasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
   uiLanguage: UiLanguageSetting;
+  onboardingVersionSeen: number | null;
+  autoApplyConsentVersionSeen: number | null;
   extraSkillRoots: string[];
   codex: {
     model: string;
-    command: string;
+    runtime: CodexRuntime;
+    executablePath: string;
   };
   showReasoning: boolean;
   autoRestoreTabs: boolean;
@@ -37,10 +42,13 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   defaultReasoningEffort: "xhigh",
   permissionMode: "suggest",
   uiLanguage: "app",
+  onboardingVersionSeen: null,
+  autoApplyConsentVersionSeen: null,
   extraSkillRoots: [],
   codex: {
     model: DEFAULT_PRIMARY_MODEL,
-    command: "codex",
+    runtime: "native",
+    executablePath: "codex",
   },
   showReasoning: true,
   autoRestoreTabs: true,
@@ -72,6 +80,8 @@ export interface TabLineage {
   forkedFromThreadId: string | null;
   resumedFromThreadId: string | null;
   compactedAt: number | null;
+  pendingThreadReset?: boolean;
+  compactedFromThreadId?: string | null;
 }
 
 export interface SelectionContext {
@@ -130,12 +140,14 @@ export interface UsageSummary {
   };
 }
 
-export type AccountUsageSource = "live" | "session_backfill" | "restored";
+export type AccountUsageSource = "live" | "active_poll" | "idle_poll" | "session_backfill" | "restored";
 
 export interface AccountUsageSummary {
   limits: UsageSummary["limits"];
   source: AccountUsageSource | null;
   updatedAt: number | null;
+  lastObservedAt: number | null;
+  lastCheckedAt: number | null;
   threadId: string | null;
 }
 
@@ -159,13 +171,20 @@ export type ApprovalTransport = "plugin_proposal";
 export type VaultOpKind = "rename" | "move" | "property_set" | "property_remove" | "task_update";
 export type PatchProposalKind = "update" | "create";
 export type PatchProposalStatus = "pending" | "applied" | "rejected" | "stale" | "conflicted";
-export type CampaignItemKind = "vault_op" | "patch";
-export type CampaignItemStatus = "pending" | "applied" | "failed" | "rolled_back";
-export type RefactorCampaignStatus = "draft" | "ready" | "applied" | "rolled_back" | "failed";
-export type SmartSetSnapshotReason = "manual" | "drift" | "campaign";
-export type SurgeryScopeKind = "current_note" | "search_query" | "smart_set";
+export type PatchEvidenceSourceKind = "vault_note" | "attachment" | "web";
 export type StudyWorkflowKind = "lecture" | "review" | "paper" | "homework";
-export type RecentStudySourceKind = "note" | "attachment" | "smart_set" | "selection";
+export type StudyRecipeWorkflowKind = StudyWorkflowKind | "custom";
+export type RecentStudySourceKind = "note" | "attachment" | "selection";
+export type StudyRecipePromotionState = "captured" | "promoted";
+export type ChatSuggestionKind = "panel_completion" | "plan_execute" | "rewrite_followup";
+export type ChatSuggestionStatus = "pending" | "applied" | "dismissed";
+export type ChatSuggestionAction =
+  | "update_panel"
+  | "save_panel_copy"
+  | "update_skill"
+  | "dismiss"
+  | "implement_now"
+  | "rewrite_note";
 
 export interface RecentStudySource {
   id: string;
@@ -178,6 +197,76 @@ export interface RecentStudySource {
 export interface StudyHubState {
   lastOpenedAt: number | null;
   isCollapsed: boolean;
+}
+
+export interface StudyRecipeContextContract {
+  summary: string;
+  requireTargetNote: boolean;
+  recommendAttachments: boolean;
+  requireSelection: boolean;
+  minimumPinnedContextCount: number;
+}
+
+export interface StudyRecipeExampleSession {
+  sourceTabTitle: string;
+  targetNotePath: string | null;
+  prompt: string;
+  outcomePreview: string | null;
+  createdAt: number;
+}
+
+export interface StudyRecipe {
+  id: string;
+  title: string;
+  description: string;
+  commandAlias: string;
+  workflow: StudyRecipeWorkflowKind;
+  promptTemplate: string;
+  linkedSkillNames: string[];
+  contextContract: StudyRecipeContextContract;
+  outputContract: string[];
+  instructionChipHints: string[];
+  sourceHints: string[];
+  exampleSession: StudyRecipeExampleSession;
+  promotionState: StudyRecipePromotionState;
+  promotedSkillName: string | null;
+  useCount: number;
+  lastUsedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PanelSessionOrigin {
+  panelId: string;
+  selectedSkillNames: string[];
+  promptSnapshot: string;
+  awaitingCompletionSignal: boolean;
+  lastAssistantMessageId: string | null;
+  startedAt: number;
+}
+
+export interface ChatSuggestion {
+  id: string;
+  kind: ChatSuggestionKind;
+  status: ChatSuggestionStatus;
+  messageId: string;
+  panelId: string | null;
+  panelTitle: string | null;
+  promptSnapshot: string;
+  matchedSkillName: string | null;
+  canUpdatePanel: boolean;
+  canSaveCopy: boolean;
+  planSummary: string | null;
+  planStatus: "ready_to_implement" | null;
+  rewriteSummary?: string | null;
+  rewriteQuestion?: string | null;
+  createdAt: number;
+}
+
+export interface ComposerHistorySnapshot {
+  entries: string[];
+  index: number | null;
+  draft: string | null;
 }
 
 export interface VaultOpImpact {
@@ -203,10 +292,24 @@ export interface ToolCallRecord {
   resultText?: string;
 }
 
+export interface PatchProposalAnchor {
+  anchorBefore: string;
+  anchorAfter: string;
+  replacement: string;
+}
+
+export interface PatchEvidence {
+  kind: PatchEvidenceSourceKind;
+  label: string;
+  sourceRef: string | null;
+  snippet: string | null;
+}
+
 export interface PatchProposal {
   id: string;
   threadId: string | null;
   sourceMessageId: string;
+  originTurnId: string | null;
   targetPath: string;
   kind: PatchProposalKind;
   baseSnapshot: string | null;
@@ -215,142 +318,14 @@ export interface PatchProposal {
   summary: string;
   status: PatchProposalStatus;
   createdAt: number;
+  anchors?: PatchProposalAnchor[];
+  evidence?: PatchEvidence[];
 }
 
-export interface CampaignHeatmapNode {
-  path: string;
-  score: number;
-  backlinks: number;
-  reasons: string[];
-}
-
-export interface CampaignSnapshotFile {
-  path: string;
-  existed: boolean;
-  text: string | null;
-  mtime: number | null;
-}
-
-export interface CampaignSnapshotCapsule {
+export interface RestartDropNotice {
+  approvalCount: number;
+  patchCount: number;
   createdAt: number;
-  manifestPath: string | null;
-  files: CampaignSnapshotFile[];
-}
-
-export interface CampaignExecutionStep {
-  id: string;
-  itemId: string;
-  action: "apply" | "rollback";
-  status: "completed" | "failed";
-  message: string;
-  createdAt: number;
-}
-
-export interface CampaignItem {
-  id: string;
-  refId: string;
-  kind: CampaignItemKind;
-  title: string;
-  summary: string;
-  targetPath: string;
-  destinationPath: string | null;
-  operationKind: VaultOpKind | PatchProposalKind;
-  enabled: boolean;
-  status: CampaignItemStatus;
-  sourceMessageId: string;
-}
-
-export interface RefactorCampaign {
-  id: string;
-  sourceMessageId: string;
-  title: string;
-  query: string;
-  targetPaths: string[];
-  items: CampaignItem[];
-  heatmap: CampaignHeatmapNode[];
-  snapshotCapsule: CampaignSnapshotCapsule | null;
-  executionLog: CampaignExecutionStep[];
-  status: RefactorCampaignStatus;
-  createdAt: number;
-}
-
-export interface RefactorRecipeExample {
-  kind: CampaignItemKind;
-  operationKind: VaultOpKind | PatchProposalKind;
-  title: string;
-  summary: string;
-  targetPath: string;
-  destinationPath: string | null;
-}
-
-export interface RefactorRecipe {
-  id: string;
-  title: string;
-  description: string;
-  sourceCampaignId: string;
-  sourceCampaignTitle: string;
-  sourceQuery: string;
-  preferredScopeKind: SurgeryScopeKind;
-  operationKinds: Array<VaultOpKind | PatchProposalKind>;
-  examples: RefactorRecipeExample[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface SmartSetQueryProperty {
-  key: string;
-  value: string | null;
-}
-
-export interface SmartSetQuery {
-  includeText: string[];
-  excludeText: string[];
-  pathIncludes: string[];
-  pathExcludes: string[];
-  tags: string[];
-  properties: SmartSetQueryProperty[];
-}
-
-export interface SmartSetResultItem {
-  path: string;
-  title: string;
-  excerpt: string;
-  mtime: number | null;
-  size: number | null;
-  score: number;
-}
-
-export interface SmartSetResult {
-  items: SmartSetResultItem[];
-  count: number;
-  generatedAt: number;
-}
-
-export interface SmartSetSnapshot {
-  result: SmartSetResult;
-  createdAt: number;
-  reason: SmartSetSnapshotReason;
-}
-
-export interface SmartSetDrift {
-  added: SmartSetResultItem[];
-  removed: SmartSetResultItem[];
-  changed: SmartSetResultItem[];
-  comparedAt: number;
-}
-
-export interface SmartSet {
-  id: string;
-  title: string;
-  naturalQuery: string;
-  normalizedQuery: string;
-  savedNotePath: string | null;
-  liveResult: SmartSetResult | null;
-  lastSnapshot: SmartSetSnapshot | null;
-  lastDrift: SmartSetDrift | null;
-  lastRunAt: number | null;
-  createdAt: number;
-  updatedAt: number;
 }
 
 export interface VaultOpProposal {
@@ -370,13 +345,18 @@ export interface PersistedTabState {
   id: string;
   title: string;
   draft: string;
+  composerHistory?: ComposerHistorySnapshot;
   cwd: string;
   studyWorkflow: StudyWorkflowKind | null;
+  activeStudyRecipeId: string | null;
+  activeStudySkillNames: string[];
   instructionChips: InstructionChip[];
   summary: ConversationSummary | null;
   lineage: TabLineage;
   targetNotePath: string | null;
   selectionContext: SelectionContext | null;
+  panelSessionOrigin: PanelSessionOrigin | null;
+  chatSuggestion: ChatSuggestion | null;
   composeMode: ComposeMode;
   contextPaths: string[];
   lastResponseId: string | null;
@@ -384,12 +364,13 @@ export interface PersistedTabState {
   codexThreadId: string | null;
   model: string;
   reasoningEffort: ReasoningEffort;
+  fastMode?: boolean;
   usageSummary: UsageSummary;
   messages: PersistedChatMessage[];
   diffText: string;
   toolLog: ToolCallRecord[];
   patchBasket: PatchProposal[];
-  campaigns: RefactorCampaign[];
+  restartDropNotice?: RestartDropNotice | null;
 }
 
 export interface PersistedWorkspaceState {
@@ -399,10 +380,8 @@ export interface PersistedWorkspaceState {
   activeStudyWorkflow: StudyWorkflowKind | null;
   recentStudySources: RecentStudySource[];
   studyHubState: StudyHubState;
-  smartSets: SmartSet[];
-  activeSmartSetId: string | null;
-  refactorRecipes: RefactorRecipe[];
-  activeRefactorRecipeId: string | null;
+  studyRecipes: StudyRecipe[];
+  activeStudyRecipeId: string | null;
 }
 
 export interface PendingApproval {
@@ -416,6 +395,7 @@ export interface PendingApproval {
   diffText?: string;
   createdAt: number;
   sourceMessageId?: string;
+  originTurnId?: string | null;
   transport?: ApprovalTransport;
   decisionTarget?: string | null;
   scopeEligible?: boolean;
@@ -424,6 +404,7 @@ export interface PendingApproval {
 }
 
 export interface ConversationTabState extends PersistedTabState {
+  composerHistory: ComposerHistorySnapshot;
   messages: ChatMessage[];
   status: AgentStatus;
   runtimeMode: RuntimeMode;
@@ -431,7 +412,6 @@ export interface ConversationTabState extends PersistedTabState {
   pendingApprovals: PendingApproval[];
   toolLog: ToolCallRecord[];
   patchBasket: PatchProposal[];
-  campaigns: RefactorCampaign[];
   sessionApprovals: {
     write: boolean;
     shell: boolean;
@@ -446,10 +426,8 @@ export interface WorkspaceState {
   activeStudyWorkflow: StudyWorkflowKind | null;
   recentStudySources: RecentStudySource[];
   studyHubState: StudyHubState;
-  smartSets: SmartSet[];
-  activeSmartSetId: string | null;
-  refactorRecipes: RefactorRecipe[];
-  activeRefactorRecipeId: string | null;
+  studyRecipes: StudyRecipe[];
+  activeStudyRecipeId: string | null;
   runtimeIssue: string | null;
   authState: "ready" | "missing_login";
   availableModels: ModelCatalogEntry[];
@@ -459,7 +437,14 @@ export interface TurnContextSnapshot {
   activeFilePath: string | null;
   targetNotePath: string | null;
   studyWorkflow: StudyWorkflowKind | null;
+  conversationSummaryText: string | null;
+  sourceAcquisitionMode: SourceAcquisitionMode;
+  sourceAcquisitionContractText: string | null;
   workflowText: string | null;
+  pluginFeatureText: string | null;
+  paperStudyRuntimeOverlayText: string | null;
+  skillGuideText: string | null;
+  paperStudyGuideText: string | null;
   instructionText: string | null;
   mentionContextText: string | null;
   selection: string | null;
@@ -468,4 +453,8 @@ export interface TurnContextSnapshot {
   dailyNotePath: string | null;
   contextPackText: string | null;
   attachmentManifestText: string | null;
+  attachmentContentText: string | null;
+  noteSourcePackText: string | null;
+  attachmentMissingPdfTextNames: string[];
+  attachmentMissingSourceNames: string[];
 }

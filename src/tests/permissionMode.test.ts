@@ -22,21 +22,29 @@ describe("permission mode helpers", () => {
       mode: "suggest",
       sandboxMode: "read-only",
       approvalPolicy: "untrusted",
+      noteApplyPolicy: "manual",
+      planExecutionEnabled: false,
     });
     expect(getPermissionModeProfile("auto-edit")).toMatchObject({
       mode: "auto-edit",
-      sandboxMode: "workspace-write",
+      sandboxMode: "read-only",
       approvalPolicy: "on-failure",
+      noteApplyPolicy: "approval",
+      planExecutionEnabled: false,
     });
     expect(getPermissionModeProfile("full-auto")).toMatchObject({
       mode: "full-auto",
-      sandboxMode: "workspace-write",
+      sandboxMode: "read-only",
       approvalPolicy: "never",
+      noteApplyPolicy: "auto",
+      planExecutionEnabled: true,
     });
   });
 
   it("localizes permission mode descriptions", () => {
-    expect(getPermissionModeCatalog("ja")[0]?.description).toContain("読み取り専用");
-    expect(getPermissionModeCatalog("en")[1]?.label).toBe("Auto Edit");
+    expect(getPermissionModeCatalog("ja")[0]?.description).toContain("自動適用はしません");
+    expect(getPermissionModeCatalog("en")[0]?.label).toBe("Read only");
+    expect(getPermissionModeCatalog("en")[1]?.label).toBe("Edit with approval");
+    expect(getPermissionModeCatalog("en")[2]?.label).toBe("Edit automatically");
   });
 });

@@ -27,6 +27,9 @@ describe("i18n helpers", () => {
   it("returns localized copy tables", () => {
     expect(getLocalizedCopy("en").commands.openWorkspace).toBe("Open Study workspace");
     expect(getLocalizedCopy("ja").commands.openWorkspace).toBe("Study ワークスペースを開く");
-    expect(getLocalizedCopy("ja").workspace.ingestHubSubtitle).toContain("講義資料");
+    expect(getLocalizedCopy("en").workspace.ingestHubTitle).toBe("Panel Studio");
+    expect(getLocalizedCopy("ja").workspace.ingestHubSubtitle).toContain("編集ハブ");
+    expect(getLocalizedCopy("ja").workspace.panelPromptPlaceholder).toContain("講義");
+    expect(getLocalizedCopy("en").service.patchApplied("notes/source.md")).toBe("Successfully patched notes/source.md.");
   });
 });

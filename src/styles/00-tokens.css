@@ -1,0 +1,172 @@
+.obsidian-codex {
+  --obsidian-codex-brand: #7c5cff;
+  --obsidian-codex-brand-rgb: 124, 92, 255;
+  --obsidian-codex-highlight: #b7a5ff;
+  --obsidian-codex-highlight-rgb: 183, 165, 255;
+  --obsidian-codex-edge-rgb: 255, 255, 255;
+  --obsidian-codex-panel-bg: color-mix(in srgb, var(--background-primary) 94%, #120d20 6%);
+  --obsidian-codex-panel-bg-strong: color-mix(in srgb, var(--background-primary) 90%, #0f0a1c 10%);
+  --obsidian-codex-panel-bg-soft: color-mix(in srgb, var(--background-secondary) 93%, #151025 7%);
+  --obsidian-codex-panel-border: color-mix(in srgb, var(--background-modifier-border) 74%, rgba(var(--obsidian-codex-brand-rgb), 0.26) 26%);
+  --obsidian-codex-panel-border-subtle: color-mix(
+    in srgb,
+    var(--background-modifier-border) 86%,
+    rgba(var(--obsidian-codex-brand-rgb), 0.14) 14%
+  );
+  --obsidian-codex-reading-bg: color-mix(in srgb, var(--background-primary) 96%, #120d1f 4%);
+  --obsidian-codex-reading-bg-soft: color-mix(in srgb, var(--background-secondary) 95%, #130f21 5%);
+  --obsidian-codex-reading-border: color-mix(in srgb, var(--background-modifier-border) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.12) 12%);
+  --obsidian-codex-text-soft: color-mix(in srgb, var(--text-normal) 70%, var(--text-muted) 30%);
+  --obsidian-codex-text-faint: color-mix(in srgb, var(--text-normal) 56%, var(--text-muted) 44%);
+  --obsidian-codex-font-body: var(--font-interface);
+  --obsidian-codex-font-display: "Aptos", "Segoe UI Variable Display", "Inter", "Helvetica Neue", var(--font-interface), sans-serif;
+  --obsidian-codex-panel-shadow: 0 12px 24px rgba(20, 14, 44, 0.18);
+  --obsidian-codex-cut-size: 16px;
+  --obsidian-codex-radius-sm: 6px;
+  --obsidian-codex-radius-md: 8px;
+  --obsidian-codex-radius-lg: 12px;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  font-family: var(--obsidian-codex-font-body);
+  background:
+    radial-gradient(circle at 88% 2%, rgba(var(--obsidian-codex-brand-rgb), 0.1), transparent 24%),
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.04), transparent 22%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.1), transparent 220px),
+    var(--background-primary);
+}
+
+body.theme-light .obsidian-codex {
+  --obsidian-codex-panel-bg: color-mix(in srgb, var(--background-primary) 97%, #f1edff 3%);
+  --obsidian-codex-panel-bg-strong: color-mix(in srgb, var(--background-primary) 95%, #ece7ff 5%);
+  --obsidian-codex-panel-bg-soft: color-mix(in srgb, var(--background-secondary) 97%, #efeaff 3%);
+  --obsidian-codex-reading-bg: color-mix(in srgb, var(--background-primary) 98%, #f0ebff 2%);
+  --obsidian-codex-reading-bg-soft: color-mix(in srgb, var(--background-secondary) 98%, #efeaff 2%);
+  --obsidian-codex-panel-shadow: 0 10px 18px rgba(43, 31, 84, 0.1);
+}
+
+.obsidian-codex__container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.obsidian-codex__input-area,
+.obsidian-codex__ingest-hub-panel,
+.obsidian-codex__changes-tray,
+.obsidian-codex__conversation-summary,
+.obsidian-codex__activity-card,
+.obsidian-codex__approval-card,
+.obsidian-codex__workflow-brief,
+.obsidian-codex__selection-preview,
+.obsidian-codex__recipe-card,
+.obsidian-codex__status-menu {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.obsidian-codex__input-area::before,
+.obsidian-codex__ingest-hub-panel::before,
+.obsidian-codex__changes-tray::before,
+.obsidian-codex__conversation-summary::before,
+.obsidian-codex__activity-card::before,
+.obsidian-codex__approval-card::before,
+.obsidian-codex__workflow-brief::before,
+.obsidian-codex__selection-preview::before,
+.obsidian-codex__recipe-card::before,
+.obsidian-codex__status-menu::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--obsidian-codex-edge-rgb), 0),
+    rgba(var(--obsidian-codex-edge-rgb), 0.18),
+    rgba(var(--obsidian-codex-brand-rgb), 0.24),
+    rgba(var(--obsidian-codex-edge-rgb), 0)
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.obsidian-codex__input-area::after,
+.obsidian-codex__ingest-hub-panel::after,
+.obsidian-codex__changes-tray::after,
+.obsidian-codex__conversation-summary::after,
+.obsidian-codex__activity-card::after,
+.obsidian-codex__approval-card::after,
+.obsidian-codex__workflow-brief::after,
+.obsidian-codex__selection-preview::after,
+.obsidian-codex__recipe-card::after,
+.obsidian-codex__status-menu::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(
+    135deg,
+    transparent 0 42%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.16) 43%,
+    rgba(var(--obsidian-codex-accent-rgb, var(--obsidian-codex-brand-rgb)), 0.05) 58%,
+    transparent 59%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.obsidian-codex__input-area > *,
+.obsidian-codex__ingest-hub-panel > *,
+.obsidian-codex__changes-tray > *,
+.obsidian-codex__conversation-summary > *,
+.obsidian-codex__activity-card > *,
+.obsidian-codex__approval-card > *,
+.obsidian-codex__workflow-brief > *,
+.obsidian-codex__selection-preview > *,
+.obsidian-codex__recipe-card > *,
+.obsidian-codex__status-menu > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-workflow="lecture"] {
+  --obsidian-codex-accent-rgb: 140, 102, 255;
+}
+
+[data-workflow="review"] {
+  --obsidian-codex-accent-rgb: 102, 156, 255;
+}
+
+[data-workflow="paper"] {
+  --obsidian-codex-accent-rgb: 189, 123, 255;
+}
+
+[data-workflow="homework"] {
+  --obsidian-codex-accent-rgb: 104, 196, 255;
+}
+
+.obsidian-codex button:focus-visible,
+.obsidian-codex [tabindex="0"]:focus-visible,
+.obsidian-codex textarea:focus-visible,
+.obsidian-codex input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px rgba(var(--obsidian-codex-highlight-rgb), 0.78),
+    0 0 0 4px rgba(var(--obsidian-codex-brand-rgb), 0.16);
+}
+
+.obsidian-codex__conversation-summary::after,
+.obsidian-codex__workflow-brief::after,
+.obsidian-codex__selection-preview::after,
+.obsidian-codex__ingest-hub-panel::after,
+.obsidian-codex__changes-tray::after,
+.obsidian-codex__activity-card::after,
+.obsidian-codex__approval-card::after,
+.obsidian-codex__recipe-card::after,
+.obsidian-codex__status-menu::after {
+  content: none;
+}

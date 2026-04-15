@@ -1,5 +1,19 @@
 import type { AccountUsageSource, AccountUsageSummary, UsageSummary } from "../model/types";
 
+export type AccountUsageFreshness = "live" | "polled" | "restored" | "stale" | "unknown";
+
+export interface AccountUsageFreshnessThresholds {
+  liveMs: number;
+  polledMs: number;
+  staleMs: number;
+}
+
+export const DEFAULT_ACCOUNT_USAGE_FRESHNESS_THRESHOLDS: AccountUsageFreshnessThresholds = {
+  liveMs: 5_000,
+  polledMs: 30_000,
+  staleMs: 120_000,
+};
+
 export interface UsageSummaryPatch {
   lastTurn?: UsageSummary["lastTurn"];
   total?: UsageSummary["total"];
@@ -86,7 +100,32 @@ export function createEmptyAccountUsageSummary(): AccountUsageSummary {
     },
     source: null,
     updatedAt: null,
+    lastObservedAt: null,
+    lastCheckedAt: null,
     threadId: null,
+  };
+}
+
+export function getAccountUsageObservedAt(summary: AccountUsageSummary | null | undefined): number | null {
+  return summary?.lastObservedAt ?? summary?.updatedAt ?? null;
+}
+
+export function normalizeAccountUsageSummary(summary: AccountUsageSummary | null | undefined): AccountUsageSummary {
+  if (!summary) {
+    return createEmptyAccountUsageSummary();
+  }
+  const lastObservedAt = getAccountUsageObservedAt(summary);
+  return {
+    limits: {
+      fiveHourPercent: summary.limits.fiveHourPercent ?? null,
+      weekPercent: summary.limits.weekPercent ?? null,
+      planType: summary.limits.planType ?? null,
+    },
+    source: summary.source ?? null,
+    updatedAt: lastObservedAt,
+    lastObservedAt,
+    lastCheckedAt: summary.lastCheckedAt ?? null,
+    threadId: summary.threadId ?? null,
   };
 }
 
@@ -108,28 +147,114 @@ export function mergeAccountUsageSummary(
     limits?: Partial<AccountUsageSummary["limits"]>;
     source?: AccountUsageSource | null;
     updatedAt?: number | null;
+    lastObservedAt?: number | null;
+    lastCheckedAt?: number | null;
     threadId?: string | null;
   },
 ): AccountUsageSummary {
+  const normalizedCurrent = normalizeAccountUsageSummary(current);
+  const lastObservedAt: number | null = patch.lastObservedAt ?? patch.updatedAt ?? normalizedCurrent.lastObservedAt ?? null;
   return {
     limits: {
-      fiveHourPercent: patch.limits?.fiveHourPercent ?? current.limits.fiveHourPercent,
-      weekPercent: patch.limits?.weekPercent ?? current.limits.weekPercent,
-      planType: patch.limits?.planType ?? current.limits.planType,
+      fiveHourPercent: patch.limits?.fiveHourPercent ?? normalizedCurrent.limits.fiveHourPercent,
+      weekPercent: patch.limits?.weekPercent ?? normalizedCurrent.limits.weekPercent,
+      planType: patch.limits?.planType ?? normalizedCurrent.limits.planType,
     },
-    source: patch.source ?? current.source,
-    updatedAt: patch.updatedAt ?? current.updatedAt,
-    threadId: patch.threadId ?? current.threadId,
+    source: patch.source ?? normalizedCurrent.source,
+    updatedAt: lastObservedAt,
+    lastObservedAt,
+    lastCheckedAt: patch.lastCheckedAt ?? normalizedCurrent.lastCheckedAt,
+    threadId: patch.threadId ?? normalizedCurrent.threadId,
   };
 }
 
 export function hasAccountUsageSummaryData(summary: AccountUsageSummary | null | undefined): boolean {
+  const normalized = normalizeAccountUsageSummary(summary);
   return Boolean(
-    summary?.limits.fiveHourPercent !== null ||
-      summary?.limits.weekPercent !== null ||
-      summary?.limits.planType ||
-      summary?.source,
+    normalized.limits.fiveHourPercent !== null ||
+      normalized.limits.weekPercent !== null ||
+      normalized.limits.planType ||
+      normalized.source,
   );
+}
+
+export function shouldPreferAccountUsageSummary(
+  current: AccountUsageSummary | null | undefined,
+  candidate: AccountUsageSummary | null | undefined,
+): boolean {
+  const currentObservedAt = getAccountUsageObservedAt(current);
+  const candidateObservedAt = getAccountUsageObservedAt(candidate);
+  if (candidateObservedAt !== null && currentObservedAt !== null) {
+    if (candidateObservedAt !== currentObservedAt) {
+      return candidateObservedAt > currentObservedAt;
+    }
+  } else if (candidateObservedAt !== null) {
+    return true;
+  }
+
+  const currentCheckedAt = current?.lastCheckedAt ?? null;
+  const candidateCheckedAt = candidate?.lastCheckedAt ?? null;
+  if (candidateCheckedAt !== null && currentCheckedAt !== null) {
+    if (candidateCheckedAt !== currentCheckedAt) {
+      return candidateCheckedAt > currentCheckedAt;
+    }
+  } else if (candidateCheckedAt !== null) {
+    return true;
+  }
+
+  const sourcePriority = (source: AccountUsageSource | null | undefined): number => {
+    switch (source) {
+      case "live":
+        return 4;
+      case "active_poll":
+        return 3;
+      case "idle_poll":
+      case "session_backfill":
+        return 2;
+      case "restored":
+        return 1;
+      default:
+        return 0;
+    }
+  };
+  const currentPriority = sourcePriority(current?.source);
+  const candidatePriority = sourcePriority(candidate?.source);
+  if (candidatePriority !== currentPriority) {
+    return candidatePriority > currentPriority;
+  }
+
+  return !hasAccountUsageSummaryData(current) && hasAccountUsageSummaryData(candidate);
+}
+
+export function deriveAccountUsageFreshness(
+  summary: AccountUsageSummary | null | undefined,
+  now = Date.now(),
+  thresholds: AccountUsageFreshnessThresholds = DEFAULT_ACCOUNT_USAGE_FRESHNESS_THRESHOLDS,
+): AccountUsageFreshness {
+  const normalized = normalizeAccountUsageSummary(summary);
+  if (!hasAccountUsageSummaryData(normalized)) {
+    return "unknown";
+  }
+  const referenceAt: number | null = normalized.lastCheckedAt ?? normalized.lastObservedAt ?? null;
+  if (referenceAt === null) {
+    return normalized.source === "restored" ? "restored" : "stale";
+  }
+  const ageMs = Math.max(0, now - referenceAt);
+  if (normalized.source === "live" && ageMs <= thresholds.liveMs) {
+    return "live";
+  }
+  if (
+    (normalized.source === "active_poll" ||
+      normalized.source === "idle_poll" ||
+      normalized.source === "session_backfill") &&
+    ageMs <= thresholds.polledMs
+  ) {
+    return "polled";
+  }
+  if (normalized.source === "restored" && ageMs <= thresholds.staleMs) {
+    return "restored";
+  }
+  return "stale";
 }
 
 export function extractUsageSummaryPatch(event: unknown): UsageSummaryPatch | null {

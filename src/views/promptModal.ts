@@ -22,6 +22,7 @@ export class PromptModal extends Modal {
     private readonly onSubmit: (value: string) => void,
     private readonly description = "Leave blank to use the default note-review prompt.",
     private readonly copy: PromptModalCopy = DEFAULT_COPY,
+    private readonly initialValue = "",
   ) {
     super(app);
   }
@@ -36,6 +37,7 @@ export class PromptModal extends Modal {
       .addTextArea((component) => {
         this.textArea = component;
         component.setPlaceholder(this.placeholder);
+        component.setValue(this.initialValue);
         component.inputEl.rows = 6;
         component.inputEl.addEventListener("keydown", (event) => {
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {

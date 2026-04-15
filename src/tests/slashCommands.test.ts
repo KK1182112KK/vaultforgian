@@ -14,11 +14,9 @@ describe("slash command helpers", () => {
       "/diff",
       "/unresolved",
       "/searchctx",
-      "/campaign",
-      "/set",
-      "/set-run",
-      "/set-drift",
-      "/set-campaign",
+      "/fork",
+      "/resume",
+      "/compact",
       "/rename-plan",
       "/move-plan",
       "/property-plan",
@@ -43,11 +41,9 @@ describe("slash command helpers", () => {
       "/diff",
       "/unresolved",
       "/searchctx",
-      "/campaign",
-      "/set",
-      "/set-run",
-      "/set-drift",
-      "/set-campaign",
+      "/fork",
+      "/resume",
+      "/compact",
       "/rename-plan",
       "/move-plan",
       "/property-plan",
@@ -124,39 +120,7 @@ describe("slash command helpers", () => {
     expect(expanded.skillPrompt).toBe("$grill-me refine this plan");
   });
 
-  it("expands /campaign into a refactor seed over a bounded search result set", async () => {
-    const app = {
-      vault: {
-        cachedRead: async (file: { path: string }) => {
-          if (file.path === "Notes/AI.md") {
-            return "AI lecture note with control theory links";
-          }
-          return "AI project summary and lab note";
-        },
-        getMarkdownFiles: () => [{ path: "Notes/AI.md" }, { path: "Projects/AI.md" }],
-        adapter: {
-          stat: async () => null,
-        },
-      },
-      metadataCache: {
-        resolvedLinks: {},
-        unresolvedLinks: {},
-      },
-    } as unknown as App;
-
-    const expanded = await expandSlashCommand("/campaign ai", {
-      app,
-      currentFile: null,
-      editor: null,
-    });
-
-    expect(expanded.command).toBe("/campaign");
-    expect(expanded.prompt).toContain("Refactor campaign query: ai");
-    expect(expanded.prompt).toContain("Target notes (2)");
-    expect(expanded.campaignSeed?.targetPaths).toEqual(["Notes/AI.md", "Projects/AI.md"]);
-  });
-
-  it("resolves Smart Set local actions from the active set", async () => {
+  it("supports multiple leading skill aliases before the prompt body", async () => {
     const app = {
       vault: {
         cachedRead: async () => "",
@@ -171,31 +135,163 @@ describe("slash command helpers", () => {
       },
     } as unknown as App;
 
-    const expanded = await expandSlashCommand("/set-drift", {
+    const expanded = await expandSlashCommand("/lecture-read\n/deep-read\n\nCompare these explanations", {
       app,
       currentFile: null,
       editor: null,
-      smartSets: [
+      commands: [
         {
-          id: "smart-set-1",
-          title: "Control Lectures",
-          naturalQuery: "control lectures except archived",
-          normalizedQuery: "{}",
-          savedNotePath: null,
-          liveResult: null,
-          lastSnapshot: null,
-          lastDrift: null,
-          lastRunAt: null,
-          createdAt: 1,
-          updatedAt: 1,
+          command: "/lecture-read",
+          label: "lecture-read",
+          description: "Lecture reader",
+          mode: "skill_alias",
+          source: "skill_alias",
+          skillName: "lecture-read",
+        },
+        {
+          command: "/deep-read",
+          label: "deep-read",
+          description: "Paper reader",
+          mode: "skill_alias",
+          source: "skill_alias",
+          skillName: "deep-read",
         },
       ],
-      activeSmartSetId: "smart-set-1",
+    });
+
+    expect(expanded.command).toBe("/lecture-read");
+    expect(expanded.prompt).toBe("Compare these explanations");
+    expect(expanded.skillPrompt).toBe("$lecture-read\n$deep-read\nCompare these explanations");
+  });
+
+  it("expands study recipe slash aliases into recipe prompts", async () => {
+    const app = {
+      vault: {
+        cachedRead: async () => "",
+        getMarkdownFiles: () => [],
+        adapter: {
+          stat: async () => null,
+        },
+      },
+      metadataCache: {
+        resolvedLinks: {},
+        unresolvedLinks: {},
+      },
+    } as unknown as App;
+
+    const expanded = await expandSlashCommand("/recipe-signals focus on aliasing", {
+      app,
+      currentFile: null,
+      editor: null,
+      commands: [
+        {
+          command: "/recipe-signals",
+          label: "Signals lecture loop",
+          description: "Prefer lecture PDF or current lecture note.",
+          mode: "study_recipe",
+          source: "study_recipe",
+          recipeId: "study-recipe-1",
+          recipePrompt: "Saved study recipe: Signals lecture loop\n\nPrompt template\nTurn this lecture into a study guide.",
+          studyWorkflow: "lecture",
+        },
+      ],
+    });
+
+    expect(expanded.command).toBe("/recipe-signals");
+    expect(expanded.studyRecipeId).toBe("study-recipe-1");
+    expect(expanded.prompt).toContain("Saved study recipe: Signals lecture loop");
+    expect(expanded.prompt).toContain("focus on aliasing");
+  });
+
+  it("resolves conversation slash actions as local actions", async () => {
+    const app = {
+      vault: {
+        cachedRead: async () => "",
+        getMarkdownFiles: () => [],
+        adapter: {
+          stat: async () => null,
+        },
+      },
+      metadataCache: {
+        resolvedLinks: {},
+        unresolvedLinks: {},
+      },
+    } as unknown as App;
+
+    await expect(
+      expandSlashCommand("/fork", {
+        app,
+        currentFile: null,
+        editor: null,
+      }),
+    ).resolves.toMatchObject({
+      command: "/fork",
+      localAction: { type: "fork" },
+    });
+
+    await expect(
+      expandSlashCommand("/resume", {
+        app,
+        currentFile: null,
+        editor: null,
+      }),
+    ).resolves.toMatchObject({
+      command: "/resume",
+      localAction: { type: "resume" },
+    });
+
+    await expect(
+      expandSlashCommand("/compact", {
+        app,
+        currentFile: null,
+        editor: null,
+      }),
+    ).resolves.toMatchObject({
+      command: "/compact",
+      localAction: { type: "compact" },
+    });
+  });
+
+  it("treats apply-followups as local patch actions", async () => {
+    const app = {
+      vault: {
+        cachedRead: async () => "",
+        getMarkdownFiles: () => [],
+        adapter: {
+          stat: async () => null,
+        },
+      },
+      metadataCache: {
+        resolvedLinks: {},
+        unresolvedLinks: {},
+      },
+    } as unknown as App;
+
+    const expanded = await expandSlashCommand("そのまま反映して", {
+      app,
+      currentFile: null,
+      editor: null,
+      patchBasket: [
+        {
+          id: "patch-1",
+          threadId: null,
+          sourceMessageId: "assistant-1",
+          originTurnId: "turn-1",
+          targetPath: "Notes/Test.md",
+          kind: "update",
+          baseSnapshot: "old",
+          proposedText: "new",
+          unifiedDiff: "@@",
+          summary: "Update note",
+          status: "pending",
+          createdAt: 1,
+        },
+      ],
     });
 
     expect(expanded.localAction).toEqual({
-      type: "drift",
-      smartSetId: "smart-set-1",
+      type: "apply_latest_patch",
     });
+    expect(expanded.prompt).toBe("");
   });
 });
