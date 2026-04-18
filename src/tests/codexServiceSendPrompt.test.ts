@@ -966,6 +966,7 @@ describe("CodexService sendPrompt skill context", () => {
       throw new Error("Missing tab");
     }
 
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
     vi.spyOn(service as never, "runCodexStream").mockRejectedValue(new Error("Session interrupted while parsing output."));
 
     const context: TurnContextSnapshot = {

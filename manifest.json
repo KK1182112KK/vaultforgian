@@ -1,7 +1,7 @@
 {
   "id": "obsidian-codex-study",
   "name": "Codex Noteforge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "1.5.0",
   "description": "Codex CLI inside Obsidian: study workflows, persistent chat tabs, plan mode, and reviewable note patches.",
   "author": "KK1182112KK",
