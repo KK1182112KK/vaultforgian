@@ -5,7 +5,7 @@ import type { WorkspaceState } from "../../model/types";
 import { getLocalizedCopy } from "../../util/i18n";
 import { HeaderRenderer } from "../../views/renderers/headerRenderer";
 import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "../../views/renderers/types";
-import { installObsidianDomHelpers, Notice } from "../setup/obsidian";
+import { installObsidianDomHelpers, Menu, Notice } from "../setup/obsidian";
 
 function createState(): WorkspaceState {
   return {
@@ -18,7 +18,7 @@ function createState(): WorkspaceState {
         studyWorkflow: null,
         activeStudyRecipeId: null,
         activeStudySkillNames: [],
-        instructionChips: [],
+        learningMode: false,
         summary: null,
         lineage: {
           parentTabId: null,
@@ -96,6 +96,7 @@ function createState(): WorkspaceState {
 function createContext(
   state: WorkspaceState,
   serviceOverrides: Record<string, unknown> = {},
+  options: { isNarrowLayout?: boolean } = {},
 ): WorkspaceRenderContext {
   const copy = getLocalizedCopy("en");
   const activeTab = state.tabs[0] ?? null;
@@ -119,6 +120,7 @@ function createContext(
     } as unknown as WorkspaceRenderContext["service"],
     state,
     activeTab,
+    isNarrowLayout: options.isNarrowLayout ?? false,
     locale: "en",
     copy,
   };
@@ -134,6 +136,7 @@ describe("HeaderRenderer", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     installObsidianDomHelpers();
+    Menu.reset();
     Notice.reset();
   });
 
@@ -198,5 +201,57 @@ describe("HeaderRenderer", () => {
 
     expect(Notice.messages).toContain("Cannot fork this conversation.");
     expect(Notice.messages).toContain("No resumable Codex thread on this tab.");
+  });
+
+  it("hides header tab badges when tab placement is set to the composer", () => {
+    const state = createState();
+    const root = document.createElement("div");
+
+    new HeaderRenderer(root, createCallbacks()).render(
+      createContext(state, {
+        getTabBarPosition: () => "composer",
+      }),
+    );
+
+    expect(root.querySelector(".obsidian-codex__tab-bar")).toBeNull();
+    expect(root.querySelector(".obsidian-codex__tab-badges")).toBeNull();
+  });
+
+  it("collapses header actions into an overflow menu in narrow layout", () => {
+    const state = createState();
+    const callbacks = createCallbacks();
+    const context = createContext(state, {}, { isNarrowLayout: true });
+    const service = context.service as unknown as {
+      createTab: ReturnType<typeof vi.fn>;
+      compactTab: ReturnType<typeof vi.fn>;
+    };
+    const root = document.createElement("div");
+
+    new HeaderRenderer(root, callbacks).render(context);
+
+    expect(root.classList.contains("is-narrow")).toBe(true);
+    expect(root.querySelector('[data-smoke="header-new-tab"]')).toBeNull();
+    expect(root.querySelector(".obsidian-codex__tab-bar")).toBeNull();
+
+    root.querySelector<HTMLButtonElement>('[data-smoke="header-more-actions"]')?.click();
+
+    const menu = Menu.lastShown;
+    expect(menu).not.toBeNull();
+    expect(menu?.items.map((item) => item.title)).toEqual([
+      "New tab",
+      "New session",
+      "Fork conversation",
+      "Resume thread in a new tab",
+      "Compact conversation",
+      "Settings",
+    ]);
+
+    menu?.items[0]?.trigger();
+    menu?.items[4]?.trigger();
+    menu?.items[5]?.trigger();
+
+    expect(service.createTab).toHaveBeenCalledTimes(1);
+    expect(service.compactTab).toHaveBeenCalledWith("tab-1");
+    expect(callbacks.openSettings).toHaveBeenCalledTimes(1);
   });
 });

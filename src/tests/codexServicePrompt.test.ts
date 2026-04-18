@@ -15,7 +15,6 @@ function createContext(overrides: Partial<TurnContextSnapshot> = {}): TurnContex
     paperStudyRuntimeOverlayText: null,
     skillGuideText: null,
     paperStudyGuideText: null,
-    instructionText: null,
     mentionContextText: null,
     selection: null,
     selectionSourcePath: null,
@@ -189,5 +188,67 @@ describe("buildTurnPrompt", () => {
 
     expect(prompt).toContain("Edit automatically mode");
     expect(prompt).toContain("plugin may auto-apply them unless review is required");
+  });
+
+  it("includes preferred-name, custom system prompt, and shell blocklist overlays when configured", () => {
+    const prompt = buildTurnPrompt("Help me refactor this note.", createContext(), "normal", [], "chat", false, "manual", {
+      preferredName: "Kenshin",
+      customSystemPrompt: "Prefer literal code references and avoid filler.",
+      shellBlocklist: ["rm -rf", "del /s"],
+    });
+
+    expect(prompt).toContain('If you address the user directly, call them "Kenshin".');
+    expect(prompt).toContain("User-configured blocked shell patterns: rm -rf, del /s");
+    expect(prompt).toContain("Do not propose or rely on shell commands matching those blocked patterns.");
+    expect(prompt).toContain("User-added system instructions:");
+    expect(prompt).toContain("Prefer literal code references and avoid filler.");
+  });
+
+  it("uses Socratic tutoring guidance when learning mode is active for an explanation turn", () => {
+    const prompt = buildTurnPrompt(
+      "Explain Fourier transforms to me.",
+      createContext(),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+      { learningMode: true },
+    );
+
+    expect(prompt).toContain("Learning mode is active for this tab.");
+    expect(prompt).toContain("use the Socratic method");
+    expect(prompt).toContain("do not reveal the full answer immediately");
+  });
+
+  it("lets direct-answer requests bypass the Socratic loop for that turn", () => {
+    const prompt = buildTurnPrompt(
+      "Just give me the answer: what is a Laplace transform?",
+      createContext(),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+      { learningMode: true },
+    );
+
+    expect(prompt).toContain("the user explicitly asked for the direct answer in this turn");
+    expect(prompt).toContain("Give the direct answer first");
+  });
+
+  it("does not force learning-mode tutoring onto editing turns", () => {
+    const prompt = buildTurnPrompt(
+      "Rewrite this note to be clearer.",
+      createContext(),
+      "normal",
+      [],
+      "chat",
+      true,
+      "approval",
+      { learningMode: true },
+    );
+
+    expect(prompt).not.toContain("Learning mode is active for this tab.");
   });
 });

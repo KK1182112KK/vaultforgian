@@ -12,7 +12,6 @@ function createPersistedTab(overrides: Partial<PersistedTabState> = {}): Persist
     studyWorkflow: overrides.studyWorkflow ?? null,
     activeStudyRecipeId: overrides.activeStudyRecipeId ?? null,
     activeStudySkillNames: overrides.activeStudySkillNames ?? [],
-    instructionChips: overrides.instructionChips ?? [],
     summary: overrides.summary ?? null,
     lineage: {
       parentTabId: null,
@@ -28,6 +27,7 @@ function createPersistedTab(overrides: Partial<PersistedTabState> = {}): Persist
     panelSessionOrigin: overrides.panelSessionOrigin ?? null,
     chatSuggestion: overrides.chatSuggestion ?? null,
     composeMode: overrides.composeMode ?? "chat",
+    learningMode: overrides.learningMode ?? false,
     contextPaths: overrides.contextPaths ?? [],
     lastResponseId: overrides.lastResponseId ?? null,
     sessionItems: overrides.sessionItems ?? [],
@@ -67,7 +67,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: null,
@@ -121,7 +121,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: null,
@@ -154,7 +154,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: null,
@@ -209,7 +209,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: null,
@@ -295,7 +295,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: null,
@@ -328,7 +328,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: "tab-a",
@@ -391,13 +391,7 @@ describe("AgentStore", () => {
     ];
     store.setDraft(tab.id, "draft");
     store.setTargetNotePath(tab.id, "notes/current.md");
-    store.setInstructionChips(tab.id, [
-      {
-        id: "instruction-1",
-        label: "brief",
-        createdAt: 123,
-      },
-    ]);
+    store.setLearningMode(tab.id, true);
     store.setSummary(tab.id, {
       id: "summary-1",
       text: "Condensed conversation",
@@ -457,13 +451,7 @@ describe("AgentStore", () => {
           title: "Notes",
           cwd: "/vault/notes",
           draft: "draft",
-          instructionChips: [
-            {
-              id: "instruction-1",
-              label: "brief",
-              createdAt: 123,
-            },
-          ],
+          learningMode: true,
           summary: {
             id: "summary-1",
             text: "Condensed conversation",
@@ -585,7 +573,6 @@ describe("AgentStore", () => {
                 minimumPinnedContextCount: 0,
       },
       outputContract: ["Main topics", "Formulas"],
-      instructionChipHints: ["focus", "steps"],
       sourceHints: ["attached lecture files", "current note"],
       exampleSession: {
         sourceTabTitle: "Signals",
@@ -626,7 +613,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: null,
@@ -674,7 +661,6 @@ describe("AgentStore", () => {
                             minimumPinnedContextCount: 0,
             },
             outputContract: ["Main ideas"],
-            instructionChipHints: ["focus"],
             sourceHints: ["current note"],
             exampleSession: {
               sourceTabTitle: "Study chat",
@@ -724,7 +710,6 @@ describe("AgentStore", () => {
                 minimumPinnedContextCount: 0,
       },
       outputContract: ["Main ideas"],
-      instructionChipHints: ["focus"],
       sourceHints: ["current note"],
       exampleSession: {
         sourceTabTitle: "Study chat",
@@ -819,7 +804,6 @@ describe("AgentStore", () => {
                     minimumPinnedContextCount: 0,
         },
         outputContract: ["Main ideas"],
-        instructionChipHints: ["focus"],
         sourceHints: ["current note"],
         exampleSession: {
           sourceTabTitle: "Study chat",
@@ -878,7 +862,6 @@ describe("AgentStore", () => {
                     minimumPinnedContextCount: 0,
         },
         outputContract: ["Main ideas"],
-        instructionChipHints: ["focus"],
         sourceHints: ["current note"],
         exampleSession: {
           sourceTabTitle: "Study chat",
@@ -943,7 +926,6 @@ describe("AgentStore", () => {
                     minimumPinnedContextCount: 0,
         },
         outputContract: ["Main ideas"],
-        instructionChipHints: ["focus"],
         sourceHints: ["current note"],
         exampleSession: {
           sourceTabTitle: "Study chat",
@@ -975,7 +957,6 @@ describe("AgentStore", () => {
                     minimumPinnedContextCount: 0,
         },
         outputContract: ["Weak spots"],
-        instructionChipHints: [],
         sourceHints: [],
         exampleSession: {
           sourceTabTitle: "Study chat",
@@ -1065,7 +1046,6 @@ describe("AgentStore", () => {
                     minimumPinnedContextCount: 0,
         },
         outputContract: ["Main ideas"],
-        instructionChipHints: ["focus"],
         sourceHints: ["current note"],
         exampleSession: {
           sourceTabTitle: "Study chat",
@@ -1097,7 +1077,6 @@ describe("AgentStore", () => {
                     minimumPinnedContextCount: 0,
         },
         outputContract: ["Weak spots"],
-        instructionChipHints: [],
         sourceHints: [],
         exampleSession: {
           sourceTabTitle: "Study chat",
@@ -1192,13 +1171,7 @@ describe("AgentStore", () => {
     const tab = store.createTab("/vault", "Scratch");
     store.setDraft(tab.id, "draft");
     store.setTargetNotePath(tab.id, "notes/current.md");
-    store.setInstructionChips(tab.id, [
-      {
-        id: "instruction-1",
-        label: "brief",
-        createdAt: 111,
-      },
-    ]);
+    store.setLearningMode(tab.id, true);
     store.setSummary(tab.id, {
       id: "summary-1",
       text: "Compact summary",
@@ -1226,7 +1199,7 @@ describe("AgentStore", () => {
     store.resetTab(tab.id, {
       title: "New chat",
       draft: "",
-      instructionChips: [],
+      learningMode: false,
       summary: null,
       lineage: {
         parentTabId: null,
@@ -1249,7 +1222,7 @@ describe("AgentStore", () => {
         id: tab.id,
         title: "New chat",
         draft: "",
-        instructionChips: [],
+        learningMode: false,
         summary: null,
         lineage: {
           parentTabId: null,
@@ -1304,7 +1277,7 @@ describe("AgentStore", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
+            learningMode: false,
             summary: null,
             lineage: {
               parentTabId: null,

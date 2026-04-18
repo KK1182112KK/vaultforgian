@@ -377,7 +377,6 @@ function cloneState(state: WorkspaceState): WorkspaceState {
       ...tab,
       activeStudyRecipeId: tab.activeStudyRecipeId,
       activeStudySkillNames: [...tab.activeStudySkillNames],
-      instructionChips: tab.instructionChips.map((chip) => ({ ...chip })),
       summary: tab.summary ? { ...tab.summary } : null,
       lineage: normalizeLineage(tab.lineage),
       targetNotePath: tab.targetNotePath,
@@ -407,7 +406,6 @@ function createTab(cwd: string, partial?: Partial<ConversationTabState>): Conver
     studyWorkflow: partial?.studyWorkflow ?? null,
     activeStudyRecipeId: partial?.activeStudyRecipeId ?? null,
     activeStudySkillNames: partial?.activeStudySkillNames ? [...partial.activeStudySkillNames] : [],
-    instructionChips: partial?.instructionChips ?? [],
     summary: partial?.summary ?? null,
     lineage: normalizeLineage(partial?.lineage),
     targetNotePath: partial?.targetNotePath ?? null,
@@ -416,6 +414,7 @@ function createTab(cwd: string, partial?: Partial<ConversationTabState>): Conver
     chatSuggestion: partial?.chatSuggestion ? structuredClone(partial.chatSuggestion) : null,
     composerHistory: normalizeComposerHistory(partial?.composerHistory),
     composeMode: partial?.composeMode ?? "chat",
+    learningMode: partial?.learningMode ?? false,
     contextPaths: partial?.contextPaths ?? [],
     lastResponseId: partial?.lastResponseId ?? null,
     sessionItems: partial?.sessionItems ?? [],
@@ -537,7 +536,6 @@ export class AgentStore {
         studyWorkflow: tab.studyWorkflow,
         activeStudyRecipeId: tab.activeStudyRecipeId,
         activeStudySkillNames: [...tab.activeStudySkillNames],
-        instructionChips: tab.instructionChips.map((chip) => ({ ...chip })),
         summary: tab.summary ? { ...tab.summary } : null,
         lineage: normalizeLineage(tab.lineage),
         targetNotePath: tab.targetNotePath,
@@ -550,6 +548,7 @@ export class AgentStore {
           draft: tab.composerHistory.draft,
         },
         composeMode: tab.composeMode,
+        learningMode: tab.learningMode,
         contextPaths: [...tab.contextPaths],
         lastResponseId: tab.lastResponseId,
         sessionItems: [],
@@ -749,6 +748,12 @@ export class AgentStore {
     });
   }
 
+  setLearningMode(tabId: string, learningMode: boolean): void {
+    this.updateTab(tabId, (tab) => {
+      tab.learningMode = learningMode;
+    });
+  }
+
   setActiveStudyPanel(tabId: string, recipeId: string | null, skillNames: string[] = []): void {
     this.mutate((state) => {
       const tab = state.tabs.find((entry) => entry.id === tabId);
@@ -788,12 +793,6 @@ export class AgentStore {
   setTargetNotePath(tabId: string, targetNotePath: string | null): void {
     this.updateTab(tabId, (tab) => {
       tab.targetNotePath = targetNotePath;
-    });
-  }
-
-  setInstructionChips(tabId: string, instructionChips: ConversationTabState["instructionChips"]): void {
-    this.updateTab(tabId, (tab) => {
-      tab.instructionChips = instructionChips.map((chip) => ({ ...chip }));
     });
   }
 

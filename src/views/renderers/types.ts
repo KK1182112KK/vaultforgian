@@ -9,6 +9,7 @@ export interface WorkspaceRenderContext {
   service: CodexService;
   state: WorkspaceState;
   activeTab: WorkspaceState["tabs"][number] | null;
+  isNarrowLayout: boolean;
   locale: SupportedLocale;
   copy: LocalizedCopy;
 }

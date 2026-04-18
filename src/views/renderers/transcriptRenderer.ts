@@ -83,6 +83,13 @@ export class TranscriptRenderer {
           : this.scrollStateByTab.get(activeTabId) ?? null;
       shouldStickToBottom = currentState ? currentState.shouldAutoFollow : true;
       preservedScrollTop = currentState?.scrollTop ?? this.root.scrollTop;
+      const autoScrollStreaming =
+        typeof (context.service as { shouldAutoScrollStreaming?: () => boolean }).shouldAutoScrollStreaming === "function"
+          ? (context.service as { shouldAutoScrollStreaming: () => boolean }).shouldAutoScrollStreaming()
+          : true;
+      if (activeTab?.status === "busy" && !autoScrollStreaming) {
+        shouldStickToBottom = false;
+      }
     }
 
     this.withProgrammaticScrollIgnored(() => {
@@ -372,7 +379,6 @@ export class TranscriptRenderer {
 
     if (message.kind === "user") {
       this.renderCompactMetaChips(bodyEl, copy.workspace.panelSkills, message.meta?.effectiveSkillsCsv, "/");
-      this.renderCompactMetaChips(bodyEl, copy.workspace.modifiers, message.meta?.modifierChipsCsv, "#");
     }
 
     const markdownEl = bodyEl.createDiv({ cls: "obsidian-codex__message-markdown" });
@@ -781,7 +787,6 @@ function createMessageMetaSignature(meta: ChatMessage["meta"] | null | undefined
     sourcePath: typeof meta.sourcePath === "string" ? meta.sourcePath : null,
     attachmentCount: typeof meta.attachmentCount === "number" ? meta.attachmentCount : null,
     effectiveSkillsCsv: typeof meta.effectiveSkillsCsv === "string" ? meta.effectiveSkillsCsv : null,
-    modifierChipsCsv: typeof meta.modifierChipsCsv === "string" ? meta.modifierChipsCsv : null,
   });
 }
 

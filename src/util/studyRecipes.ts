@@ -58,13 +58,11 @@ export function buildStudyRecipeChatPrompt(recipe: StudyRecipe, locale: Supporte
   const requestText = request.trim() || recipe.promptTemplate.trim();
   const sourceHints = recipe.sourceHints.length > 0 ? recipe.sourceHints : workflow?.sourcePriority ?? [];
   const outputContract = recipe.outputContract.length > 0 ? recipe.outputContract : workflow ? [...workflow.responseContract] : [];
-  const instructionHints = recipe.instructionChipHints.length > 0 ? recipe.instructionChipHints : workflow ? [...workflow.instructionLabels] : [];
   const header = locale === "ja" ? `保存済み recipe: ${recipe.title}` : `Saved study recipe: ${recipe.title}`;
   const workflowLine = locale === "ja" ? `Workflow: ${formatWorkflowLabel(recipe.workflow, locale)}` : `Workflow: ${formatWorkflowLabel(recipe.workflow, locale)}`;
   const promptLabel = locale === "ja" ? "Prompt template" : "Prompt template";
   const sourceLabel = locale === "ja" ? "Source priorities" : "Source priorities";
   const outputLabel = locale === "ja" ? "Output contract" : "Output contract";
-  const instructionLabel = locale === "ja" ? "Instruction hints" : "Instruction hints";
   const requestLabel = locale === "ja" ? "Current request" : "Current request";
 
   return [
@@ -76,9 +74,6 @@ export function buildStudyRecipeChatPrompt(recipe: StudyRecipe, locale: Supporte
     "",
     locale === "ja" ? "Panel description" : "Panel description",
     recipe.description.trim(),
-    "",
-    instructionLabel,
-    ...instructionHints.map((hint) => `- #${hint}`),
     "",
     sourceLabel,
     ...sourceHints.map((hint) => `- ${hint}`),
@@ -172,9 +167,6 @@ export function summarizeStudyRecipeDiff(current: StudyRecipe | null, next: Stud
   if (JSON.stringify(current.outputContract) !== JSON.stringify(next.outputContract)) {
     changed.push(locale === "ja" ? "output contract" : "output contract");
   }
-  if (JSON.stringify(current.instructionChipHints) !== JSON.stringify(next.instructionChipHints)) {
-    changed.push(locale === "ja" ? "instruction chips" : "instruction chips");
-  }
 
   if (changed.length === 0) {
     return locale === "ja" ? "差分はほとんどありません。" : "No material differences were detected.";
@@ -219,9 +211,6 @@ export function buildStudySkillDraft(
     "",
     "## Expected output",
     ...recipe.outputContract.map((line) => `- ${line}`),
-    "",
-    "## Default instruction chips",
-    ...recipe.instructionChipHints.map((hint) => `- #${hint}`),
     "",
     "## Prompt template",
     recipe.promptTemplate.trim(),

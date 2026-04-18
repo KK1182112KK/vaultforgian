@@ -29,21 +29,6 @@ const mentions: ComposerSuggestion[] = [
   },
 ];
 
-const instructions: ComposerSuggestion[] = [
-  {
-    kind: "instruction",
-    token: "#brief",
-    label: "brief",
-    description: "Add #brief instruction to this turn",
-  },
-  {
-    kind: "instruction",
-    token: "#research",
-    label: "research",
-    description: "Add #research instruction to this turn",
-  },
-];
-
 describe("composer suggestions", () => {
   it("matches slash commands from the current command token", () => {
     expect(matchComposerSuggestions("/", 1, slashCommands, skills).map((entry) => entry.token)).toEqual([
@@ -60,12 +45,9 @@ describe("composer suggestions", () => {
     expect(matchComposerSuggestions("use $fron", 9, slashCommands, skills).map((entry) => entry.token)).toEqual(["$frontend-skill"]);
   });
 
-  it("matches mention and instruction references near the cursor", () => {
-    expect(matchComposerSuggestions("look at @no", 11, slashCommands, skills, mentions, instructions).map((entry) => entry.token)).toEqual([
+  it("matches mention references near the cursor", () => {
+    expect(matchComposerSuggestions("look at @no", 11, slashCommands, skills, mentions).map((entry) => entry.token)).toEqual([
       "@note(Notes/AI.md)",
-    ]);
-    expect(matchComposerSuggestions("make it #re", 11, slashCommands, skills, mentions, instructions).map((entry) => entry.token)).toEqual([
-      "#research",
     ]);
   });
 
@@ -83,7 +65,6 @@ describe("composer suggestions", () => {
       description: "Design strong frontend UIs",
     };
     const mentionSuggestion: ComposerSuggestion = mentions[0]!;
-    const instructionSuggestion: ComposerSuggestion = instructions[0]!;
 
     expect(applyComposerSuggestion("/co", 3, slashSuggestion)).toEqual({
       value: "/COMMIT ",
@@ -96,10 +77,6 @@ describe("composer suggestions", () => {
     expect(applyComposerSuggestion("look at @no", 11, mentionSuggestion)).toEqual({
       value: "look at @note(Notes/AI.md) ",
       cursor: 27,
-    });
-    expect(applyComposerSuggestion("make it #br", 11, instructionSuggestion)).toEqual({
-      value: "make it #brief ",
-      cursor: 15,
     });
   });
 });

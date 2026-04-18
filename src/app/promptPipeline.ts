@@ -8,7 +8,6 @@ export interface ParsedMention {
 export interface PromptMetadataExtraction {
   cleanedPrompt: string;
   executionPrompt: string;
-  instructionLabels: string[];
   mentions: ParsedMention[];
 }
 
@@ -46,17 +45,8 @@ export function normalizePromptInput(input: string, options: NormalizePromptInpu
 }
 
 export function extractPromptMetadata(input: string): PromptMetadataExtraction {
-  const instructionLabels = new Set<string>();
   const mentions: ParsedMention[] = [];
-
-  const withoutInstructions = input.replace(/(^|[\s(])#([A-Za-z0-9:_-]+)/gu, (_match, prefix: string, label: string) => {
-    if (label?.trim()) {
-      instructionLabels.add(label.trim().toLowerCase());
-    }
-    return prefix || "";
-  });
-
-  const cleanedPrompt = withoutInstructions.replace(
+  const cleanedPrompt = input.replace(
     /@(?:(note|skill|recipe|dir|mcp)\(([^)]+)\))/gu,
     (_match, rawKind: string, rawValue: string) => {
       const value = rawValue?.trim() ?? "";
@@ -117,7 +107,6 @@ export function extractPromptMetadata(input: string): PromptMetadataExtraction {
   return {
     cleanedPrompt: normalizedPrompt,
     executionPrompt,
-    instructionLabels: [...instructionLabels],
     mentions,
   };
 }

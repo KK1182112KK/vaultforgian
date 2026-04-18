@@ -47,7 +47,6 @@ function createPanel(id: string, linkedSkillNames: string[]): StudyRecipe {
             minimumPinnedContextCount: 0,
     },
     outputContract: [],
-    instructionChipHints: [],
     sourceHints: [],
     exampleSession: {
       sourceTabTitle: "Chat 1",
@@ -174,7 +173,7 @@ describe("CodexService sendPrompt skill context", () => {
     expect(userMessage?.meta?.effectiveSkillCount).toBe(1);
   });
 
-  it("stores active modifier chips on the submitted user message", async () => {
+  it("tracks learning mode per tab", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-modifiers-"));
     tempRoots.push(vaultRoot);
 
@@ -195,13 +194,12 @@ describe("CodexService sendPrompt skill context", () => {
       throw new Error("Missing tab");
     }
 
-    service.addInstructionChips(tabId, ["focus", "concise"]);
-    await service.sendPrompt(tabId, "Summarize this note.");
-
-    expect(runTurnSpy).toHaveBeenCalledTimes(1);
-    const userMessage = service.getActiveTab()?.messages.find((message) => message.kind === "user");
-    expect(userMessage?.meta?.modifierChipsCsv).toBe("focus,concise");
-    expect(userMessage?.meta?.modifierChipCount).toBe(2);
+    expect(service.getActiveTab()?.learningMode).toBe(false);
+    expect(service.toggleTabLearningMode(tabId)).toBe(true);
+    expect(service.getActiveTab()?.learningMode).toBe(true);
+    expect(service.setTabLearningMode(tabId, false)).toBe(false);
+    expect(service.getActiveTab()?.learningMode).toBe(false);
+    expect(runTurnSpy).not.toHaveBeenCalled();
   });
 
   it("stores rewrite-followup suggestions and turns them into a formatting rewrite prompt", async () => {
@@ -419,7 +417,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -505,7 +502,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -591,7 +587,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: "notes/current.md",
@@ -664,7 +659,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -755,7 +749,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -840,7 +833,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -920,7 +912,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -989,7 +980,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -1092,7 +1082,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: "notes/current.md",
@@ -1180,7 +1169,6 @@ describe("CodexService sendPrompt skill context", () => {
       paperStudyRuntimeOverlayText: null,
       skillGuideText: null,
       paperStudyGuideText: null,
-      instructionText: null,
       mentionContextText: null,
       selection: null,
       selectionSourcePath: null,
@@ -1236,7 +1224,6 @@ describe("CodexService sendPrompt skill context", () => {
             studyWorkflow: null,
             activeStudyRecipeId: null,
             activeStudySkillNames: [],
-            instructionChips: [],
             summary: null,
             lineage: {
               parentTabId: null,
@@ -1249,6 +1236,7 @@ describe("CodexService sendPrompt skill context", () => {
             panelSessionOrigin: null,
             chatSuggestion: null,
             composeMode: "chat",
+            learningMode: false,
             contextPaths: [],
             lastResponseId: null,
             sessionItems: [],

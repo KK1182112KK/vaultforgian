@@ -22,7 +22,6 @@ const RECIPE: StudyRecipe = {
         minimumPinnedContextCount: 0,
   },
   outputContract: ["Main topics", "Key formulas"],
-  instructionChipHints: ["focus", "steps"],
   sourceHints: ["attached lecture files", "current lecture note"],
   exampleSession: {
     sourceTabTitle: "Signals tab",

@@ -11,6 +11,21 @@ import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "./rendere
 export const CODEX_VIEW_TYPE = "obsidian-codex-study-workspace";
 export const LEGACY_CODEX_VIEW_TYPE = "obsidian-openai-agent-study-workspace";
 
+type VimAction = "scrollUp" | "scrollDown" | "focusInput";
+
+function parseVimMappingLine(value: string): { key: string; action: VimAction } | null {
+  const trimmed = value.trim();
+  const match = /^map\s+(\S+)\s+(scrollUp|scrollDown|focusInput)$/u.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const [, key, action] = match;
+  return {
+    key: key.toLowerCase(),
+    action: action as VimAction,
+  };
+}
+
 type PersistedLeafViewState = ViewState & {
   icon?: string;
   title?: string;
@@ -55,6 +70,8 @@ export async function syncWorkspaceLeafBranding(
 }
 
 export class CodexWorkspaceView extends ItemView {
+  private static readonly RESPONSIVE_HUB_COLLAPSE_WIDTH = 860;
+  private static readonly RESPONSIVE_HUB_COLLAPSE_WINDOW_WIDTH = 1100;
   private unsubscribe: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private state: WorkspaceState | null = null;
@@ -71,7 +88,18 @@ export class CodexWorkspaceView extends ItemView {
   private transcriptRenderer!: TranscriptRenderer;
   private composerRenderer!: ComposerRenderer;
   private brandingSyncPromise: Promise<void> | null = null;
+  private responsiveHubIsNarrow = false;
+  private responsiveHubAutoCollapsed = false;
+  private responsiveHubManualCollapsed: boolean | null = null;
+  private pendingResponsiveHubCollapsedState: boolean | null = null;
+  private isNarrowLayout = false;
   private readonly hubEphemeralState = createHubRendererEphemeralState();
+  private readonly windowResizeHandler = () => {
+    this.handleResponsiveResize();
+  };
+  private readonly keydownHandler = (event: KeyboardEvent) => {
+    this.handleKeydown(event);
+  };
 
   constructor(leaf: WorkspaceLeaf, private readonly service: CodexService, viewType = CODEX_VIEW_TYPE) {
     super(leaf);
@@ -109,9 +137,11 @@ export class CodexWorkspaceView extends ItemView {
     this.shellEl = this.contentEl.createDiv({ cls: "obsidian-codex__container" });
     this.buildLayout();
     this.applyLeafBranding();
+    this.contentEl.addEventListener("keydown", this.keydownHandler, true);
+    this.contentEl.ownerDocument.defaultView?.addEventListener("resize", this.windowResizeHandler);
 
-    this.resizeObserver = new ResizeObserver(() => {
-      this.composerRenderer?.syncInputHeight();
+    this.resizeObserver = new ResizeObserver((entries) => {
+      this.handleResponsiveResize(entries[0]?.contentRect.width);
     });
     this.resizeObserver.observe(this.contentEl);
 
@@ -119,6 +149,7 @@ export class CodexWorkspaceView extends ItemView {
       this.state = state;
       this.render();
     });
+    this.handleResponsiveResize();
 
     if (!this.restoreStarted) {
       this.restoreStarted = true;
@@ -134,8 +165,33 @@ export class CodexWorkspaceView extends ItemView {
     this.unsubscribe = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.responsiveHubIsNarrow = false;
+    this.responsiveHubAutoCollapsed = false;
+    this.responsiveHubManualCollapsed = null;
+    this.pendingResponsiveHubCollapsedState = null;
+    this.isNarrowLayout = false;
     this.hubRenderer?.dispose();
     this.composerRenderer?.closeStatusMenu();
+    this.contentEl.removeEventListener("keydown", this.keydownHandler, true);
+    this.contentEl.ownerDocument.defaultView?.removeEventListener("resize", this.windowResizeHandler);
+  }
+
+  override onResize(): void {
+    this.handleResponsiveResize();
+  }
+
+  private handleResponsiveResize(observedWidth?: number): void {
+    if (!this.shellEl) {
+      return;
+    }
+    const layoutChanged = this.syncResponsiveHubCollapse({
+      paneWidth: this.measureResponsiveHubWidth(observedWidth),
+      windowWidth: this.measureResponsiveWindowWidth(),
+    });
+    if (layoutChanged && this.state) {
+      this.render();
+    }
+    this.composerRenderer?.syncInputHeight();
   }
 
   showIngestHubPanel(): void {
@@ -236,12 +292,14 @@ export class CodexWorkspaceView extends ItemView {
 
     const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? state.tabs[0] ?? null;
     this.activeTabId = activeTab?.id ?? null;
+    this.syncResponsiveHubManualState();
 
     const context: WorkspaceRenderContext = {
       app: this.app,
       service: this.service,
       state,
       activeTab,
+      isNarrowLayout: this.isNarrowLayout,
       locale: this.getLocale(),
       copy: this.getCopy(),
     };
@@ -250,6 +308,80 @@ export class CodexWorkspaceView extends ItemView {
     this.hubRenderer.render(context);
     this.transcriptRenderer.render(context);
     this.composerRenderer.render(context);
+  }
+
+  private syncResponsiveHubCollapse(widths: { paneWidth: number; windowWidth: number }): boolean {
+    const isNarrow =
+      widths.paneWidth <= CodexWorkspaceView.RESPONSIVE_HUB_COLLAPSE_WIDTH ||
+      widths.windowWidth <= CodexWorkspaceView.RESPONSIVE_HUB_COLLAPSE_WINDOW_WIDTH;
+    const layoutChanged = this.isNarrowLayout !== isNarrow;
+    this.isNarrowLayout = isNarrow;
+    const currentCollapsed = this.service.getStudyHubState().isCollapsed;
+
+    if (isNarrow && !this.responsiveHubIsNarrow) {
+      this.responsiveHubIsNarrow = true;
+      this.responsiveHubManualCollapsed = currentCollapsed;
+      this.responsiveHubAutoCollapsed = !currentCollapsed;
+      if (!currentCollapsed) {
+        this.applyResponsiveHubCollapsedState(true);
+      }
+      return layoutChanged;
+    }
+
+    if (!isNarrow && this.responsiveHubIsNarrow) {
+      const shouldRestore = this.responsiveHubAutoCollapsed;
+      const restoreCollapsed = this.responsiveHubManualCollapsed;
+      this.responsiveHubIsNarrow = false;
+      this.responsiveHubAutoCollapsed = false;
+      this.responsiveHubManualCollapsed = null;
+      if (shouldRestore && restoreCollapsed !== null && currentCollapsed !== restoreCollapsed) {
+        this.applyResponsiveHubCollapsedState(restoreCollapsed);
+      } else {
+        this.pendingResponsiveHubCollapsedState = null;
+      }
+      return layoutChanged;
+    }
+
+    this.responsiveHubIsNarrow = isNarrow;
+    return layoutChanged;
+  }
+
+  private measureResponsiveHubWidth(observedWidth?: number): number {
+    const candidates = [
+      this.shellEl?.getBoundingClientRect().width ?? 0,
+      this.contentEl.getBoundingClientRect().width,
+      observedWidth ?? 0,
+      this.contentEl.clientWidth,
+    ].filter((value) => value > 0);
+    return candidates.length > 0 ? Math.min(...candidates) : 0;
+  }
+
+  private measureResponsiveWindowWidth(): number {
+    const ownerWindow = this.contentEl.ownerDocument.defaultView;
+    return ownerWindow?.innerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 0);
+  }
+
+  private syncResponsiveHubManualState(): void {
+    if (!this.responsiveHubIsNarrow) {
+      return;
+    }
+    const currentCollapsed = this.service.getStudyHubState().isCollapsed;
+    if (this.pendingResponsiveHubCollapsedState !== null) {
+      if (currentCollapsed === this.pendingResponsiveHubCollapsedState) {
+        this.pendingResponsiveHubCollapsedState = null;
+        return;
+      }
+      this.pendingResponsiveHubCollapsedState = null;
+    }
+    this.responsiveHubManualCollapsed = currentCollapsed;
+  }
+
+  private applyResponsiveHubCollapsedState(isCollapsed: boolean): void {
+    this.pendingResponsiveHubCollapsedState = isCollapsed;
+    this.service.setStudyHubCollapsed(isCollapsed);
+    if (this.service.getStudyHubState().isCollapsed === isCollapsed && this.pendingResponsiveHubCollapsedState === isCollapsed) {
+      this.pendingResponsiveHubCollapsedState = null;
+    }
   }
 
   private async attachBrowserFiles(files: File[], source: "clipboard" | "picker"): Promise<void> {
@@ -326,6 +458,46 @@ export class CodexWorkspaceView extends ItemView {
       return;
     }
 
-    await this.app.workspace.getLeaf(false).openFile(file);
+    await this.app.workspace.getLeaf(this.service.shouldOpenInMainEditor() ? "tab" : false).openFile(file);
+  }
+
+  private handleKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const activeElement = this.app.workspace.containerEl.ownerDocument.activeElement;
+    const isEditingText =
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement ||
+      Boolean(activeElement?.closest("[contenteditable='true']"));
+    const pressedKey = event.key.trim().toLowerCase();
+    if (!pressedKey) {
+      return;
+    }
+
+    for (const line of this.service.getVimMappings()) {
+      const mapping = parseVimMappingLine(line);
+      if (!mapping || mapping.key !== pressedKey) {
+        continue;
+      }
+      if (mapping.action !== "focusInput" && isEditingText) {
+        return;
+      }
+      event.preventDefault();
+      if (mapping.action === "focusInput") {
+        this.focusComposer();
+        return;
+      }
+      this.messagesEl.scrollBy({
+        top: mapping.action === "scrollUp" ? -96 : 96,
+        behavior: "smooth",
+      });
+      return;
+    }
   }
 }

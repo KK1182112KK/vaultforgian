@@ -5,10 +5,10 @@ import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "../types"
 export interface ComposerElements {
   root: HTMLDivElement;
   composerFlagsEl: HTMLDivElement;
+  tabBarEl: HTMLDivElement;
   slashMenuEl: HTMLDivElement;
   contextRowEl: HTMLDivElement;
   referenceDocEl: HTMLDivElement;
-  pinnedContextEl: HTMLDivElement;
   instructionRowEl: HTMLDivElement;
   selectionPreviewEl: HTMLDivElement;
   attachmentsRowEl: HTMLDivElement;
@@ -30,7 +30,8 @@ export interface ComposerElements {
   executionStateEl: HTMLDivElement;
   usageMetersEl: HTMLDivElement;
   planWarningEl: HTMLDivElement;
-  modifierControlEl: HTMLButtonElement;
+  learningModeControlEl: HTMLButtonElement;
+  learningModeTextEl: HTMLSpanElement;
   fastModeControlEl: HTMLButtonElement;
   fastModeTextEl: HTMLSpanElement;
   thinkingButtonEl: HTMLButtonElement;
@@ -60,7 +61,6 @@ export type ComposerCallbacks = Pick<
 export interface ComposerSectionRenderState {
   panelLabel: string | null;
   activeSkillLabels: string[];
-  modifierChips: Array<{ id: string; label: string }>;
   canClearPanelContext: boolean;
   planModeActive: boolean;
   placeholder: string;

@@ -5,6 +5,7 @@ import { ComposerContextSections } from "./composer/composerContextSections";
 import { ComposerInputController } from "./composer/composerInputController";
 import { ComposerStatusControls } from "./composer/composerStatusControls";
 import type { ComposerCallbacks, ComposerElements, ComposerSharedState } from "./composer/types";
+import { renderWorkspaceTabBadges } from "./tabBarRenderer";
 
 export class ComposerRenderer {
   private readonly elements: ComposerElements;
@@ -48,8 +49,11 @@ export class ComposerRenderer {
     this.state.context = context;
     const displayState = buildComposerDisplayState(context.activeTab, context.service.getHubPanels(), context.locale);
     this.root.dataset.workflow = context.activeTab?.studyWorkflow ?? "";
+    this.root.toggleClass("is-narrow", context.isNarrowLayout);
     this.elements.planModeTextEl.textContent = context.copy.workspace.planMode;
+    this.elements.statusBarEl.toggleClass("is-narrow", context.isNarrowLayout);
 
+    this.renderTabBar(context);
     this.contextSections.render(displayState);
     this.statusControls.render();
     this.inputController.render(displayState.placeholder);
@@ -80,10 +84,10 @@ export class ComposerRenderer {
     const composerFlagsEl = this.root.createDiv({ cls: "obsidian-codex__composer-flags" });
     const planModeTextEl = composerFlagsEl.createDiv({ cls: "obsidian-codex__plan-mode-text" });
     const workflowBriefEl = this.root.createDiv({ cls: "obsidian-codex__workflow-brief" });
+    const tabBarEl = this.root.createDiv({ cls: "obsidian-codex__tab-bar obsidian-codex__composer-tab-bar" });
     const slashMenuEl = this.root.createDiv({ cls: "obsidian-codex__slash-menu" });
     const contextRowEl = this.root.createDiv({ cls: "obsidian-codex__context-row" });
     const referenceDocEl = contextRowEl.createDiv({ cls: "obsidian-codex__reference-doc" });
-    const pinnedContextEl = contextRowEl.createDiv({ cls: "obsidian-codex__pinned-context" });
     const instructionRowEl = this.root.createDiv({ cls: "obsidian-codex__instruction-row" });
     const selectionPreviewEl = this.root.createDiv({ cls: "obsidian-codex__selection-preview" });
     const attachmentsRowEl = this.root.createDiv({ cls: "obsidian-codex__attachments-row" });
@@ -162,10 +166,12 @@ export class ComposerRenderer {
     const executionStateEl = statusPrimaryEl.createDiv({ cls: "obsidian-codex__execution-state" });
     const usageMetersEl = statusPrimaryEl.createDiv({ cls: "obsidian-codex__usage-meters" });
     const planWarningEl = statusBarEl.createDiv({ cls: "obsidian-codex__plan-warning" });
-    const modifierControlEl = statusBarEl.createEl("button", {
-      cls: "obsidian-codex__workflow-brief-add-modifier obsidian-codex__status-modifier-control",
-    });
-    modifierControlEl.type = "button";
+    const learningModeControlEl = statusBarEl.createEl("button", { cls: "obsidian-codex__learning-mode-control" });
+    learningModeControlEl.type = "button";
+    const learningModeLabel = learningModeControlEl.createDiv({ cls: "obsidian-codex__learning-mode-label" });
+    const learningModeTextEl = learningModeLabel.createSpan({ cls: "obsidian-codex__learning-mode-text" });
+    const learningModeToggle = learningModeControlEl.createDiv({ cls: "obsidian-codex__toggle-switch" });
+    learningModeToggle.createDiv({ cls: "obsidian-codex__toggle-knob" });
 
     const fastModeControlEl = statusBarEl.createEl("button", { cls: "obsidian-codex__fastmode-control" });
     fastModeControlEl.type = "button";
@@ -184,10 +190,10 @@ export class ComposerRenderer {
     return {
       root: this.root,
       composerFlagsEl,
+      tabBarEl,
       slashMenuEl,
       contextRowEl,
       referenceDocEl,
-      pinnedContextEl,
       instructionRowEl,
       selectionPreviewEl,
       attachmentsRowEl,
@@ -209,12 +215,24 @@ export class ComposerRenderer {
       executionStateEl,
       usageMetersEl,
       planWarningEl,
-      modifierControlEl,
+      learningModeControlEl,
+      learningModeTextEl,
       fastModeControlEl,
       fastModeTextEl,
       thinkingButtonEl,
       thinkingValueEl,
       yoloControlEl,
     };
+  }
+
+  private renderTabBar(context: WorkspaceRenderContext): void {
+    const tabBarPosition = context.service.getTabBarPosition?.() ?? "header";
+    const showInComposer = context.isNarrowLayout || tabBarPosition === "composer";
+    this.elements.tabBarEl.classList.toggle("is-visible", showInComposer);
+    if (!showInComposer) {
+      this.elements.tabBarEl.empty();
+      return;
+    }
+    renderWorkspaceTabBadges(this.elements.tabBarEl, context);
   }
 }

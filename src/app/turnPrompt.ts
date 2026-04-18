@@ -1,6 +1,86 @@
 import type { ComposeMode, RuntimeMode, TurnContextSnapshot } from "../model/types";
 import type { NoteApplyPolicy } from "../util/permissionMode";
 
+const DIRECT_ANSWER_PATTERNS: readonly RegExp[] = [
+  /\bjust give me the answer\b/i,
+  /\bjust tell me\b/i,
+  /\bdirect answer\b/i,
+  /\banswer first\b/i,
+  /\bskip the questions\b/i,
+  /\bno hints\b/i,
+  /\bshow me the solution\b/i,
+  /答えだけ/,
+  /先に答え/,
+  /そのまま答え/,
+  /質問しないで/,
+  /ヒントはいらない/,
+  /解答だけ/,
+  /結論から/,
+];
+
+const EXPLANATION_PATTERNS: readonly RegExp[] = [
+  /\bexplain\b/i,
+  /\bteach me\b/i,
+  /\bhelp me understand\b/i,
+  /\bwalk me through\b/i,
+  /\bstudy\b/i,
+  /\blearn\b/i,
+  /\breview\b/i,
+  /\bwhat is\b/i,
+  /\bhow does\b/i,
+  /\bwhy\b/i,
+  /説明/,
+  /教えて/,
+  /理解/,
+  /勉強/,
+  /復習/,
+  /なぜ/,
+  /どうして/,
+  /とは/,
+  /解説/,
+];
+
+const EDITING_PATTERNS: readonly RegExp[] = [
+  /\bimplement\b/i,
+  /\bfix\b/i,
+  /\bedit\b/i,
+  /\brewrite\b/i,
+  /\bpatch\b/i,
+  /\bupdate\b/i,
+  /\brefactor\b/i,
+  /\brename\b/i,
+  /\bmove\b/i,
+  /\bcreate\b/i,
+  /\bdelete\b/i,
+  /\bapply\b/i,
+  /実装/,
+  /修正/,
+  /編集/,
+  /書き換/,
+  /パッチ/,
+  /更新/,
+  /追加/,
+  /削除/,
+  /反映/,
+];
+
+function matchesAnyPattern(value: string, patterns: readonly RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function shouldUseLearningMode(prompt: string, context: TurnContextSnapshot, composeMode: ComposeMode, allowVaultWrite: boolean): boolean {
+  if (composeMode !== "chat" || allowVaultWrite) {
+    return false;
+  }
+  if (matchesAnyPattern(prompt, EDITING_PATTERNS)) {
+    return false;
+  }
+  if (context.studyWorkflow) {
+    return true;
+  }
+  return matchesAnyPattern(prompt, EXPLANATION_PATTERNS);
+}
+
 export function buildTurnPrompt(
   prompt: string,
   context: TurnContextSnapshot,
@@ -9,6 +89,12 @@ export function buildTurnPrompt(
   composeMode: ComposeMode,
   allowVaultWrite: boolean,
   noteApplyPolicy: NoteApplyPolicy,
+  options: {
+    preferredName?: string | null;
+    customSystemPrompt?: string | null;
+    shellBlocklist?: readonly string[];
+    learningMode?: boolean;
+  } = {},
 ): string {
   const instructions = [
     "You are Codex embedded in an Obsidian vault.",
@@ -87,7 +173,6 @@ export function buildTurnPrompt(
     `Paper-study runtime overlay: ${context.paperStudyRuntimeOverlayText ? "attached" : "none"}`,
     `Requested skill guides: ${context.skillGuideText ? "attached" : "none"}`,
     `Paper-study guidance: ${context.paperStudyGuideText ? "attached" : "none"}`,
-    `Instruction chips: ${context.instructionText ? "attached" : "none"}`,
     `Explicit mentions: ${context.mentionContextText ? "attached" : "none"}`,
     `Selection snapshot: ${context.selection ? `attached from ${context.selectionSourcePath ?? "the current note"}` : "none"}`,
     `Vault note source pack: ${context.noteSourcePackText ? "attached" : "none"}`,
@@ -95,6 +180,32 @@ export function buildTurnPrompt(
     `Attachment content pack: ${context.attachmentContentText ? "attached" : "none"}`,
     `Daily note path: ${context.dailyNotePath ?? "none"}`,
   ];
+
+  if (options.preferredName?.trim()) {
+    instructions.push(`If you address the user directly, call them "${options.preferredName.trim()}".`);
+  }
+
+  if ((options.shellBlocklist?.length ?? 0) > 0) {
+    instructions.push(`User-configured blocked shell patterns: ${options.shellBlocklist?.join(", ")}`);
+    instructions.push("Do not propose or rely on shell commands matching those blocked patterns.");
+  }
+
+  const learningModeActive = Boolean(options.learningMode) && shouldUseLearningMode(prompt, context, composeMode, allowVaultWrite);
+  if (learningModeActive) {
+    const directAnswerRequested = matchesAnyPattern(prompt, DIRECT_ANSWER_PATTERNS);
+    if (directAnswerRequested) {
+      instructions.push(
+        "Learning mode is active for this tab. For study and explanation turns, prefer a Socratic tutoring style, but the user explicitly asked for the direct answer in this turn. Give the direct answer first, keep it instructional, and optionally finish with one short check-for-understanding question.",
+      );
+    } else {
+      instructions.push(
+        "Learning mode is active for this tab. For study and explanation turns, use the Socratic method: do not reveal the full answer immediately, ask one high-leverage question at a time, wait for the learner's reasoning when possible, and give hints progressively before complete solutions.",
+      );
+      instructions.push(
+        "In learning mode, prioritize helping the user think through the next step, surface misconceptions, and explain why a step works. Do not force Socratic dialogue for note-editing, patch-generation, implementation, or operational tasks.",
+      );
+    }
+  }
 
   if (context.pluginFeatureText) {
     instructions.push("A plugin feature guide is attached for this turn. Answer plugin-UI questions from that guide first.");
@@ -174,13 +285,13 @@ export function buildTurnPrompt(
     context.paperStudyRuntimeOverlayText,
     context.skillGuideText,
     context.paperStudyGuideText,
-    context.instructionText,
     context.mentionContextText,
     selectionBlock,
     context.noteSourcePackText,
     context.attachmentManifestText,
     context.attachmentContentText,
     context.contextPackText,
+    options.customSystemPrompt?.trim() ? ["User-added system instructions:", options.customSystemPrompt.trim()].join("\n\n") : null,
     "User request:",
     prompt,
   ]

@@ -23,7 +23,7 @@ function createTab(overrides: Partial<ConversationTabState> = {}): ConversationT
     studyWorkflow: null,
     activeStudyRecipeId: null,
     activeStudySkillNames: [],
-    instructionChips: [],
+    learningMode: false,
     summary: null,
     lineage: {
       parentTabId: null,

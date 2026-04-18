@@ -30,7 +30,6 @@ describe("studyWorkflows", () => {
 
   it("exposes workflow profile details for paper mode", () => {
     const workflow = getStudyWorkflowDefinition("paper");
-    expect(workflow.instructionLabels).toEqual(["research", "strict"]);
     expect(workflow.safeAutoSkillRefs).toEqual([]);
     expect(getStudyWorkflowQuickAction("paper")).toBe("Read the attached paper deeply");
     expect(getStudyWorkflowComposerPlaceholder("paper")).toContain("paper");

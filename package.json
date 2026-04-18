@@ -1,6 +1,6 @@
 {
   "name": "codex-noteforge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "author": "KK1182112KK",
@@ -15,6 +15,7 @@
     "check:package": "node scripts/check-package.mjs",
     "dev": "node scripts/dev.mjs",
     "lint": "node scripts/lint.mjs",
+    "release:bundle": "node scripts/create-release-bundle.mjs",
     "site:build": "npm run build --prefix site",
     "site:dev": "npm run dev --prefix site",
     "site:preview": "npm run preview --prefix site",

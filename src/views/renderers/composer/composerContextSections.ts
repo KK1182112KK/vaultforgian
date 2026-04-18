@@ -23,12 +23,15 @@ export class ComposerContextSections {
 
   private renderReferenceDoc(): void {
     const context = this.context;
-    const { contextRowEl, pinnedContextEl, referenceDocEl } = this.deps.elements;
-    pinnedContextEl.empty();
+    const { contextRowEl, referenceDocEl } = this.deps.elements;
     referenceDocEl.empty();
     if (!context?.activeTab?.id) {
       contextRowEl.classList.remove("has-content");
       referenceDocEl.classList.add("is-empty");
+      referenceDocEl.onclick = null;
+      referenceDocEl.onkeydown = null;
+      referenceDocEl.tabIndex = -1;
+      referenceDocEl.title = "";
       return;
     }
 
@@ -39,11 +42,11 @@ export class ComposerContextSections {
       referenceDocEl.onclick = null;
       referenceDocEl.onkeydown = null;
       referenceDocEl.tabIndex = -1;
+      referenceDocEl.title = "";
       return;
     }
 
     contextRowEl.classList.add("has-content");
-    referenceDocEl.classList.remove("is-empty");
     referenceDocEl.classList.remove("is-empty");
     referenceDocEl.title = targetPath;
     referenceDocEl.onclick = () => {
@@ -291,8 +294,7 @@ export class ComposerContextSections {
     }
 
     const showPanelRow = Boolean(displayState.panelLabel) || displayState.activeSkillLabels.length > 0;
-    const showModifierRow = displayState.modifierChips.length > 0;
-    if (!showPanelRow && !showModifierRow && displayState.modifierChips.length === 0) {
+    if (!showPanelRow) {
       workflowBriefEl.classList.remove("is-visible");
       delete workflowBriefEl.dataset.workflow;
       return;
@@ -323,29 +325,6 @@ export class ComposerContextSections {
       }
       for (const skillLabel of displayState.activeSkillLabels) {
         headerEl.createSpan({ cls: "obsidian-codex__workflow-brief-skill", text: skillLabel });
-      }
-    }
-
-    if (showModifierRow) {
-      const modifiersEl = workflowBriefEl.createDiv({ cls: "obsidian-codex__workflow-brief-modifiers" });
-      modifiersEl.createSpan({
-        cls: "obsidian-codex__workflow-brief-modifiers-label",
-        text: context.copy.workspace.modifiers,
-      });
-      const modifiersListEl = modifiersEl.createDiv({ cls: "obsidian-codex__workflow-brief-modifiers-list" });
-      for (const chip of displayState.modifierChips) {
-        const chipEl = modifiersListEl.createDiv({ cls: "obsidian-codex__instruction-chip obsidian-codex__workflow-brief-modifier" });
-        chipEl.createSpan({ cls: "obsidian-codex__instruction-chip-text", text: `#${chip.label}` });
-        const removeButton = chipEl.createEl("button", {
-          cls: "obsidian-codex__instruction-chip-remove",
-          attr: { type: "button", "aria-label": context.copy.workspace.removeInstruction(chip.label) },
-        });
-        setIcon(removeButton, "x");
-        removeButton.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          context.service.removeInstructionChip(context.activeTab!.id, chip.id);
-        });
       }
     }
   }

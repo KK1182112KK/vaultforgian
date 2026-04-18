@@ -21,7 +21,7 @@ function createState(): WorkspaceState {
         studyWorkflow: null,
         activeStudyRecipeId: null,
         activeStudySkillNames: [],
-        instructionChips: [],
+        learningMode: false,
         summary: null,
         lineage: {
           parentTabId: null,
@@ -114,7 +114,6 @@ function createState(): WorkspaceState {
                     minimumPinnedContextCount: 0,
         },
         outputContract: [],
-        instructionChipHints: [],
         sourceHints: [],
         exampleSession: {
           sourceTabTitle: "Chat 1",
@@ -183,6 +182,8 @@ function createHarness(
     slashCommands?: readonly SlashCommandDefinition[];
     permissionMode?: "suggest" | "auto-edit" | "full-auto";
     fastMode?: boolean;
+    tabBarPosition?: "header" | "composer";
+    isNarrowLayout?: boolean;
     activeFilePath?: string | null;
     dailyNotePath?: string | null;
     contextPaths?: string[];
@@ -323,33 +324,33 @@ function createHarness(
       }
       renderAll();
     }),
-    removeInstructionChip: vi.fn(),
     getPermissionMode: () => permissionMode,
     setPermissionMode: vi.fn(async (mode: typeof permissionMode) => {
       permissionMode = mode;
       renderAll();
     }),
+    getMaxOpenTabs: () => 6,
     ensureAccountUsage: vi.fn(),
     getAvailableModels: () => state.availableModels,
-    getInstructionOptions: () => [
-      {
-        token: "#focus",
-        label: "focus",
-        description: "Keep the answer focused.",
-      },
-    ],
-    addInstructionChips: vi.fn((tabId: string, labels: string[]) => {
-      if (tabId === activeTab.id) {
-        for (const label of labels) {
-          activeTab.instructionChips.push({ id: `chip-${label}`, label, createdAt: Date.now() });
-        }
-      }
-      renderAll();
-    }),
+    getTabBarPosition: () => options.tabBarPosition ?? "header",
     getMentionCandidates: () => [],
     getSlashCommandCatalog: () => options.slashCommands ?? [],
     setTabModel: vi.fn(),
     setTabReasoningEffort: vi.fn(),
+    toggleTabLearningMode: vi.fn((tabId: string) => {
+      if (tabId === activeTab.id) {
+        activeTab.learningMode = !activeTab.learningMode;
+      }
+      renderAll();
+      return activeTab.learningMode;
+    }),
+    setTabLearningMode: vi.fn((tabId: string, enabled: boolean) => {
+      if (tabId === activeTab.id) {
+        activeTab.learningMode = enabled;
+      }
+      renderAll();
+      return enabled;
+    }),
     setTabFastMode: vi.fn((tabId: string, enabled: boolean) => {
       if (tabId === activeTab.id) {
         activeTab.fastMode = enabled;
@@ -430,6 +431,7 @@ function createHarness(
       service: service as never,
       state,
       activeTab,
+      isNarrowLayout: options.isNarrowLayout ?? false,
       locale: "en",
       copy,
     };
@@ -491,6 +493,7 @@ function createMultiTabComposerHarness() {
   const service = {
     getHubPanels: () => state.studyRecipes,
     getActiveTab: () => state.tabs.find((entry) => entry.id === state.activeTabId) ?? null,
+    getMaxOpenTabs: () => 6,
     getTabComposerHistory: () => ({
       entries: [],
       index: null,
@@ -508,17 +511,10 @@ function createMultiTabComposerHarness() {
     rejectPatchProposal: vi.fn(),
     applyPatchProposal: vi.fn(),
     clearActivePanelContext: vi.fn(),
-    removeInstructionChip: vi.fn(),
     getPermissionMode: () => "suggest" as const,
     getAvailableModels: () => state.availableModels,
+    getTabBarPosition: () => "header" as const,
     ensureAccountUsage: vi.fn(),
-    getInstructionOptions: () => [
-      {
-        token: "#focus",
-        label: "focus",
-        description: "Keep the answer focused.",
-      },
-    ],
     setTabModel: vi.fn((tabId: string, model: string) => {
       const tab = state.tabs.find((entry) => entry.id === tabId);
       if (tab) {
@@ -533,14 +529,21 @@ function createMultiTabComposerHarness() {
       }
       render();
     }),
-    addInstructionChips: vi.fn((tabId: string, labels: string[]) => {
+    toggleTabLearningMode: vi.fn((tabId: string) => {
       const tab = state.tabs.find((entry) => entry.id === tabId);
       if (tab) {
-        for (const label of labels) {
-          tab.instructionChips.push({ id: `chip-${tabId}-${label}`, label, createdAt: Date.now() });
-        }
+        tab.learningMode = !tab.learningMode;
       }
       render();
+      return tab?.learningMode ?? false;
+    }),
+    setTabLearningMode: vi.fn((tabId: string, enabled: boolean) => {
+      const tab = state.tabs.find((entry) => entry.id === tabId);
+      if (tab) {
+        tab.learningMode = enabled;
+      }
+      render();
+      return enabled;
     }),
     getMentionCandidates: () => [],
     getSlashCommandCatalog: () => [],
@@ -575,6 +578,7 @@ function createMultiTabComposerHarness() {
       service: service as never,
       state,
       activeTab,
+      isNarrowLayout: false,
       locale: "en",
       copy,
     };
@@ -1197,20 +1201,16 @@ describe("Panel Studio composer flow", () => {
     expect(Notice.messages).toContain("Send failed");
   });
 
-  it("restores focus to the modifier button when the modifier menu closes with Escape", async () => {
+  it("toggles learning mode from the dedicated status control", async () => {
     const harness = createHarness();
-    const modifierButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__status-modifier-control")!;
+    const learningModeButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__learning-mode-control")!;
 
-    modifierButton.click();
+    learningModeButton.click();
     await tick();
 
-    const menu = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__status-menu--modifier");
-    expect(menu).not.toBeNull();
-    menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await tick();
-
-    expect(harness.composerRoot.querySelector(".obsidian-codex__status-menu--modifier")).toBeNull();
-    expect(document.activeElement).toBe(modifierButton);
+    expect(harness.service.toggleTabLearningMode).toHaveBeenCalledWith("tab-1");
+    expect(harness.state.tabs[0]!.learningMode).toBe(true);
+    expect(learningModeButton.classList.contains("is-active")).toBe(true);
   });
 
   it("closes the model menu when ownership changes to another active tab", async () => {
@@ -1245,6 +1245,32 @@ describe("Panel Studio composer flow", () => {
 
     expect(harness.service.setTabModel).not.toHaveBeenCalled();
     expect(harness.state.tabs.find((tab) => tab.id === "tab-1")?.model).toBe("gpt-5.4");
+  });
+
+  it("renders tab badges above the composer when the placement is set to composer", async () => {
+    const harness = createHarness({ tabBarPosition: "composer" });
+    await tick();
+
+    const composerTabBar = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__composer-tab-bar");
+    expect(composerTabBar?.classList.contains("is-visible")).toBe(true);
+    expect(composerTabBar?.querySelectorAll(".obsidian-codex__tab-badge").length).toBe(1);
+  });
+
+  it("forces tab badges above the composer in narrow layout even when the setting is header", async () => {
+    const harness = createHarness({ tabBarPosition: "header", isNarrowLayout: true });
+    await tick();
+
+    const composerTabBar = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__composer-tab-bar");
+    expect(composerTabBar?.classList.contains("is-visible")).toBe(true);
+    expect(composerTabBar?.querySelectorAll(".obsidian-codex__tab-badge").length).toBe(1);
+  });
+
+  it("marks the composer status bar as narrow when the shared layout is narrow", async () => {
+    const harness = createHarness({ isNarrowLayout: true });
+    await tick();
+
+    const statusBar = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__status-bar");
+    expect(statusBar?.classList.contains("is-narrow")).toBe(true);
   });
 
   it("hides the workflow brief modifier row when no modifiers are active", async () => {
@@ -1458,21 +1484,13 @@ describe("Panel Studio composer flow", () => {
     expect(document.activeElement).toBe(input);
   });
 
-  it("can click back into the textarea after opening and closing the modifier menu", async () => {
+  it("can click back into the textarea after toggling learning mode", async () => {
     const harness = createHarness();
     const input = harness.composerRoot.querySelector<HTMLTextAreaElement>(".obsidian-codex__input")!;
-    const modifierButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__status-modifier-control")!;
+    const learningModeButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__learning-mode-control")!;
 
-    modifierButton.click();
+    learningModeButton.click();
     await tick();
-
-    const menu = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__status-menu--modifier");
-    expect(menu).not.toBeNull();
-
-    menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await tick();
-
-    expect(harness.composerRoot.querySelector(".obsidian-codex__status-menu--modifier")).toBeNull();
 
     input.click();
     await tick();

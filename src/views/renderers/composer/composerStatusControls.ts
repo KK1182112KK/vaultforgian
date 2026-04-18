@@ -26,10 +26,10 @@ export class ComposerStatusControls {
       event.stopPropagation();
       this.showThinkingPicker(this.elements.thinkingButtonEl);
     });
-    this.elements.modifierControlEl.addEventListener("click", (event) => {
+    this.elements.learningModeControlEl.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      this.showModifierPicker(this.elements.modifierControlEl);
+      this.toggleLearningMode();
     });
     this.elements.fastModeControlEl.addEventListener("click", (event) => {
       event.preventDefault();
@@ -62,6 +62,15 @@ export class ComposerStatusControls {
     context.service.setTabFastMode(tabId, !Boolean(context.activeTab?.fastMode));
   }
 
+  private toggleLearningMode(): void {
+    const context = this.context;
+    const tabId = context?.activeTab?.id;
+    if (!context || !tabId || this.elements.learningModeControlEl.disabled) {
+      return;
+    }
+    context.service.toggleTabLearningMode(tabId);
+  }
+
   render(): void {
     const context = this.context;
     if (!context) {
@@ -79,15 +88,15 @@ export class ComposerStatusControls {
     this.elements.fastModeControlEl.ariaLabel = context.copy.workspace.toggleFastMode;
     this.elements.yoloControlEl.ariaLabel = context.copy.workspace.toggleYolo;
     this.elements.yoloControlEl.title = context.copy.workspace.toggleYolo;
-    this.elements.modifierControlEl.ariaLabel = context.copy.workspace.addModifier;
-    this.elements.modifierControlEl.title = context.copy.workspace.addModifier;
-    this.elements.modifierControlEl.textContent = `+ ${context.copy.workspace.addModifier}`;
+    this.elements.learningModeControlEl.ariaLabel = context.copy.workspace.toggleLearningMode;
+    this.elements.learningModeControlEl.title = context.copy.workspace.toggleLearningMode;
     this.elements.sendButton.dataset.smoke = "composer-send";
-    this.elements.modifierControlEl.dataset.smoke = "composer-modifier-trigger";
+    this.elements.learningModeControlEl.dataset.smoke = "composer-learning-mode";
     this.elements.modelButtonEl.dataset.smoke = "composer-model-trigger";
     this.elements.thinkingButtonEl.dataset.smoke = "composer-thinking-trigger";
     this.elements.fastModeControlEl.dataset.smoke = "composer-fastmode";
     this.elements.yoloControlEl.dataset.smoke = "composer-yolo";
+    this.elements.learningModeTextEl.textContent = context.copy.workspace.learningMode;
     this.elements.fastModeTextEl.textContent = context.copy.workspace.fastMode;
 
     const yoloText = this.elements.yoloControlEl.querySelector(".obsidian-codex__yolo-text");
@@ -112,6 +121,9 @@ export class ComposerStatusControls {
     this.elements.modelValueEl.setAttribute("aria-label", `${context.copy.workspace.modelMenuTitle}: ${statusState.modelLabel}`);
     this.elements.thinkingValueEl.textContent = statusState.reasoningLabel;
     this.elements.thinkingValueEl.setAttribute("aria-label", `${context.copy.workspace.thinkingMenuTitle}: ${statusState.reasoningLabel}`);
+    this.elements.learningModeControlEl.classList.toggle("is-active", statusState.learningModeActive);
+    this.elements.learningModeControlEl.disabled = statusState.streaming || !context.activeTab;
+    this.elements.learningModeControlEl.ariaPressed = String(statusState.learningModeActive);
     this.elements.fastModeControlEl.classList.toggle("is-active", statusState.fastModeActive);
     this.elements.fastModeControlEl.disabled = statusState.streaming || !context.activeTab;
     this.elements.fastModeControlEl.ariaPressed = String(statusState.fastModeActive);
@@ -125,6 +137,10 @@ export class ComposerStatusControls {
     this.elements.planWarningEl.dataset.smoke = "composer-plan-warning";
     this.elements.planWarningEl.textContent = statusState.showPlanYoloWarning ? context.copy.workspace.planYoloWarning : "";
     this.elements.planWarningEl.classList.toggle("is-visible", statusState.showPlanYoloWarning);
+    this.elements.learningModeControlEl.title = statusState.streaming
+      ? context.copy.workspace.learningModeStreamingTooltip
+      : `${context.copy.workspace.learningMode} · ${context.copy.workspace.learningModeHint}`;
+    this.elements.learningModeControlEl.ariaLabel = this.elements.learningModeControlEl.title;
     this.elements.fastModeControlEl.title = statusState.streaming
       ? context.copy.workspace.fastModeStreamingTooltip
       : `${context.copy.workspace.fastMode} · ${context.copy.workspace.fastModeHint}`;
@@ -271,34 +287,6 @@ export class ComposerStatusControls {
       },
     }));
     this.showStatusMenu(anchor, context.copy.workspace.thinkingMenuTitle, options, { ownerTabId });
-  }
-
-  private showModifierPicker(anchor: HTMLElement): void {
-    const context = this.context;
-    if (!context?.activeTab) {
-      return;
-    }
-    const ownerTabId = context.activeTab.id;
-    const selectedLabels = new Set((context.activeTab.instructionChips ?? []).map((chip) => chip.label.toLowerCase()));
-    const options = context.service.getInstructionOptions().map((option) => ({
-      label: `#${option.label}`,
-      description: option.description,
-      selected: selectedLabels.has(option.label.toLowerCase()),
-      onSelect: () => {
-        if (this.context?.activeTab?.id !== ownerTabId) {
-          return;
-        }
-        context.service.addInstructionChips(ownerTabId, [option.label]);
-      },
-    }));
-    this.showStatusMenu(anchor, context.copy.workspace.modifiers, options, {
-      container: this.elements.root,
-      width: 312,
-      placement: "above",
-      menuClassName: "obsidian-codex__status-menu obsidian-codex__status-menu--modifier",
-      menuSmokeId: "composer-modifier-menu",
-      ownerTabId,
-    });
   }
 
   private showStatusMenu(

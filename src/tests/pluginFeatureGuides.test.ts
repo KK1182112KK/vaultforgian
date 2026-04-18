@@ -20,7 +20,6 @@ function createStudyRecipe(overrides: Partial<StudyRecipe> = {}): StudyRecipe {
             minimumPinnedContextCount: 0,
     },
     outputContract: ["topics", "questions"],
-    instructionChipHints: ["focus"],
     sourceHints: ["lecture PDF"],
     exampleSession: {
       sourceTabTitle: "Signals",

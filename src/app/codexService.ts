@@ -44,7 +44,7 @@ import {
   parseModelCatalog,
   resolveReasoningEffortForModel,
 } from "../util/models";
-import { MAX_CONTEXT_PATHS, normalizeContextPaths } from "../util/contextPack";
+import { buildContextPackText, MAX_CONTEXT_PATHS, normalizeContextPaths } from "../util/contextPack";
 import { loadCodexPromptCatalog, type CodexPromptDefinition } from "../util/codexPrompts";
 import {
   chooseHighestReasoningEffort,
@@ -57,7 +57,6 @@ import {
   type ReasoningEffort,
 } from "../util/reasoning";
 import { getPermissionModeProfile, type NoteApplyPolicy, type PermissionMode } from "../util/permissionMode";
-import { getInstructionOptions as getBuiltInInstructionOptions, type InstructionOptionDefinition } from "../util/instructionOptions";
 import {
   buildAttachmentContentPackResult,
   buildAttachmentPromptManifest,
@@ -82,6 +81,7 @@ import {
   type InstalledSkillDefinition,
 } from "../util/skillCatalog";
 import { getDefaultWslBridgeSkillRoots, normalizeConfiguredSkillRoots } from "../util/skillRoots";
+import { parseEnvironmentEntries } from "../util/pluginSettings";
 import { extractSkillReferences } from "../util/skillRouting";
 import { getSlashCommandCatalog, type SlashCommandDefinition } from "../util/slashCommandCatalog";
 import { expandSlashCommand } from "../util/slashCommands";
@@ -275,7 +275,6 @@ const SESSION_FILE_RESOLVE_BASE_DELAY_MS = 200;
 const DEFAULT_SKILL_ROOT = join(CODEX_HOME, "skills");
 const DEFAULT_AGENT_SKILL_ROOT = join(homedir(), ".agents", "skills");
 const DEFAULT_PLUGIN_CACHE_SKILL_ROOT = join(CODEX_HOME, "plugins", "cache");
-const MAX_OPEN_TABS = 5;
 const DEFAULT_SELECTION_PROMPT = "Explain this selection and stay focused on the selected text.";
 const MAX_RECENT_STUDY_SOURCES = 8;
 const EMPTY_REPLY_SESSION_SETTLE_ATTEMPTS = 4;
@@ -483,6 +482,7 @@ export class CodexService {
   private saveQueued = false;
   private jsonOutputFlag: JsonOutputFlag = "--json";
   private customPromptCatalog: CodexPromptDefinition[] = [];
+  private allInstalledSkillCatalog: InstalledSkillDefinition[] = [];
   private installedSkillCatalog: InstalledSkillDefinition[] = [];
 
   constructor(
@@ -567,6 +567,7 @@ export class CodexService {
     this.wslBridgeSessionRootsPromise = null;
     this.lastResolvedSessionSearchRoots = [CODEX_SESSION_ROOT];
     this.sessionFileCache.clear();
+    void this.refreshCodexCatalogs();
     void this.refreshRuntimeHealth();
   }
 
@@ -580,6 +581,10 @@ export class CodexService {
 
   getRuntimeIssue(): string | null {
     return this.store.getState().runtimeIssue;
+  }
+
+  getAuthState(): "ready" | "missing_login" {
+    return this.store.getState().authState;
   }
 
   getActiveTab() {
@@ -604,6 +609,10 @@ export class CodexService {
 
   getStudyRecipes(): StudyRecipe[] {
     return this.store.getState().studyRecipes.map((recipe) => structuredClone(recipe));
+  }
+
+  getCustomStudyRecipes(): StudyRecipe[] {
+    return this.getStudyRecipes().filter((recipe) => recipe.workflow === "custom");
   }
 
   getHubPanels(): StudyRecipe[] {
@@ -723,7 +732,6 @@ export class CodexService {
     const workflowContext = this.buildWorkflowPromptContext(tabId, workflow, targetFile?.path ?? null);
     const locale = this.getLocale();
     const draft = buildStudyWorkflowDraft(workflow, workflowContext, locale);
-    const workflowDefinition = getStudyWorkflowDefinition(workflow, locale);
 
     this.store.setTabStudyWorkflow(tabId, workflow);
     this.store.setActiveStudyPanel(tabId, null, []);
@@ -732,14 +740,6 @@ export class CodexService {
     this.markStudyHubOpened();
     this.store.setDraft(tabId, draft);
     this.store.setComposeMode(tabId, "chat");
-    this.store.setInstructionChips(
-      tabId,
-      workflowDefinition.instructionLabels.map((label) => ({
-        id: makeId("instruction"),
-        label,
-        createdAt: Date.now(),
-      })),
-    );
     if (targetFile) {
       this.noteRecentStudySource({
         id: makeId("study-source"),
@@ -754,6 +754,22 @@ export class CodexService {
 
   shouldAutoRestoreTabs(): boolean {
     return this.settingsProvider().autoRestoreTabs;
+  }
+
+  shouldAutoScrollStreaming(): boolean {
+    return this.settingsProvider().autoScrollStreaming;
+  }
+
+  shouldOpenInMainEditor(): boolean {
+    return this.settingsProvider().openInMainEditor;
+  }
+
+  getTabBarPosition(): "header" | "composer" {
+    return this.settingsProvider().tabBarPosition;
+  }
+
+  getVimMappings(): string[] {
+    return [...this.settingsProvider().vimMappings];
   }
 
   getModel(): string {
@@ -794,6 +810,12 @@ export class CodexService {
 
   getShowReasoning(): boolean {
     return this.settingsProvider().showReasoning;
+  }
+
+  async refreshRuntimeMetadata(): Promise<void> {
+    await this.refreshModelCatalog();
+    await this.refreshCodexCatalogs();
+    await this.refreshRuntimeHealth();
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
@@ -922,25 +944,27 @@ export class CodexService {
   }
 
   getUserOwnedInstalledSkills(): InstalledSkillDefinition[] {
-    return this.installedSkillCatalog
+    return this.allInstalledSkillCatalog
       .filter((skill) => isUserOwnedSkillDefinition(skill))
       .map((entry) => ({ ...entry }));
   }
 
   getInstalledSkills(): InstalledSkillDefinition[] {
-    return this.installedSkillCatalog.map((entry) => ({ ...entry }));
+    return this.allInstalledSkillCatalog.map((entry) => ({ ...entry }));
+  }
+
+  getConfiguredMcpServers() {
+    return this.settingsProvider().mcpServers
+      .filter((server) => server.enabled && server.name.trim().length > 0)
+      .map((server) => ({
+        ...server,
+        args: [...server.args],
+        env: [...server.env],
+      }));
   }
 
   async refreshInstalledSkills(): Promise<void> {
     await this.refreshInstalledSkillCatalog();
-  }
-
-  getInstructionOptions(): InstructionOptionDefinition[] {
-    return getBuiltInInstructionOptions(this.getLocale());
-  }
-
-  getTabInstructionChips(tabId: string): Array<{ id: string; label: string; createdAt: number }> {
-    return (this.findTab(tabId)?.instructionChips ?? []).map((chip) => ({ ...chip }));
   }
 
   getTabComposerHistory(tabId: string) {
@@ -963,40 +987,9 @@ export class CodexService {
     return summary ? { ...summary } : null;
   }
 
-  addInstructionChips(tabId: string, labels: readonly string[]): void {
-    const tab = this.findTab(tabId);
-    if (!tab) {
-      return;
-    }
-    const existing = new Set(tab.instructionChips.map((chip) => chip.label.toLowerCase()));
-    const additions = labels
-      .map((label) => label.trim().toLowerCase())
-      .filter((label) => label.length > 0 && !existing.has(label))
-      .map((label) => ({
-        id: makeId("instruction"),
-        label,
-        createdAt: Date.now(),
-      }));
-    if (additions.length === 0) {
-      return;
-    }
-    this.store.setInstructionChips(tabId, [...tab.instructionChips, ...additions]);
-  }
-
-  removeInstructionChip(tabId: string, chipId: string): void {
-    const tab = this.findTab(tabId);
-    if (!tab) {
-      return;
-    }
-    this.store.setInstructionChips(
-      tabId,
-      tab.instructionChips.filter((chip) => chip.id !== chipId),
-    );
-  }
-
   forkTab(tabId: string): string | null {
     const tab = this.findTab(tabId);
-    if (!tab || this.store.getState().tabs.length >= MAX_OPEN_TABS) {
+    if (!tab || this.store.getState().tabs.length >= this.getMaxOpenTabs()) {
       return null;
     }
     const fork = this.store.createTab(tab.cwd, `${tab.title} (fork)`, {
@@ -1010,6 +1003,7 @@ export class CodexService {
       panelSessionOrigin: tab.panelSessionOrigin ? structuredClone(tab.panelSessionOrigin) : null,
       chatSuggestion: null,
       composeMode: tab.composeMode,
+      learningMode: tab.learningMode,
       contextPaths: [...tab.contextPaths],
       lastResponseId: null,
       sessionItems: [],
@@ -1019,7 +1013,6 @@ export class CodexService {
       diffText: tab.diffText,
       toolLog: tab.toolLog.map((entry) => ({ ...entry })),
       patchBasket: tab.patchBasket.map((proposal) => ({ ...proposal, id: makeId("patch-fork") })),
-      instructionChips: tab.instructionChips.map((chip) => ({ ...chip })),
       summary: tab.summary ? { ...tab.summary } : null,
       lineage: {
         parentTabId: tab.id,
@@ -1034,7 +1027,7 @@ export class CodexService {
 
   resumeTab(tabId: string): string | null {
     const tab = this.findTab(tabId);
-    if (!tab?.codexThreadId || this.store.getState().tabs.length >= MAX_OPEN_TABS) {
+    if (!tab?.codexThreadId || this.store.getState().tabs.length >= this.getMaxOpenTabs()) {
       return null;
     }
     const resumed = this.store.createTab(tab.cwd, `${tab.title} (resume)`, {
@@ -1048,6 +1041,7 @@ export class CodexService {
       panelSessionOrigin: tab.panelSessionOrigin ? structuredClone(tab.panelSessionOrigin) : null,
       chatSuggestion: null,
       composeMode: tab.composeMode,
+      learningMode: tab.learningMode,
       contextPaths: [...tab.contextPaths],
       lastResponseId: null,
       sessionItems: [],
@@ -1057,7 +1051,6 @@ export class CodexService {
       diffText: "",
       toolLog: [],
       patchBasket: [],
-      instructionChips: tab.instructionChips.map((chip) => ({ ...chip })),
       summary: tab.summary ? { ...tab.summary } : null,
       lineage: {
         parentTabId: tab.id,
@@ -1116,15 +1109,13 @@ export class CodexService {
       locale === "ja" ? `Compose mode: ${tab.composeMode}` : `Compose mode: ${tab.composeMode}`,
       tab.studyWorkflow ? (locale === "ja" ? `Workflow: ${tab.studyWorkflow}` : `Workflow: ${tab.studyWorkflow}`) : null,
       activePanelTitle ? (locale === "ja" ? `Panel: ${activePanelTitle}` : `Panel: ${activePanelTitle}`) : null,
+      tab.learningMode ? (locale === "ja" ? "Learning mode: on" : "Learning mode: on") : null,
       tab.activeStudySkillNames.length > 0
         ? locale === "ja"
           ? `Active skills: ${tab.activeStudySkillNames.map((name) => `/${name}`).join(", ")}`
           : `Active skills: ${tab.activeStudySkillNames.map((name) => `/${name}`).join(", ")}`
         : null,
       tab.targetNotePath ? (locale === "ja" ? `Reference note: ${tab.targetNotePath}` : `Reference note: ${tab.targetNotePath}`) : null,
-      tab.instructionChips.length > 0
-        ? `Instruction chips: ${tab.instructionChips.map((chip) => `#${chip.label}`).join(", ")}`
-        : null,
       userPrompts.length > 0 ? (locale === "ja" ? "Recent user requests:" : "Recent user requests:") : null,
       ...userPrompts,
       assistantReplies.length > 0 ? (locale === "ja" ? "Recent Codex replies:" : "Recent Codex replies:") : null,
@@ -1602,14 +1593,12 @@ export class CodexService {
         label: basename(path) || path,
         description: path,
       }));
-    const mcpCandidates = [
-      {
-        kind: "mcp" as const,
-        token: "@mcp(github)",
-        label: "github",
-        description: locale === "ja" ? "MCP サーバー" : "MCP server",
-      },
-    ];
+    const mcpCandidates = this.getConfiguredMcpServers().map((server) => ({
+      kind: "mcp" as const,
+      token: `@mcp(${server.name})`,
+      label: server.name,
+      description: locale === "ja" ? "MCP サーバー" : "MCP server",
+    }));
     return [...noteCandidates, ...skillCandidates, ...recipeCandidates, ...externalCandidates, ...mcpCandidates];
   }
 
@@ -1623,6 +1612,10 @@ export class CodexService {
 
   saveStudyRecipe(preview: StudyRecipeSavePreview): StudyRecipe {
     return this.studyPanels.saveStudyRecipe(preview);
+  }
+
+  upsertStudyRecipe(recipe: StudyRecipe): void {
+    this.store.upsertStudyRecipe(structuredClone(recipe));
   }
 
   removeStudyRecipe(recipeId: string): void {
@@ -1675,6 +1668,25 @@ export class CodexService {
     this.store.setTabFastMode(tabId, enabled);
   }
 
+  setTabLearningMode(tabId: string, enabled: boolean): boolean {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return false;
+    }
+    this.store.setLearningMode(tabId, enabled);
+    return enabled;
+  }
+
+  toggleTabLearningMode(tabId: string): boolean {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return false;
+    }
+    const next = !tab.learningMode;
+    this.store.setLearningMode(tabId, next);
+    return next;
+  }
+
   setTabComposeMode(tabId: string, composeMode: ComposeMode): ComposeMode | null {
     const tab = this.findTab(tabId);
     if (!tab) {
@@ -1701,7 +1713,7 @@ export class CodexService {
   }
 
   createTab() {
-    if (this.store.getState().tabs.length >= MAX_OPEN_TABS) {
+    if (this.store.getState().tabs.length >= this.getMaxOpenTabs()) {
       return null;
     }
     const activeFile = this.getPreferredTargetFile();
@@ -1713,7 +1725,7 @@ export class CodexService {
   }
 
   getMaxOpenTabs(): number {
-    return MAX_OPEN_TABS;
+    return this.settingsProvider().maxChatTabs;
   }
 
   closeTab(tabId: string): void {
@@ -1744,7 +1756,6 @@ export class CodexService {
       studyWorkflow: null,
       activeStudyRecipeId: null,
       activeStudySkillNames: [],
-      instructionChips: [],
       summary: null,
       lineage: {
         parentTabId: null,
@@ -2217,10 +2228,6 @@ export class CodexService {
         throw new Error(this.getLocalizedCopy().service.promptEmptyAfterExpansion);
       }
 
-      if (promptMetadata.instructionLabels.length > 0) {
-        this.addInstructionChips(tabId, promptMetadata.instructionLabels);
-      }
-
       this.studyPanels.capturePanelSessionOrigin(tabId, normalizedInput);
 
       const mentionResolution = await this.resolveMentionContext(promptMetadata.mentions);
@@ -2287,7 +2294,7 @@ export class CodexService {
       this.store.setDraft(tabId, "");
       this.store.setRuntimeIssue(null);
       this.store.setRuntimeMode(tabId, runtimeMode);
-      if (!(getCurrentTab()?.messages.length ?? 0)) {
+      if (this.settingsProvider().autoGenerateTitle && !(getCurrentTab()?.messages.length ?? 0)) {
         this.store.setTitle(tabId, sanitizeTitle(prompt, this.getLocalizedCopy().service.newChatTitle));
       }
 
@@ -2298,8 +2305,6 @@ export class CodexService {
       let userMessageId: string | null = null;
       if (!shouldSuppressImmediateDuplicateUserPrompt(getCurrentTab()?.messages ?? [], prompt, createdAt)) {
         const effectiveSkillsCsv = skillNames.length > 0 ? skillNames.join(",") : null;
-        const modifierChipLabels = getCurrentTab()?.instructionChips.map((chip) => chip.label) ?? [];
-        const modifierChipsCsv = modifierChipLabels.length > 0 ? modifierChipLabels.join(",") : null;
         userMessageId = makeId("user");
         this.store.addMessage(tabId, {
           id: userMessageId,
@@ -2311,8 +2316,6 @@ export class CodexService {
             turnStatus: "submitted",
             effectiveSkillsCsv,
             effectiveSkillCount: effectiveSkillsCsv ? skillNames.length : undefined,
-            modifierChipsCsv,
-            modifierChipCount: modifierChipLabels.length > 0 ? modifierChipLabels.length : undefined,
           },
         });
         this.armPendingTurn(tabId, turnId, userMessageId, createdAt);
@@ -2474,7 +2477,17 @@ export class CodexService {
 
     try {
       const { threadId } = await this.runCodexStream({
-        prompt: buildTurnPrompt(prompt, turnContext, mode, skillNames, composeMode, allowVaultWrite, this.getNoteApplyPolicy(composeMode)),
+        prompt: buildTurnPrompt(prompt, turnContext, mode, skillNames, composeMode, allowVaultWrite, this.getNoteApplyPolicy(composeMode), {
+          preferredName: this.settingsProvider().preferredName,
+          customSystemPrompt: this.settingsProvider().customSystemPrompt,
+          learningMode: this.findTab(tabId)?.learningMode ?? false,
+          shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
+            ? [
+                ...this.settingsProvider().securityPolicy.blockedCommandsWindows,
+                ...this.settingsProvider().securityPolicy.blockedCommandsUnix,
+              ]
+            : [],
+        }),
         tabId,
         threadId: this.shouldStartFreshThread(tabId) ? null : this.findTab(tabId)?.codexThreadId ?? null,
         workingDirectory,
@@ -2825,7 +2838,7 @@ export class CodexService {
 
     const child = spawn(spec.command, spec.args, {
       cwd: resolveSpawnCwd(spec.cwd),
-      env: process.env,
+      env: this.resolveProcessEnv(),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -3473,7 +3486,11 @@ export class CodexService {
       return coerceModelForPicker(this.getAvailableModels(), selected);
     }
     const settings = this.settingsProvider();
-    return coerceModelForPicker(this.getAvailableModels(), settings.codex.model.trim() || settings.defaultModel.trim() || DEFAULT_MODEL);
+    const preferredModel = settings.codex.model.trim() || settings.defaultModel.trim() || DEFAULT_MODEL;
+    return coerceModelForPicker(
+      this.getAvailableModels(),
+      this.resolvePreferredDefaultModel(preferredModel),
+    );
   }
 
   private resolveSelectedReasoningEffort(tabId: string, model: string): ReasoningEffort {
@@ -3501,24 +3518,39 @@ export class CodexService {
     const vaultRoot = this.resolveVaultRoot();
     this.customPromptCatalog = await loadCodexPromptCatalog([
       join(vaultRoot, ".codex", "prompts"),
-      join(CODEX_HOME, "prompts"),
+      ...(this.settingsProvider().securityPolicy.inheritGlobalCodexHomeAssets ? [join(CODEX_HOME, "prompts")] : []),
     ]);
     await this.refreshInstalledSkillCatalog(vaultRoot);
   }
 
   private async refreshInstalledSkillCatalog(vaultRoot = this.resolveVaultRoot()): Promise<void> {
-    this.installedSkillCatalog = await loadInstalledSkillCatalog(this.resolveSkillRoots(vaultRoot));
+    const loadedCatalog = await loadInstalledSkillCatalog(this.resolveSkillRoots(vaultRoot));
+    this.allInstalledSkillCatalog = loadedCatalog.map((skill) => ({ ...skill }));
+    const disabled = new Set(
+      this.settingsProvider()
+        .pluginOverrides.filter((entry) => entry.enabled === false)
+        .map((entry) => entry.key.trim())
+        .filter(Boolean),
+    );
+    this.installedSkillCatalog = loadedCatalog.filter((skill) => !disabled.has(skill.name));
   }
 
   private resolveSkillRoots(vaultRoot: string): string[] {
+    const settings = this.settingsProvider();
     return normalizeConfiguredSkillRoots([
       join(vaultRoot, ".codex", "skills"),
-      DEFAULT_SKILL_ROOT,
-      DEFAULT_AGENT_SKILL_ROOT,
-      ...getDefaultWslBridgeSkillRoots(),
-      DEFAULT_PLUGIN_CACHE_SKILL_ROOT,
-      ...this.settingsProvider().extraSkillRoots,
+      ...(settings.securityPolicy.inheritGlobalCodexHomeAssets
+        ? [DEFAULT_SKILL_ROOT, DEFAULT_AGENT_SKILL_ROOT, ...getDefaultWslBridgeSkillRoots(), DEFAULT_PLUGIN_CACHE_SKILL_ROOT]
+        : []),
+      ...settings.extraSkillRoots,
     ]);
+  }
+
+  private resolveProcessEnv(extraEntries: readonly string[] = []): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      ...parseEnvironmentEntries([...this.settingsProvider().customEnv, ...extraEntries]),
+    };
   }
 
   private getFallbackReasoningEffort(
@@ -3639,6 +3671,7 @@ export class CodexService {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
+        env: this.resolveProcessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -3882,7 +3915,6 @@ export class CodexService {
     const targetNotePath = this.resolveTargetNotePath(tabId);
     const studyWorkflow = tab?.studyWorkflow ?? null;
     const workflowContext = this.buildWorkflowPromptContext(tabId, studyWorkflow, file?.path ?? null);
-    const instructionText = this.buildInstructionContextText(tabId);
     const pluginFeatureText = buildPluginFeatureGuideText({
       prompt,
       locale: this.getLocale(),
@@ -3960,7 +3992,6 @@ export class CodexService {
       paperStudyRuntimeOverlayText,
       skillGuideText,
       paperStudyGuideText,
-      instructionText,
       mentionContextText,
       selection: selection || null,
       selectionSourcePath: selectionContext?.sourcePath ?? file?.path ?? null,
@@ -3995,18 +4026,6 @@ export class CodexService {
       hasSelection: Boolean(tab.selectionContext),
       pinnedContextCount: 0,
     };
-  }
-
-  private buildInstructionContextText(tabId: string): string | null {
-    const chips = this.findTab(tabId)?.instructionChips ?? [];
-    if (chips.length === 0) {
-      return null;
-    }
-    return [
-      "Instruction chips",
-      chips.map((chip) => `- #${chip.label}`).join("\n"),
-      "Treat these chips as active style and execution constraints for this turn.",
-    ].join("\n\n");
   }
 
   private async resolveMentionContext(
@@ -4331,16 +4350,42 @@ export class CodexService {
     this.store.setContextPaths(tabId, [...currentPaths, nextPath]);
   }
 
-  private async captureContextPackText(tabId: string, _excludedPaths: string[]): Promise<string | null> {
+  private async captureContextPackText(tabId: string, excludedPaths: string[]): Promise<string | null> {
     const tab = this.findTab(tabId);
     if (!tab) {
       return null;
     }
 
-    if (tab.contextPaths.length > 0) {
-      this.store.setContextPaths(tabId, []);
+    const persistentPaths: string[] = [];
+    const excludedPathSet = new Set(
+      excludedPaths.map((entry) => entry.trim()).filter((entry) => entry.length > 0),
+    );
+    const sources: Array<{ path: string; content: string }> = [];
+
+    for (const path of normalizeContextPaths(tab.contextPaths).slice(0, MAX_CONTEXT_PATHS)) {
+      const abstractFile = this.app.vault.getAbstractFileByPath(path);
+      if (!(abstractFile instanceof TFile)) {
+        continue;
+      }
+      persistentPaths.push(abstractFile.path);
+      if (excludedPathSet.has(abstractFile.path)) {
+        continue;
+      }
+      sources.push({
+        path: abstractFile.path,
+        content: await this.app.vault.cachedRead(abstractFile),
+      });
     }
-    return null;
+
+    const normalizedPersistentPaths = normalizeContextPaths(persistentPaths);
+    if (
+      normalizedPersistentPaths.length !== tab.contextPaths.length ||
+      normalizedPersistentPaths.some((path, index) => path !== tab.contextPaths[index])
+    ) {
+      this.store.setContextPaths(tabId, normalizedPersistentPaths);
+    }
+
+    return buildContextPackText(sources);
   }
 
   private createWaitingState(phase: WaitingPhase, mode: RuntimeMode) {
@@ -4362,7 +4407,7 @@ export class CodexService {
     const settings = this.settingsProvider();
     const model = coerceModelForPicker(
       this.getAvailableModels(),
-      modelOverride?.trim() || settings.codex.model.trim() || settings.defaultModel.trim() || DEFAULT_MODEL,
+      modelOverride?.trim() || this.resolvePreferredDefaultModel(settings.codex.model.trim() || settings.defaultModel.trim() || DEFAULT_MODEL),
     );
     return {
       model,
@@ -4385,6 +4430,14 @@ export class CodexService {
         this.store.setTabReasoningEffort(tab.id, normalizedEffort);
       }
     }
+  }
+
+  private resolvePreferredDefaultModel(fallbackModel: string): string {
+    if (!this.settingsProvider().securityPolicy.preferLongContextModel) {
+      return fallbackModel;
+    }
+    const preferred = this.getAvailableModels().find((entry) => !/mini|nano|small/i.test(entry.slug));
+    return preferred?.slug ?? fallbackModel;
   }
 
   private async persistDefaults(model: string, defaultReasoningEffort: ReasoningEffort): Promise<void> {

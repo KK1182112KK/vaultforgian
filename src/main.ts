@@ -2,13 +2,18 @@ import { homedir } from "node:os";
 import { getLanguage, Notice, Plugin, type Command, type Editor, type TFile } from "obsidian";
 import { CodexService } from "./app/codexService";
 import {
+  DEFAULT_LOCAL_SETTINGS,
   DEFAULT_PRIMARY_MODEL,
   DEFAULT_SETTINGS,
+  DEFAULT_VAULT_SETTINGS,
+  type LocalSettings,
   type PersistedWorkspaceState,
   type PluginSettings,
   type RecentStudySource,
+  type StudyRecipe,
   type StudyRecipeWorkflowKind,
   type StudyWorkflowKind,
+  type VaultSettings,
 } from "./model/types";
 import { coerceModelForPicker, getFallbackModelCatalog } from "./util/models";
 import { getLocalizedCopy, normalizeUiLanguageSetting, resolveUiLocale, type SupportedLocale } from "./util/i18n";
@@ -23,8 +28,18 @@ import {
 import { normalizePermissionMode } from "./util/permissionMode";
 import { PERMISSION_ONBOARDING_VERSION } from "./util/permissionLifecycle";
 import { getCompatibleReasoningEffort, normalizeReasoningEffort } from "./util/reasoning";
-import { normalizeConfiguredSkillRoots } from "./util/skillRoots";
 import { getStudyWorkflowDefinition } from "./util/studyWorkflows";
+import {
+  clampMaxChatTabs,
+  combineSettings,
+  extractLocalSettings,
+  extractVaultSettings,
+  normalizeLocalSettings,
+  normalizeLineList,
+  normalizeTabBarPosition,
+  readLocalSettingsFile,
+  writeLocalSettingsFile,
+} from "./util/pluginSettings";
 import { createEmptyAccountUsageSummary, createEmptyUsageSummary } from "./util/usage";
 import { CODEX_VIEW_TYPE, CodexWorkspaceView, LEGACY_CODEX_VIEW_TYPE } from "./views/codexWorkspaceView";
 import { openPatchConflictModal } from "./views/patchConflictUi";
@@ -33,7 +48,7 @@ import { PromptModal } from "./views/promptModal";
 import { CodexSettingTab } from "./views/settingsTab";
 
 interface PluginDataShape {
-  settings?: Partial<PluginSettings>;
+  settings?: Partial<VaultSettings>;
   workspace?: PersistedWorkspaceState | null;
 }
 
@@ -96,7 +111,7 @@ export default class ObsidianCodexPlugin extends Plugin {
       },
       async (nextSettings) => {
         this.settings = nextSettings;
-        await this.savePluginState();
+        await this.saveAllSettings();
         this.refreshRuntimeSettings();
       },
     );
@@ -153,6 +168,51 @@ export default class ObsidianCodexPlugin extends Plugin {
       : null;
     const issues = [blockedLegacyWarning, runtimeIssue].filter((issue): issue is string => Boolean(issue?.trim()));
     return issues.length > 0 ? issues.join("\n\n") : null;
+  }
+
+  getAuthState(): "ready" | "missing_login" {
+    return this.service?.getAuthState() ?? "missing_login";
+  }
+
+  async updateSettings(partial: Partial<PluginSettings>): Promise<void> {
+    this.settings = {
+      ...this.settings,
+      ...partial,
+      codex: {
+        ...this.settings.codex,
+        ...(partial.codex ?? {}),
+      },
+      securityPolicy: {
+        ...this.settings.securityPolicy,
+        ...(partial.securityPolicy ?? {}),
+      },
+    };
+    await this.saveAllSettings();
+    this.refreshRuntimeSettings();
+  }
+
+  getInstalledSkills() {
+    return this.service?.getInstalledSkills() ?? [];
+  }
+
+  getAvailableModels() {
+    return this.service?.getAvailableModels() ?? getFallbackModelCatalog();
+  }
+
+  async refreshRuntimeMetadata(): Promise<void> {
+    await this.service?.refreshRuntimeMetadata();
+  }
+
+  getCustomStudyRecipes(): StudyRecipe[] {
+    return this.service?.getCustomStudyRecipes() ?? [];
+  }
+
+  upsertStudyRecipe(recipe: StudyRecipe): void {
+    this.service?.upsertStudyRecipe(recipe);
+  }
+
+  removeStudyRecipe(recipeId: string): void {
+    this.service?.removeStudyRecipe(recipeId);
   }
 
   clearBlockedLegacyLauncherWarning(): void {
@@ -444,28 +504,38 @@ export default class ObsidianCodexPlugin extends Plugin {
   async savePluginState(): Promise<void> {
     this.workspaceState = this.service?.store.serialize() ?? this.workspaceState;
     await this.saveData({
-      settings: this.settings,
+      settings: extractVaultSettings(this.settings),
       workspace: this.workspaceState,
     } satisfies PluginDataShape);
   }
 
+  private async saveLocalSettings(): Promise<void> {
+    await writeLocalSettingsFile(extractLocalSettings(this.settings));
+  }
+
+  private async saveAllSettings(): Promise<void> {
+    await Promise.all([this.savePluginState(), this.saveLocalSettings()]);
+  }
+
   private async loadPluginState(): Promise<void> {
     const data = (await this.loadData()) as (PluginDataShape & {
-      settings?: Partial<PluginSettings> & LegacySettingsShape;
+      settings?: Partial<VaultSettings> & LegacySettingsShape;
       workspace?: PersistedWorkspaceState | LegacyWorkspaceShape | null;
     }) | null;
+    const localSettingsData = await readLocalSettingsFile();
     const legacySettings = data?.settings ?? {};
     const legacyCommand = legacySettings.codexCommand?.trim() ?? "";
     const modelCatalog = getFallbackModelCatalog();
     const configuredDefaultModel = data?.settings?.defaultModel?.trim() || legacySettings.defaultModel?.trim() || DEFAULT_SETTINGS.defaultModel;
-    const configuredCodexModel = data?.settings?.codex?.model?.trim() || legacySettings.defaultModel?.trim() || DEFAULT_SETTINGS.codex.model;
+    const localSettings = normalizeLocalSettings(localSettingsData, {
+      allowedRoots: [((this.app.vault as { adapter?: { basePath?: string } }).adapter?.basePath?.trim() ?? ""), homedir()],
+    });
+    const configuredCodexModel = localSettings.codex.model.trim() || legacySettings.defaultModel?.trim() || DEFAULT_SETTINGS.codex.model;
     const usesLegacyDefaultPair = configuredDefaultModel === "gpt-5" && configuredCodexModel === "gpt-5.1-codex";
     const rawModel = usesLegacyDefaultPair ? DEFAULT_SETTINGS.codex.model : configuredCodexModel;
     const model = coerceModelForPicker(modelCatalog, rawModel || DEFAULT_PRIMARY_MODEL);
-    const configuredRuntime = normalizeCodexRuntime((data?.settings?.codex as { runtime?: string } | undefined)?.runtime);
-    const configuredExecutablePath = sanitizeCodexExecutablePath(
-      (data?.settings?.codex as { executablePath?: string } | undefined)?.executablePath,
-    );
+    const configuredRuntime = normalizeCodexRuntime(localSettings.codex.runtime);
+    const configuredExecutablePath = sanitizeCodexExecutablePath(localSettings.codex.executablePath);
     const migratedLegacyLauncher = migrateLegacyCodexLauncher(legacyCommand);
     const blockedPersistedExecutablePath = isUnsafeCodexExecutablePath(configuredExecutablePath) ? configuredExecutablePath : null;
     const configuredDefaultReasoningEffort =
@@ -483,10 +553,7 @@ export default class ObsidianCodexPlugin extends Plugin {
       normalizeUiLanguageSetting(typeof data?.settings?.uiLanguage === "string" ? data.settings.uiLanguage : legacySettings.uiLanguage) ??
       DEFAULT_SETTINGS.uiLanguage;
     const settings = data?.settings ?? {};
-
-    const vaultBasePath = ((this.app.vault as { adapter?: { basePath?: string } }).adapter?.basePath?.trim() ?? "");
-
-    this.settings = {
+    const vaultSettings: VaultSettings = {
       defaultModel: coerceModelForPicker(modelCatalog, usesLegacyDefaultPair ? DEFAULT_SETTINGS.defaultModel : configuredDefaultModel),
       defaultReasoningEffort: getCompatibleReasoningEffort(model, configuredDefaultReasoningEffort) ?? configuredDefaultReasoningEffort,
       permissionMode: configuredPermissionMode ?? DEFAULT_SETTINGS.permissionMode,
@@ -497,26 +564,52 @@ export default class ObsidianCodexPlugin extends Plugin {
         typeof data?.settings?.autoApplyConsentVersionSeen === "number"
           ? data.settings.autoApplyConsentVersionSeen
           : DEFAULT_SETTINGS.autoApplyConsentVersionSeen,
-      extraSkillRoots: normalizeConfiguredSkillRoots(Array.isArray(settings.extraSkillRoots) ? settings.extraSkillRoots : [], {
-        allowedRoots: [vaultBasePath, homedir()],
-      }),
+      preferredName: typeof settings.preferredName === "string" ? settings.preferredName.trim() : DEFAULT_VAULT_SETTINGS.preferredName,
+      excludedTags: normalizeLineList(Array.isArray(settings.excludedTags) ? settings.excludedTags : []),
+      mediaFolder: typeof settings.mediaFolder === "string" ? settings.mediaFolder.trim() : DEFAULT_VAULT_SETTINGS.mediaFolder,
+      customSystemPrompt:
+        typeof settings.customSystemPrompt === "string" ? settings.customSystemPrompt : DEFAULT_VAULT_SETTINGS.customSystemPrompt,
+      autoScrollStreaming:
+        typeof settings.autoScrollStreaming === "boolean" ? settings.autoScrollStreaming : DEFAULT_VAULT_SETTINGS.autoScrollStreaming,
+      autoGenerateTitle:
+        typeof settings.autoGenerateTitle === "boolean" ? settings.autoGenerateTitle : DEFAULT_VAULT_SETTINGS.autoGenerateTitle,
+      titleGenerationModel:
+        typeof settings.titleGenerationModel === "string" && settings.titleGenerationModel.trim()
+          ? coerceModelForPicker(modelCatalog, settings.titleGenerationModel.trim())
+          : model,
+      vimMappings: normalizeLineList(Array.isArray(settings.vimMappings) ? settings.vimMappings : []),
+      tabBarPosition: normalizeTabBarPosition(settings.tabBarPosition),
+      openInMainEditor: typeof settings.openInMainEditor === "boolean" ? settings.openInMainEditor : DEFAULT_VAULT_SETTINGS.openInMainEditor,
+      maxChatTabs: clampMaxChatTabs(settings.maxChatTabs),
       showReasoning: settings.showReasoning ?? legacySettings.showReasoning ?? DEFAULT_SETTINGS.showReasoning,
       autoRestoreTabs: settings.autoRestoreTabs ?? legacySettings.autoRestoreTabs ?? DEFAULT_SETTINGS.autoRestoreTabs,
+    };
+    const mergedLocalSettings: LocalSettings = {
+      ...DEFAULT_LOCAL_SETTINGS,
+      ...localSettings,
       codex: {
-        ...DEFAULT_SETTINGS.codex,
+        ...DEFAULT_LOCAL_SETTINGS.codex,
+        ...localSettings.codex,
         model,
         runtime:
-          (data?.settings?.codex as { runtime?: string } | undefined)?.runtime !== undefined
+          localSettingsData?.codex?.runtime !== undefined
             ? configuredRuntime
             : migratedLegacyLauncher.runtime,
         executablePath:
-          (data?.settings?.codex as { executablePath?: string } | undefined)?.executablePath?.trim()
+          localSettingsData?.codex?.executablePath?.trim()
             ? blockedPersistedExecutablePath
               ? DEFAULT_CODEX_EXECUTABLE
               : configuredExecutablePath
             : migratedLegacyLauncher.executablePath,
       },
+      extraSkillRoots: localSettings.extraSkillRoots,
+      mcpServers: localSettings.mcpServers,
+      pluginOverrides: localSettings.pluginOverrides,
+      securityPolicy: localSettings.securityPolicy,
+      customEnv: localSettings.customEnv,
+      envSnippets: localSettings.envSnippets,
     };
+    this.settings = combineSettings(vaultSettings, mergedLocalSettings);
     this.blockedLegacyLauncherCommand = blockedPersistedExecutablePath ?? migratedLegacyLauncher.blockedLegacyCommand;
     this.workspaceState = this.migrateWorkspace(data?.workspace ?? null);
   }
@@ -559,7 +652,7 @@ export default class ObsidianCodexPlugin extends Plugin {
       ...this.settings,
       ...partial,
     };
-    await this.savePluginState();
+    await this.saveAllSettings();
     this.refreshRuntimeSettings();
   }
 
@@ -617,15 +710,6 @@ export default class ObsidianCodexPlugin extends Plugin {
                 : "activeStudySkillName" in tab && typeof ((persisted as unknown) as { activeStudySkillName?: unknown }).activeStudySkillName === "string"
                   ? [((persisted as unknown) as { activeStudySkillName: string }).activeStudySkillName]
                   : [],
-            instructionChips: Array.isArray("instructionChips" in tab ? persisted.instructionChips : undefined)
-              ? persisted.instructionChips
-                  .filter((chip): chip is NonNullable<typeof persisted.instructionChips>[number] => Boolean(chip && typeof chip === "object"))
-                  .map((chip) => ({
-                    id: typeof chip.id === "string" ? chip.id : `instruction-${Date.now()}`,
-                    label: typeof chip.label === "string" ? chip.label : "",
-                    createdAt: typeof chip.createdAt === "number" ? chip.createdAt : Date.now(),
-                  }))
-              : [],
             summary:
               "summary" in tab && persisted.summary && typeof persisted.summary === "object" && typeof persisted.summary.text === "string"
                 ? {
@@ -758,6 +842,7 @@ export default class ObsidianCodexPlugin extends Plugin {
                     draft: null,
                   },
             composeMode: ("composeMode" in tab && persisted.composeMode === "plan" ? "plan" : "chat") as "plan" | "chat",
+            learningMode: "learningMode" in tab ? Boolean(persisted.learningMode) : false,
             contextPaths: Array.isArray("contextPaths" in tab ? persisted.contextPaths : undefined) ? [...persisted.contextPaths] : [],
             lastResponseId: "lastResponseId" in tab && typeof persisted.lastResponseId === "string" ? persisted.lastResponseId : null,
             sessionItems: [],
@@ -904,9 +989,6 @@ export default class ObsidianCodexPlugin extends Plugin {
                   minimumPinnedContextCount: 0,
                 },
           outputContract: Array.isArray(entry.outputContract) ? entry.outputContract.filter((item): item is string => typeof item === "string") : [],
-          instructionChipHints: Array.isArray(entry.instructionChipHints)
-            ? entry.instructionChipHints.filter((item): item is string => typeof item === "string")
-            : [],
           sourceHints: Array.isArray(entry.sourceHints) ? entry.sourceHints.filter((item): item is string => typeof item === "string") : [],
           exampleSession: exampleSession
               ? {
@@ -1003,7 +1085,11 @@ export default class ObsidianCodexPlugin extends Plugin {
 
   private async activateView(): Promise<CodexWorkspaceView | null> {
     const legacyLeaf = this.app.workspace.getLeavesOfType(LEGACY_CODEX_VIEW_TYPE)[0] ?? null;
-    const leaf = this.app.workspace.getLeavesOfType(CODEX_VIEW_TYPE)[0] ?? legacyLeaf ?? this.app.workspace.getRightLeaf(false);
+    const preferredLeaf =
+      this.app.workspace.getLeavesOfType(CODEX_VIEW_TYPE)[0] ??
+      legacyLeaf ??
+      (this.settings.openInMainEditor ? this.app.workspace.getLeaf("tab") : this.app.workspace.getRightLeaf(false));
+    const leaf = preferredLeaf;
     if (!leaf) {
       throw new Error(this.getLocalizedCopy().notices.noOpenLeaf);
     }

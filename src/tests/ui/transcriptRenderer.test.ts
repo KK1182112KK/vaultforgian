@@ -18,7 +18,7 @@ function createState(): WorkspaceState {
         studyWorkflow: null,
         activeStudyRecipeId: null,
         activeStudySkillNames: [],
-        instructionChips: [],
+        learningMode: false,
         summary: null,
         lineage: {
           parentTabId: null,
@@ -112,6 +112,7 @@ function createContext(
     } as WorkspaceRenderContext["service"],
     state,
     activeTab,
+    isNarrowLayout: false,
     locale: "en",
     copy,
   };
@@ -271,7 +272,7 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Read this paper carefully.");
   });
 
-  it("shows active modifiers as compact metadata on a user message", () => {
+  it("does not render removed modifier metadata on a user message", () => {
     const state = createState();
     state.tabs[0]!.messages = [
       {
@@ -279,23 +280,13 @@ describe("TranscriptRenderer avatar safety", () => {
         kind: "user",
         text: "Summarize this note.",
         createdAt: 1,
-        meta: {
-          modifierChipsCsv: "focus,concise",
-          modifierChipCount: 2,
-        },
       },
     ];
     const root = document.createElement("div");
     const renderer = new TranscriptRenderer(root, createCallbacks());
     renderer.render(createContext(state));
 
-    const labels = Array.from(root.querySelectorAll(".obsidian-codex__message-skill-meta .obsidian-codex__selection-message-label")).map(
-      (element) => element.textContent,
-    );
-    expect(labels).toContain("Modifiers");
-    expect(
-      Array.from(root.querySelectorAll(".obsidian-codex__message-skill-chip")).map((element) => element.textContent),
-    ).toEqual(["#focus", "#concise"]);
+    expect(root.querySelector(".obsidian-codex__message-skill-meta")).toBeNull();
   });
 
   it("renders successful patch system messages without the error variant", () => {

@@ -53,9 +53,11 @@ Before installing the plugin, you need:
 
 ### Manual
 
-1. Download `manifest.json`, `main.js`, and `styles.css` from the latest [release](https://github.com/KK1182112KK/codex-noteforge/releases).
-2. Copy them into `<your-vault>/.obsidian/plugins/obsidian-codex-study/`.
+1. Download `obsidian-codex-study-v<version>.zip` from the latest [release](https://github.com/KK1182112KK/codex-noteforge/releases).
+2. Extract the folder `obsidian-codex-study/` into `<your-vault>/.obsidian/plugins/`.
 3. Restart Obsidian, open *Settings → Community plugins*, enable **Codex Noteforge**.
+
+The release also ships standalone `manifest.json`, `main.js`, and `styles.css` assets if you prefer a manual copy instead of the zip.
 
 ### From source
 
@@ -68,6 +70,8 @@ CODEX_NOTEFORGE_PLUGIN_DIR="<your-vault>/.obsidian/plugins/obsidian-codex-study"
 ```
 
 `npm run build` now produces the production bundle only. Set `CODEX_NOTEFORGE_PLUGIN_DIR` explicitly before `npm run deploy`; the deploy script no longer guesses a local vault path. The plugin folder itself remains `.obsidian/plugins/obsidian-codex-study/` for install compatibility.
+
+For friend testing and beta feedback, see [TESTING.md](./TESTING.md).
 
 ---
 
@@ -129,6 +133,7 @@ npm run test       # vitest
 npm run typecheck  # tsc --noEmit
 npm run lint
 npm run build      # production bundle only
+npm run release:bundle
 npm run deploy     # requires CODEX_NOTEFORGE_PLUGIN_DIR to be set explicitly
 ```
 

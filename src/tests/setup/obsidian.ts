@@ -12,6 +12,60 @@ export class Notice {
   }
 }
 
+export class MenuItem {
+  title = "";
+  icon = "";
+  disabled = false;
+  private clickHandler: (() => void) | null = null;
+
+  setTitle(title: string): this {
+    this.title = title;
+    return this;
+  }
+
+  setIcon(icon: string): this {
+    this.icon = icon;
+    return this;
+  }
+
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
+    return this;
+  }
+
+  onClick(handler: () => void): this {
+    this.clickHandler = handler;
+    return this;
+  }
+
+  trigger(): void {
+    if (!this.disabled) {
+      this.clickHandler?.();
+    }
+  }
+}
+
+export class Menu {
+  static lastShown: { items: MenuItem[]; position: { x: number; y: number } } | null = null;
+  readonly items: MenuItem[] = [];
+
+  addItem(callback: (item: MenuItem) => void): this {
+    const item = new MenuItem();
+    callback(item);
+    this.items.push(item);
+    return this;
+  }
+
+  showAtPosition(position: { x: number; y: number }): this {
+    Menu.lastShown = { items: [...this.items], position };
+    return this;
+  }
+
+  static reset(): void {
+    Menu.lastShown = null;
+  }
+}
+
 export class Component {}
 
 export class View extends Component {

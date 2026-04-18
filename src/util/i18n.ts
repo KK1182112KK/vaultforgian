@@ -104,6 +104,7 @@ export interface LocalizedCopy {
       forkConversation: string;
       resumeThread: string;
       compactConversation: string;
+      moreActions: string;
       settings: string;
     };
     planMode: string;
@@ -115,6 +116,10 @@ export interface LocalizedCopy {
     selectThinkingLevel: string;
     modelMenuTitle: string;
     thinkingMenuTitle: string;
+    learningMode: string;
+    toggleLearningMode: string;
+    learningModeHint: string;
+    learningModeStreamingTooltip: string;
     toggleFastMode: string;
     fastMode: string;
     fastModeHint: string;
@@ -413,6 +418,7 @@ const EN_COPY: LocalizedCopy = {
       forkConversation: "Fork conversation",
       resumeThread: "Resume thread in a new tab",
       compactConversation: "Compact conversation",
+      moreActions: "More actions",
       settings: "Settings",
     },
     planMode: "Plan mode",
@@ -424,6 +430,10 @@ const EN_COPY: LocalizedCopy = {
     selectThinkingLevel: "Select thinking level",
     modelMenuTitle: "Model",
     thinkingMenuTitle: "Thinking",
+    learningMode: "Learning mode",
+    toggleLearningMode: "Toggle learning mode",
+    learningModeHint: "Socratic tutoring for study and explanation chats",
+    learningModeStreamingTooltip: "Learning mode can be changed after the current turn finishes.",
     toggleFastMode: "Toggle Fast mode",
     fastMode: "Fast mode",
     fastModeHint: "Fastest inference · 2x plan usage",
@@ -731,6 +741,7 @@ const JA_COPY: LocalizedCopy = {
       forkConversation: "Conversation を fork",
       resumeThread: "Thread を新しいタブで再開",
       compactConversation: "Conversation を compact",
+      moreActions: "その他の操作",
       settings: "設定",
     },
     planMode: "Plan mode",
@@ -742,6 +753,10 @@ const JA_COPY: LocalizedCopy = {
     selectThinkingLevel: "Thinking level を選択",
     modelMenuTitle: "Model",
     thinkingMenuTitle: "Thinking",
+    learningMode: "Learning mode",
+    toggleLearningMode: "Learning mode を切り替え",
+    learningModeHint: "学習・説明の会話ではソクラテス式で返します",
+    learningModeStreamingTooltip: "Learning mode は現在の turn 完了後に切り替えできます。",
     toggleFastMode: "Fast mode を切り替え",
     fastMode: "Fast mode",
     fastModeHint: "最速推論 · プラン使用量 2 倍",

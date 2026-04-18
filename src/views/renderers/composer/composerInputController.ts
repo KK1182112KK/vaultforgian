@@ -154,7 +154,7 @@ export class ComposerInputController {
     this.renderSendButtonState(busy);
     this.elements.modelButtonEl.disabled = busy;
     this.elements.thinkingButtonEl.disabled = busy;
-    this.elements.modifierControlEl.disabled = busy;
+    this.elements.learningModeControlEl.disabled = busy || !context.activeTab;
     this.elements.fastModeControlEl.disabled = busy || !context.activeTab;
     this.elements.attachButtonEl.disabled = busy;
   }
@@ -308,19 +308,12 @@ export class ComposerInputController {
       label: entry.label,
       description: entry.description,
     }));
-    const instructionSuggestions: ComposerSuggestion[] = context.service.getInstructionOptions().map((option) => ({
-      kind: "instruction",
-      token: option.token,
-      label: option.label,
-      description: option.description,
-    }));
     const suggestions = matchComposerSuggestions(
       this.elements.inputEl.value,
       cursor,
       context.service.getSlashCommandCatalog(),
       context.service.getInstalledSkills(),
       mentionSuggestions,
-      instructionSuggestions,
     );
     this.state.composerSuggestions = suggestions;
     if (suggestions.length === 0) {

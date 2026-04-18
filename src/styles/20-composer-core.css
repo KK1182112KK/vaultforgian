@@ -61,6 +61,15 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   display: flex;
 }
 
+.obsidian-codex__composer-tab-bar {
+  display: none;
+  margin-bottom: 6px;
+}
+
+.obsidian-codex__composer-tab-bar.is-visible {
+  display: block;
+}
+
 .obsidian-codex__slash-menu {
   display: none;
   max-height: min(320px, 36vh);

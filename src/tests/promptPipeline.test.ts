@@ -38,12 +38,11 @@ describe("prompt pipeline helpers", () => {
     ).toBe("explain this");
   });
 
-  it("extracts instruction chips and typed mentions from a prompt", () => {
+  it("extracts typed mentions without stripping plain hashtags", () => {
     const metadata = extractPromptMetadata(
       "Review this #Focus @note(Notes/A.md) with @skill(lecture-read) and @recipe(/recipe-signals)",
     );
-    expect(metadata.cleanedPrompt).toBe("Review this with and");
-    expect(metadata.instructionLabels).toEqual(["focus"]);
+    expect(metadata.cleanedPrompt).toBe("Review this #Focus with and");
     expect(metadata.mentions).toEqual([
       { kind: "note", value: "Notes/A.md" },
       { kind: "skill", value: "lecture-read" },

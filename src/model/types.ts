@@ -6,6 +6,7 @@ export const DEFAULT_PRIMARY_MODEL = "gpt-5.4";
 export const DEFAULT_MINI_MODEL = "gpt-5.4-mini";
 export type UiLanguageSetting = "app" | "en" | "ja";
 export type CodexRuntime = "native" | "wsl";
+export type TabBarPosition = "header" | "composer";
 
 export type AgentStatus = "ready" | "busy" | "waiting_approval" | "error" | "missing_login";
 export type RuntimeMode = "normal" | "skill";
@@ -20,38 +21,145 @@ export type MessageKind =
   | "diff"
   | "system";
 
-export interface PluginSettings {
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  transport: "stdio";
+  command: string;
+  args: string[];
+  env: string[];
+  enabled: boolean;
+}
+
+export interface EnvironmentSnippet {
+  id: string;
+  name: string;
+  entries: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PluginCatalogOverride {
+  key: string;
+  enabled: boolean;
+}
+
+export interface SecurityPolicySettings {
+  inheritGlobalCodexHomeAssets: boolean;
+  commandBlacklistEnabled: boolean;
+  blockedCommandsWindows: string[];
+  blockedCommandsUnix: string[];
+  allowedExportPaths: string[];
+  browserIntegrationEnabled: boolean;
+  preferLongContextModel: boolean;
+}
+
+export interface VaultSettings {
   defaultModel: string;
   defaultReasoningEffort: ReasoningEffort;
   permissionMode: PermissionMode;
   uiLanguage: UiLanguageSetting;
   onboardingVersionSeen: number | null;
   autoApplyConsentVersionSeen: number | null;
+  preferredName: string;
+  excludedTags: string[];
+  mediaFolder: string;
+  customSystemPrompt: string;
+  autoScrollStreaming: boolean;
+  autoGenerateTitle: boolean;
+  titleGenerationModel: string;
+  vimMappings: string[];
+  tabBarPosition: TabBarPosition;
+  openInMainEditor: boolean;
+  maxChatTabs: number;
+  showReasoning: boolean;
+  autoRestoreTabs: boolean;
+}
+
+export interface LocalSettings {
   extraSkillRoots: string[];
   codex: {
     model: string;
     runtime: CodexRuntime;
     executablePath: string;
   };
-  showReasoning: boolean;
-  autoRestoreTabs: boolean;
+  mcpServers: McpServerConfig[];
+  pluginOverrides: PluginCatalogOverride[];
+  securityPolicy: SecurityPolicySettings;
+  customEnv: string[];
+  envSnippets: EnvironmentSnippet[];
 }
 
-export const DEFAULT_SETTINGS: PluginSettings = {
+export interface PluginSettings extends VaultSettings, LocalSettings {}
+
+export const DEFAULT_VAULT_SETTINGS: VaultSettings = {
   defaultModel: DEFAULT_PRIMARY_MODEL,
   defaultReasoningEffort: "xhigh",
   permissionMode: "suggest",
   uiLanguage: "app",
   onboardingVersionSeen: null,
   autoApplyConsentVersionSeen: null,
+  preferredName: "",
+  excludedTags: [],
+  mediaFolder: "",
+  customSystemPrompt: "",
+  autoScrollStreaming: true,
+  autoGenerateTitle: true,
+  titleGenerationModel: DEFAULT_PRIMARY_MODEL,
+  vimMappings: [],
+  tabBarPosition: "header",
+  openInMainEditor: false,
+  maxChatTabs: 6,
+  showReasoning: true,
+  autoRestoreTabs: true,
+};
+
+export const DEFAULT_SECURITY_POLICY_SETTINGS: SecurityPolicySettings = {
+  inheritGlobalCodexHomeAssets: true,
+  commandBlacklistEnabled: false,
+  blockedCommandsWindows: [
+    "del /s /q",
+    "rd /s /q",
+    "rmdir /s /q",
+    "format",
+    "diskpart",
+    "Remove-Item -Recurse -Force",
+  ],
+  blockedCommandsUnix: [
+    "rm -rf",
+    "chmod 777",
+    "chmod -R 777",
+  ],
+  allowedExportPaths: [],
+  browserIntegrationEnabled: true,
+  preferLongContextModel: false,
+};
+
+export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   extraSkillRoots: [],
   codex: {
     model: DEFAULT_PRIMARY_MODEL,
     runtime: "native",
     executablePath: "codex",
   },
-  showReasoning: true,
-  autoRestoreTabs: true,
+  mcpServers: [],
+  pluginOverrides: [],
+  securityPolicy: {
+    ...DEFAULT_SECURITY_POLICY_SETTINGS,
+  },
+  customEnv: [],
+  envSnippets: [],
+};
+
+export const DEFAULT_SETTINGS: PluginSettings = {
+  ...DEFAULT_VAULT_SETTINGS,
+  ...DEFAULT_LOCAL_SETTINGS,
+  codex: {
+    ...DEFAULT_LOCAL_SETTINGS.codex,
+  },
+  securityPolicy: {
+    ...DEFAULT_SECURITY_POLICY_SETTINGS,
+  },
 };
 
 export interface ChatMessage {
@@ -61,12 +169,6 @@ export interface ChatMessage {
   createdAt: number;
   pending?: boolean;
   meta?: Record<string, string | number | boolean | null | undefined>;
-}
-
-export interface InstructionChip {
-  id: string;
-  label: string;
-  createdAt: number;
 }
 
 export interface ConversationSummary {
@@ -225,7 +327,6 @@ export interface StudyRecipe {
   linkedSkillNames: string[];
   contextContract: StudyRecipeContextContract;
   outputContract: string[];
-  instructionChipHints: string[];
   sourceHints: string[];
   exampleSession: StudyRecipeExampleSession;
   promotionState: StudyRecipePromotionState;
@@ -350,7 +451,6 @@ export interface PersistedTabState {
   studyWorkflow: StudyWorkflowKind | null;
   activeStudyRecipeId: string | null;
   activeStudySkillNames: string[];
-  instructionChips: InstructionChip[];
   summary: ConversationSummary | null;
   lineage: TabLineage;
   targetNotePath: string | null;
@@ -358,6 +458,7 @@ export interface PersistedTabState {
   panelSessionOrigin: PanelSessionOrigin | null;
   chatSuggestion: ChatSuggestion | null;
   composeMode: ComposeMode;
+  learningMode: boolean;
   contextPaths: string[];
   lastResponseId: string | null;
   sessionItems: ComposerAttachment[];
@@ -445,7 +546,6 @@ export interface TurnContextSnapshot {
   paperStudyRuntimeOverlayText: string | null;
   skillGuideText: string | null;
   paperStudyGuideText: string | null;
-  instructionText: string | null;
   mentionContextText: string | null;
   selection: string | null;
   selectionSourcePath: string | null;

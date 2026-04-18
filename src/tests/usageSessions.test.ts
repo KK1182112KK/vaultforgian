@@ -171,7 +171,10 @@ describe("usage session helpers", () => {
     await utimes(older, new Date("2026-04-10T11:59:59Z"), new Date("2026-04-10T11:59:59Z"));
     await utimes(newer, new Date("2026-04-10T12:00:00Z"), new Date("2026-04-10T12:00:00Z"));
 
-    const files = await listRecentSessionFiles(root, { limit: 2 });
+    const files = await listRecentSessionFiles(root, {
+      limit: 2,
+      now: new Date("2026-04-10T12:00:01Z").getTime(),
+    });
     expect(files).toHaveLength(2);
     expect(files[0]?.name).toBe("newer.jsonl");
   });

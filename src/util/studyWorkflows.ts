@@ -8,7 +8,6 @@ export interface StudyWorkflowDefinition {
   description: string;
   helperText: string;
   attachRecommended: boolean;
-  instructionLabels: readonly string[];
   responseContract: readonly string[];
   sourcePriority: readonly string[];
   guidance: readonly string[];
@@ -36,7 +35,7 @@ const DEFAULT_COMPOSER_PLACEHOLDER: Record<SupportedLocale, string> = {
   ja: "講義、論文、宿題、ノートについて質問してください...",
 };
 
-const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omit<StudyWorkflowDefinition, "kind" | "attachRecommended" | "instructionLabels" | "safeAutoSkillRefs">>> = {
+const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omit<StudyWorkflowDefinition, "kind" | "attachRecommended" | "safeAutoSkillRefs">>> = {
   en: {
     lecture: {
       label: "Lecture",
@@ -194,10 +193,10 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
 };
 
 const STUDY_WORKFLOW_BASE = {
-  lecture: { attachRecommended: true, instructionLabels: ["focus", "steps"], safeAutoSkillRefs: [] },
-  review: { attachRecommended: false, instructionLabels: ["focus", "concise"], safeAutoSkillRefs: [] },
-  paper: { attachRecommended: true, instructionLabels: ["research", "strict"], safeAutoSkillRefs: [] },
-  homework: { attachRecommended: true, instructionLabels: ["steps", "safe"], safeAutoSkillRefs: [] },
+  lecture: { attachRecommended: true, safeAutoSkillRefs: [] },
+  review: { attachRecommended: false, safeAutoSkillRefs: [] },
+  paper: { attachRecommended: true, safeAutoSkillRefs: [] },
+  homework: { attachRecommended: true, safeAutoSkillRefs: [] },
 } as const;
 
 function buildContextLines(context: StudyWorkflowPromptContext, locale: SupportedLocale): string[] {

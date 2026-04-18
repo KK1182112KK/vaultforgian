@@ -37,7 +37,6 @@ function createPanel(id: string, promptTemplate = "Turn this into a lecture revi
             minimumPinnedContextCount: 0,
     },
     outputContract: ["Main ideas"],
-    instructionChipHints: ["focus"],
     sourceHints: ["current note"],
     exampleSession: {
       sourceTabTitle: "Study chat",

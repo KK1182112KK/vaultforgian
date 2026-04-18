@@ -18,7 +18,6 @@ function createState(): WorkspaceState {
         studyWorkflow: "lecture",
         activeStudyRecipeId: null,
         activeStudySkillNames: [],
-        instructionChips: [],
         summary: null,
         lineage: {
           parentTabId: null,
@@ -36,6 +35,7 @@ function createState(): WorkspaceState {
           draft: null,
         },
         composeMode: "chat",
+        learningMode: false,
         contextPaths: [],
         lastResponseId: null,
         sessionItems: [],
@@ -194,7 +194,6 @@ describe("workspace view models", () => {
     const state = createState();
     state.tabs[0]!.activeStudyRecipeId = "panel-1";
     state.tabs[0]!.activeStudySkillNames = ["lecture-read", "deep-read"];
-    state.tabs[0]!.instructionChips = [{ id: "chip-1", label: "focus", createdAt: 1 }];
     state.tabs[0]!.composeMode = "plan";
 
     const result = buildComposerDisplayState(
@@ -204,7 +203,6 @@ describe("workspace view models", () => {
     );
     expect(result.panelLabel).toBe("My Lecture Panel");
     expect(result.activeSkillLabels).toEqual(["/lecture-read", "/deep-read"]);
-    expect(result.modifierChips).toEqual([{ id: "chip-1", label: "focus" }]);
     expect(result.canClearPanelContext).toBe(true);
     expect(result.planModeActive).toBe(true);
     expect(result.placeholder.length).toBeGreaterThan(0);

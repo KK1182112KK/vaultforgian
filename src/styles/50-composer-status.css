@@ -421,7 +421,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "warning warning"
-    "primary modifier"
+    "primary learning"
     "primary fastmode"
     "primary yolo";
   align-items: end;
@@ -611,7 +611,7 @@
     grid-template-areas:
       "warning"
       "primary"
-      "modifier"
+      "learning"
       "fastmode"
       "yolo";
     align-items: stretch;
@@ -621,7 +621,7 @@
     gap: 6px 8px;
   }
 
-  .obsidian-codex__status-modifier-control,
+  .obsidian-codex__learning-mode-control,
   .obsidian-codex__fastmode-control,
   .obsidian-codex__yolo-control {
     justify-self: start;
@@ -639,10 +639,60 @@
     grid-template-columns: 32px minmax(0, 1fr) 40px;
   }
 
+  .obsidian-codex__learning-mode-label,
   .obsidian-codex__fastmode-label,
   .obsidian-codex__yolo-label {
     min-width: 0;
   }
+}
+
+.obsidian-codex__status-bar.is-narrow {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "warning"
+    "primary"
+    "learning"
+    "fastmode"
+    "yolo";
+  align-items: stretch;
+}
+
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-primary {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  width: 100%;
+}
+
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-stack-model,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-picker-thinking,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__execution-state,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__usage-meters,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__learning-mode-control,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__fastmode-control,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__yolo-control {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-picker-model,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-picker-thinking {
+  width: 100%;
+  min-width: 0;
+}
+
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__learning-mode-control,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__fastmode-control,
+.obsidian-codex__status-bar.is-narrow .obsidian-codex__yolo-control {
+  justify-self: stretch;
+  inline-size: 100%;
 }
 
 .obsidian-codex__usage-freshness {
@@ -807,8 +857,8 @@
   align-self: start;
 }
 
-.obsidian-codex__status-modifier-control {
-  grid-area: modifier;
+.obsidian-codex__learning-mode-control {
+  grid-area: learning;
   align-self: end;
   justify-self: end;
 }
@@ -834,9 +884,9 @@
   }
 }
 
+.obsidian-codex__learning-mode-control,
 .obsidian-codex__fastmode-control,
 .obsidian-codex__yolo-control {
-  grid-area: yolo;
   align-self: end;
   justify-self: end;
   inline-size: min(100%, 152px);
@@ -860,13 +910,32 @@
   transition: none;
 }
 
+.obsidian-codex__learning-mode-control {
+  grid-area: learning;
+}
+
 .obsidian-codex__fastmode-control {
   grid-area: fastmode;
 }
 
+.obsidian-codex__yolo-control {
+  grid-area: yolo;
+}
+
+.obsidian-codex__learning-mode-control:hover,
 .obsidian-codex__fastmode-control:hover,
 .obsidian-codex__yolo-control:hover {
   transform: none;
+}
+
+.obsidian-codex__learning-mode-control.is-active {
+  border-color: rgba(34, 197, 94, 0.34);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 86%, rgba(34, 197, 94, 0.12) 14%);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.06),
+    0 8px 14px rgba(5, 8, 16, 0.06);
 }
 
 .obsidian-codex__fastmode-control.is-active {
@@ -889,6 +958,7 @@
     0 8px 14px rgba(5, 8, 16, 0.06);
 }
 
+.obsidian-codex__learning-mode-label,
 .obsidian-codex__fastmode-label,
 .obsidian-codex__yolo-label {
   display: flex;
@@ -899,6 +969,7 @@
   min-width: 0;
 }
 
+.obsidian-codex__learning-mode-text,
 .obsidian-codex__fastmode-text,
 .obsidian-codex__yolo-text {
   color: var(--obsidian-codex-text-soft);
@@ -906,6 +977,10 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.obsidian-codex__learning-mode-text {
+  font-size: 9px;
 }
 
 .obsidian-codex__yolo-state {
@@ -941,6 +1016,15 @@
   border-radius: 50%;
   background: var(--text-muted);
   transition: none;
+}
+
+.obsidian-codex__learning-mode-control.is-active .obsidian-codex__toggle-switch {
+  background: rgba(34, 197, 94, 0.24);
+}
+
+.obsidian-codex__learning-mode-control.is-active .obsidian-codex__toggle-knob {
+  transform: translateX(14px);
+  background: #22c55e;
 }
 
 .obsidian-codex__fastmode-control.is-active .obsidian-codex__toggle-switch {

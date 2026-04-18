@@ -31,7 +31,6 @@ export interface ComposerDisplayState {
   placeholder: string;
   panelLabel: string | null;
   activeSkillLabels: string[];
-  modifierChips: Array<{ id: string; label: string }>;
   canClearPanelContext: boolean;
   planModeActive: boolean;
 }
@@ -40,6 +39,7 @@ export interface StatusBarDisplayState {
   modelLabel: string;
   reasoningLabel: string;
   streaming: boolean;
+  learningModeActive: boolean;
   fastModeActive: boolean;
   yoloActive: boolean;
   yoloConfigured: boolean;
@@ -172,7 +172,6 @@ export function buildComposerDisplayState(
     placeholder: getStudyWorkflowComposerPlaceholder(activeTab?.studyWorkflow ?? null, locale),
     panelLabel,
     activeSkillLabels: (activeTab?.activeStudySkillNames ?? []).map((skillName) => `/${skillName}`),
-    modifierChips: (activeTab?.instructionChips ?? []).map((chip) => ({ id: chip.id, label: chip.label })),
     canClearPanelContext: Boolean(activeTab && hasVisiblePanelContext),
     planModeActive: activeTab?.composeMode === "plan",
   };
@@ -226,6 +225,7 @@ export function buildStatusBarDisplayState(
     modelLabel: compactModelLabel(selectedModel.slug, selectedModel.displayName),
     reasoningLabel: displayEffortLabel(activeTab?.reasoningEffort ?? selectedModel.defaultReasoningLevel, locale),
     streaming: isTabStreaming(activeTab?.status),
+    learningModeActive: Boolean(activeTab?.learningMode),
     fastModeActive: Boolean(activeTab?.fastMode),
     yoloActive: permissionMode === "full-auto",
     yoloConfigured: executionState.yoloConfigured,

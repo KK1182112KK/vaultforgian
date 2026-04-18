@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const repoRoot = process.cwd();
 const checkPackageScript = join(repoRoot, "scripts", "check-package.mjs");
 const deployScript = join(repoRoot, "scripts", "deploy.mjs");
+const releaseBundleScript = join(repoRoot, "scripts", "create-release-bundle.mjs");
 
 const tempRoots: string[] = [];
 
@@ -89,6 +90,7 @@ async function writePackageFixture(root: string, includeAvatarModule = true): Pr
           "check:package": "noop",
           deploy: "noop",
           lint: "noop",
+          "release:bundle": "noop",
           test: "noop",
           "test:smoke": "noop",
           typecheck: "noop",
@@ -106,6 +108,17 @@ async function writePackageFixture(root: string, includeAvatarModule = true): Pr
       {
         id: "obsidian-codex-study",
         version: "0.1.0",
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  await writeFile(
+    join(root, "versions.json"),
+    JSON.stringify(
+      {
+        "0.1.0": "1.5.0",
       },
       null,
       2,
@@ -177,5 +190,20 @@ describe("release scripts", () => {
     expect(await readFile(join(targetRoot, "manifest.json"), "utf8")).toContain('"id": "obsidian-codex-study"');
     expect(await readFile(join(targetRoot, "styles.css"), "utf8")).toBe("body {}\n");
     expect(await readFile(join(targetRoot, "assets", "note.txt"), "utf8")).toBe("asset payload\n");
+  });
+
+  it("creates a versioned release zip for the plugin bundle", async () => {
+    const root = await makeTempRoot("obsidian-codex-release-bundle-");
+    await writePackageFixture(root);
+    await writeFile(join(root, "assets", "note.txt"), "asset payload\n", "utf8");
+
+    const result = await runNodeScript(releaseBundleScript, root);
+    const releaseZipPath = join(root, "release", "obsidian-codex-study-v0.1.0.zip");
+    const zipBuffer = await readFile(releaseZipPath);
+
+    expect(result.exitCode).toBeUndefined();
+    expect(result.logs).toContain(releaseZipPath);
+    expect(zipBuffer.subarray(0, 2).toString("utf8")).toBe("PK");
+    expect(zipBuffer.byteLength).toBeGreaterThan(100);
   });
 });

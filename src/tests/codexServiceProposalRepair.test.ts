@@ -32,7 +32,6 @@ function createContext(overrides: Partial<TurnContextSnapshot> = {}): TurnContex
     paperStudyRuntimeOverlayText: null,
     skillGuideText: null,
     paperStudyGuideText: null,
-    instructionText: null,
     mentionContextText: null,
     selection: null,
     selectionSourcePath: null,

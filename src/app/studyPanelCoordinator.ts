@@ -559,14 +559,8 @@ export class StudyPanelCoordinator {
   }
 
   applyStudyRecipeContext(tabId: string, recipe: StudyRecipe): void {
-    const instructionChips = recipe.instructionChipHints.map((label) => ({
-      id: makeId("instruction"),
-      label,
-      createdAt: Date.now(),
-    }));
     this.deps.store.setTabStudyWorkflow(tabId, recipe.workflow === "custom" ? null : recipe.workflow);
     this.deps.store.setComposeMode(tabId, "chat");
-    this.deps.store.setInstructionChips(tabId, instructionChips);
     this.deps.store.setActiveStudyPanel(tabId, recipe.id, []);
     this.deps.store.activateStudyRecipe(recipe.id);
     this.deps.store.upsertStudyRecipe({
@@ -602,7 +596,6 @@ export class StudyPanelCoordinator {
       linkedSkillNames: [...DEFAULT_LINKED_PANEL_SKILLS[workflow]],
       contextContract: this.deriveStudyRecipeContextContract(workflow, { hasAttachments: false }),
       outputContract: [...definition.responseContract],
-      instructionChipHints: [...definition.instructionLabels],
       sourceHints: [...definition.sourcePriority],
       exampleSession: {
         sourceTabTitle: this.deps.getLocalizedCopy().service.studyChatTitle,
@@ -638,7 +631,6 @@ export class StudyPanelCoordinator {
         minimumPinnedContextCount: 0,
       },
       outputContract: [],
-      instructionChipHints: [],
       sourceHints: [],
       exampleSession: {
         sourceTabTitle: this.deps.getLocalizedCopy().service.studyChatTitle,
@@ -764,7 +756,6 @@ export class StudyPanelCoordinator {
       linkedSkillNames: existing?.linkedSkillNames ?? (existing?.promotedSkillName ? [existing.promotedSkillName] : [...DEFAULT_LINKED_PANEL_SKILLS[workflow]]),
       contextContract: this.deriveStudyRecipeContextContract(workflow, workflowContext),
       outputContract: [...definition.responseContract],
-      instructionChipHints: [...definition.instructionLabels],
       sourceHints: [...definition.sourcePriority],
       exampleSession,
       promotionState: existing?.promotionState ?? "captured",
