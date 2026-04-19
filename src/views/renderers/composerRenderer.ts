@@ -30,7 +30,7 @@ export class ComposerRenderer {
     private readonly root: HTMLDivElement,
     callbacks: Pick<
       WorkspaceRenderCallbacks,
-      "attachBrowserFiles" | "focusComposer" | "openTargetNote" | "resolvePromptContext"
+      "attachBrowserFiles" | "focusComposer" | "openTargetNote" | "requestRender" | "resolvePromptContext"
     >,
   ) {
     this.elements = this.buildElements();

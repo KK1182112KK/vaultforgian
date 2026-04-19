@@ -107,6 +107,21 @@ describe("codex CLI spawn spec", () => {
     expect(renderCodexSpawnSpec(spec)).toContain("wsl.exe -e codex exec resume --json");
   });
 
+  it("builds a WSL invocation from fallback launcher parts when provided", () => {
+    const spec = buildCodexSpawnSpec({
+      runtime: "wsl",
+      executablePath: "codex",
+      jsonOutputFlag: "--json",
+      model: "gpt-5.4",
+      workingDirectory: "C:\\Obsidian\\My brain sync",
+      launcherOverrideParts: ["wsl.exe", "-e", "bash", "-lc", 'echo "$@"', "__obsidian_codex_fallback__"],
+    });
+
+    expect(spec.command).toBe("wsl.exe");
+    expect(spec.args.slice(0, 6)).toEqual(["-e", "bash", "-lc", 'echo "$@"', "__obsidian_codex_fallback__", "exec"]);
+    expect(spec.args).toContain("/mnt/c/Obsidian/My brain sync");
+  });
+
   it("passes full-auto through resume invocations only for workspace-write sessions", () => {
     const spec = buildCodexSpawnSpec({
       runtime: "native",

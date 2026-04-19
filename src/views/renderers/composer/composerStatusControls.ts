@@ -116,16 +116,19 @@ export class ComposerStatusControls {
       context.locale,
       context.copy.workspace,
     );
+    const controlsBusy = statusState.streaming || this.state.isSending;
 
     this.elements.modelValueEl.textContent = statusState.modelLabel;
     this.elements.modelValueEl.setAttribute("aria-label", `${context.copy.workspace.modelMenuTitle}: ${statusState.modelLabel}`);
     this.elements.thinkingValueEl.textContent = statusState.reasoningLabel;
     this.elements.thinkingValueEl.setAttribute("aria-label", `${context.copy.workspace.thinkingMenuTitle}: ${statusState.reasoningLabel}`);
     this.elements.learningModeControlEl.classList.toggle("is-active", statusState.learningModeActive);
-    this.elements.learningModeControlEl.disabled = statusState.streaming || !context.activeTab;
+    this.elements.modelButtonEl.disabled = controlsBusy;
+    this.elements.thinkingButtonEl.disabled = controlsBusy;
+    this.elements.learningModeControlEl.disabled = controlsBusy || !context.activeTab;
     this.elements.learningModeControlEl.ariaPressed = String(statusState.learningModeActive);
     this.elements.fastModeControlEl.classList.toggle("is-active", statusState.fastModeActive);
-    this.elements.fastModeControlEl.disabled = statusState.streaming || !context.activeTab;
+    this.elements.fastModeControlEl.disabled = controlsBusy || !context.activeTab;
     this.elements.fastModeControlEl.ariaPressed = String(statusState.fastModeActive);
     this.elements.executionStateEl.dataset.smoke = "composer-execution-state";
     this.elements.executionStateEl.textContent = statusState.effectivePermissionState;
@@ -133,15 +136,15 @@ export class ComposerStatusControls {
     this.renderUsageMeters(context.state.accountUsage ?? null);
     this.elements.statusBarEl.classList.toggle("is-streaming", statusState.streaming);
     this.elements.yoloControlEl.classList.toggle("is-active", statusState.yoloActive);
-    this.elements.yoloControlEl.disabled = statusState.streaming || !context.activeTab;
+    this.elements.yoloControlEl.disabled = controlsBusy || !context.activeTab;
     this.elements.planWarningEl.dataset.smoke = "composer-plan-warning";
     this.elements.planWarningEl.textContent = statusState.showPlanYoloWarning ? context.copy.workspace.planYoloWarning : "";
     this.elements.planWarningEl.classList.toggle("is-visible", statusState.showPlanYoloWarning);
-    this.elements.learningModeControlEl.title = statusState.streaming
+    this.elements.learningModeControlEl.title = controlsBusy
       ? context.copy.workspace.learningModeStreamingTooltip
       : `${context.copy.workspace.learningMode} · ${context.copy.workspace.learningModeHint}`;
     this.elements.learningModeControlEl.ariaLabel = this.elements.learningModeControlEl.title;
-    this.elements.fastModeControlEl.title = statusState.streaming
+    this.elements.fastModeControlEl.title = controlsBusy
       ? context.copy.workspace.fastModeStreamingTooltip
       : `${context.copy.workspace.fastMode} · ${context.copy.workspace.fastModeHint}`;
     this.elements.fastModeControlEl.ariaLabel = this.elements.fastModeControlEl.title;
@@ -149,7 +152,7 @@ export class ComposerStatusControls {
     this.elements.yoloControlEl.ariaLabel = this.elements.yoloControlEl.title;
 
     if (
-      statusState.streaming &&
+      controlsBusy &&
       this.state.statusMenuAnchorEl &&
       (this.state.statusMenuAnchorEl === this.elements.modelButtonEl || this.state.statusMenuAnchorEl === this.elements.thinkingButtonEl)
     ) {

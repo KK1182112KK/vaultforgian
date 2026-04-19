@@ -199,6 +199,8 @@ export class ComposerInputController {
 
     try {
       this.state.isSending = true;
+      this.clearComposerSuggestions();
+      this.callbacks.requestRender();
       this.renderSendButtonState(true);
       this.elements.attachButtonEl.disabled = true;
       const shouldCollapseHub =
@@ -220,6 +222,7 @@ export class ComposerInputController {
       new Notice((error as Error).message);
     } finally {
       this.state.isSending = false;
+      this.callbacks.requestRender();
       const busy = this.isBusy();
       this.renderSendButtonState(busy);
       this.elements.attachButtonEl.disabled = busy;
@@ -301,6 +304,10 @@ export class ComposerInputController {
     if (!context) {
       return;
     }
+    if (this.isBusy()) {
+      this.clearComposerSuggestions();
+      return;
+    }
     const cursor = this.elements.inputEl.selectionStart ?? this.elements.inputEl.value.length;
     const mentionSuggestions: ComposerSuggestion[] = context.service.getMentionCandidates().map((entry) => ({
       kind: "mention",
@@ -317,10 +324,7 @@ export class ComposerInputController {
     );
     this.state.composerSuggestions = suggestions;
     if (suggestions.length === 0) {
-      this.state.composerSelectedIndex = 0;
-      this.elements.slashMenuEl.empty();
-      this.elements.slashMenuEl.classList.remove("is-visible");
-      this.elements.root.classList.remove("has-slash-menu");
+      this.clearComposerSuggestions();
       return;
     }
     if (this.state.composerSelectedIndex >= suggestions.length) {
@@ -349,6 +353,14 @@ export class ComposerInputController {
       itemEl.createDiv({ cls: "obsidian-codex__slash-desc", text: suggestion.description });
     }
     selectedItemEl?.scrollIntoView({ block: "nearest" });
+  }
+
+  private clearComposerSuggestions(): void {
+    this.state.composerSuggestions = [];
+    this.state.composerSelectedIndex = 0;
+    this.elements.slashMenuEl.empty();
+    this.elements.slashMenuEl.classList.remove("is-visible");
+    this.elements.root.classList.remove("has-slash-menu");
   }
 
   private moveComposerSelection(delta: number): void {

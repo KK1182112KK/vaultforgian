@@ -57,7 +57,6 @@ async function main() {
   const manifestPath = path.join(projectRoot, "manifest.json");
   const mainJsPath = path.join(projectRoot, "main.js");
   const stylesPath = path.join(projectRoot, "styles.css");
-  const assetsPath = path.join(projectRoot, "assets");
   const releaseDir = path.join(projectRoot, "release");
 
   await Promise.all([
@@ -91,14 +90,6 @@ async function main() {
     await cp(mainJsPath, path.join(stagingPluginDir, "main.js"));
     await cp(manifestPath, path.join(stagingPluginDir, "manifest.json"));
     await cp(stylesPath, path.join(stagingPluginDir, "styles.css"));
-    try {
-      const assetsStat = await stat(assetsPath);
-      if (assetsStat.isDirectory()) {
-        await cp(assetsPath, path.join(stagingPluginDir, "assets"), { recursive: true });
-      }
-    } catch {
-      // Assets are optional in release bundles.
-    }
 
     await rm(outputZipPath, { force: true });
     await createZipArchive(stagingRoot, pluginId, outputZipPath);

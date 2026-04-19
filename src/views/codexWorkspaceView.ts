@@ -71,7 +71,6 @@ export async function syncWorkspaceLeafBranding(
 
 export class CodexWorkspaceView extends ItemView {
   private static readonly RESPONSIVE_HUB_COLLAPSE_WIDTH = 860;
-  private static readonly RESPONSIVE_HUB_COLLAPSE_WINDOW_WIDTH = 1100;
   private unsubscribe: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private state: WorkspaceState | null = null;
@@ -186,7 +185,6 @@ export class CodexWorkspaceView extends ItemView {
     }
     const layoutChanged = this.syncResponsiveHubCollapse({
       paneWidth: this.measureResponsiveHubWidth(observedWidth),
-      windowWidth: this.measureResponsiveWindowWidth(),
     });
     if (layoutChanged && this.state) {
       this.render();
@@ -310,10 +308,8 @@ export class CodexWorkspaceView extends ItemView {
     this.composerRenderer.render(context);
   }
 
-  private syncResponsiveHubCollapse(widths: { paneWidth: number; windowWidth: number }): boolean {
-    const isNarrow =
-      widths.paneWidth <= CodexWorkspaceView.RESPONSIVE_HUB_COLLAPSE_WIDTH ||
-      widths.windowWidth <= CodexWorkspaceView.RESPONSIVE_HUB_COLLAPSE_WINDOW_WIDTH;
+  private syncResponsiveHubCollapse(widths: { paneWidth: number; windowWidth?: number }): boolean {
+    const isNarrow = widths.paneWidth <= CodexWorkspaceView.RESPONSIVE_HUB_COLLAPSE_WIDTH;
     const layoutChanged = this.isNarrowLayout !== isNarrow;
     this.isNarrowLayout = isNarrow;
     const currentCollapsed = this.service.getStudyHubState().isCollapsed;
@@ -347,18 +343,8 @@ export class CodexWorkspaceView extends ItemView {
   }
 
   private measureResponsiveHubWidth(observedWidth?: number): number {
-    const candidates = [
-      this.shellEl?.getBoundingClientRect().width ?? 0,
-      this.contentEl.getBoundingClientRect().width,
-      observedWidth ?? 0,
-      this.contentEl.clientWidth,
-    ].filter((value) => value > 0);
-    return candidates.length > 0 ? Math.min(...candidates) : 0;
-  }
-
-  private measureResponsiveWindowWidth(): number {
-    const ownerWindow = this.contentEl.ownerDocument.defaultView;
-    return ownerWindow?.innerWidth ?? (typeof window !== "undefined" ? window.innerWidth : 0);
+    const candidates = [this.contentEl.clientWidth, observedWidth ?? 0, this.contentEl.getBoundingClientRect().width].filter((value) => value > 0);
+    return candidates[0] ?? 0;
   }
 
   private syncResponsiveHubManualState(): void {

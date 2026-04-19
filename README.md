@@ -78,7 +78,7 @@ For friend testing and beta feedback, see [TESTING.md](./TESTING.md).
 ## Quick start
 
 1. Run `codex login` in your terminal if you haven't already. Verify with `codex --version`.
-2. Open the plugin's workspace view (**Command palette → "Open Codex workspace"**).
+2. Open the plugin's workspace view (**Command palette → "Open Study workspace"**).
 3. Type a request — e.g. "Summarize the key equations in this paper."
 4. If the request implies editing a note ("clean up the formatting", "convert all math to LaTeX", "add a section on X"), Codex will emit a patch block that appears as an **approval panel**. Review the diff and click **Apply**.
 5. Use the **Plan / Chat** toggle in the composer to switch modes. In plan mode, Codex asks clarifying questions instead of editing.
@@ -91,7 +91,8 @@ For friend testing and beta feedback, see [TESTING.md](./TESTING.md).
 
 Open *Settings → Codex Noteforge*:
 
-- **Codex command** — the launcher used by the plugin. Leave this as `codex` to auto-detect a local install. Absolute paths are supported too, including Windows-native `codex.cmd` / `codex.exe`. WSL launchers are still available as an optional fallback.
+- **Codex runtime** — choose whether the plugin launches Codex from the native desktop environment or from WSL.
+- **Codex executable path** — the `codex` executable to launch for the selected runtime. Leave this as `codex` to auto-detect a standard install. Absolute executable paths are supported too, including Windows-native `codex.cmd` / `codex.exe`.
 - **Default model / reasoning effort** — forwarded to the CLI when starting a new thread.
 - **Default permission mode** — which of the three modes a new turn starts in.
 - **Language** — UI language (English or Japanese).
@@ -108,7 +109,7 @@ Package checks also verify the avatar source/generated pair: if you change `asse
 
 **Patch approval panel never appears after a request to edit a note** — Check the permission mode for the turn. "Read only" intentionally does not apply patches; switch to "Edit with approval" or "Edit automatically". If the mode is correct, the plugin now automatically re-prompts Codex when it promises a patch in prose but forgets to emit the actual block. If that retry also fails, rephrase the request more concretely (e.g. "replace the Core Equations section with LaTeX notation").
 
-**Windows: "sandbox bootstrap failed"** — The plugin prefers a native Windows Codex install first, then automatically falls back to a WSL launcher for retryable sandbox failures and WSL-native source paths. If the fallback cannot resolve `codex`, either fix the WSL PATH or set **Codex command** to an explicit native or WSL executable path.
+**Windows: "sandbox bootstrap failed"** — The plugin prefers a native Windows Codex install first. With the default launcher settings, it will automatically fall back to WSL for retryable sandbox/bootstrap failures and WSL-native source paths. If fallback still cannot resolve `codex`, fix the WSL PATH or set **Codex executable path** to the correct native or WSL executable for the runtime you selected.
 
 **Session file missing / usage metrics not syncing** — Non-fatal. The plugin falls back to per-turn estimates. Check the developer console for warnings if you want details.
 

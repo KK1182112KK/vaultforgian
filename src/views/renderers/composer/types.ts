@@ -57,7 +57,7 @@ export interface ComposerSharedState {
 
 export type ComposerCallbacks = Pick<
   WorkspaceRenderCallbacks,
-  "attachBrowserFiles" | "focusComposer" | "openTargetNote" | "resolvePromptContext"
+  "attachBrowserFiles" | "focusComposer" | "openTargetNote" | "requestRender" | "resolvePromptContext"
 >;
 
 export interface ComposerSectionRenderState {

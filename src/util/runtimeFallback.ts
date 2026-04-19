@@ -1,6 +1,7 @@
 import { isWslPathLike, splitCommandString, usesWsl } from "./command";
 
 export const WSL_CODEX_MISSING_SENTINEL = "__OBSIDIAN_CODEX_WSL_MISSING__";
+const DEFAULT_WSL_FALLBACK_ARGV0 = "__obsidian_codex_fallback__";
 
 function buildDefaultWslFallbackShellPrefix(): string {
   return [
@@ -11,15 +12,26 @@ function buildDefaultWslFallbackShellPrefix(): string {
     'if [ -z "$CODEX_BIN" ] && command -v codex >/dev/null 2>&1; then CODEX_BIN="$(command -v codex)"; fi',
     'for candidate in "$HOME"/.nvm/versions/node/*/bin/codex "$HOME/.local/bin/codex" "$HOME/bin/codex" "/usr/local/bin/codex" "/usr/bin/codex"; do if [ -z "$CODEX_BIN" ] && [ -x "$candidate" ]; then CODEX_BIN="$candidate"; break; fi; done',
     `if [ -z "$CODEX_BIN" ]; then printf '%s\\n' '${WSL_CODEX_MISSING_SENTINEL}' >&2; exit 127; fi`,
-    'exec "$CODEX_BIN"',
   ].join("; ");
 }
 
-const ESCAPED_DEFAULT_WSL_FALLBACK_SHELL_PREFIX = buildDefaultWslFallbackShellPrefix()
-  .replace(/\\/g, "\\\\")
-  .replace(/"/g, '\\"');
+function quoteCommandPart(value: string): string {
+  if (!/[\s"\\]/.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 
-export const DEFAULT_WSL_FALLBACK_COMMAND = `wsl.exe -e bash -lc "${ESCAPED_DEFAULT_WSL_FALLBACK_SHELL_PREFIX}"`;
+export const DEFAULT_WSL_FALLBACK_LAUNCHER_PARTS = [
+  "wsl.exe",
+  "-e",
+  "bash",
+  "-lc",
+  `${buildDefaultWslFallbackShellPrefix()}; exec "$CODEX_BIN" "$@"`,
+  DEFAULT_WSL_FALLBACK_ARGV0,
+] as const;
+
+export const DEFAULT_WSL_FALLBACK_COMMAND = DEFAULT_WSL_FALLBACK_LAUNCHER_PARTS.map((part) => quoteCommandPart(part)).join(" ");
 
 const WINDOWS_SANDBOX_ERROR_PATTERNS = [
   /windows sandbox/i,

@@ -34,7 +34,7 @@ If `codex --version` or `codex login` does not work in your terminal, fix that b
 After install, please verify:
 
 1. The plugin enables without crashing.
-2. `Open Codex workspace` opens the workspace view.
+2. `Open Study workspace` opens the workspace view.
 3. The settings tab opens and shows the new layout.
 4. You can create a chat tab and type in the composer.
 5. If you shrink the Obsidian window, the header/actions and chat hub still remain usable.

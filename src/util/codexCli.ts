@@ -8,6 +8,7 @@ export type JsonOutputFlag = "--json" | "--experimental-json";
 export interface CodexExecOptions {
   runtime: CodexRuntime;
   executablePath: string;
+  launcherOverrideParts?: string[];
   jsonOutputFlag: JsonOutputFlag;
   model: string;
   threadId?: string | null;
@@ -54,7 +55,12 @@ function buildResumePermissionArgs(options: CodexExecOptions): string[] {
 }
 
 function buildCodexExecArgs(options: CodexExecOptions): string[] {
-  const launcherParts = usesWslRuntime(options.runtime) ? [DEFAULT_WSL_EXECUTABLE] : [options.executablePath];
+  const launcherParts =
+    options.launcherOverrideParts && options.launcherOverrideParts.length > 0
+      ? options.launcherOverrideParts
+      : usesWslRuntime(options.runtime)
+        ? [DEFAULT_WSL_EXECUTABLE]
+        : [options.executablePath];
   const workingDirectory = usesWslRuntime(options.runtime)
     ? toWslPath(options.workingDirectory, launcherParts)
     : options.workingDirectory;
@@ -108,12 +114,19 @@ function buildCodexExecArgs(options: CodexExecOptions): string[] {
 export function buildCodexSpawnSpec(options: CodexExecOptions): CodexSpawnSpec {
   const executablePath = options.executablePath.trim() || DEFAULT_CODEX_EXECUTABLE;
   const codexArgs = buildCodexExecArgs(options);
+  const launcherParts =
+    options.launcherOverrideParts && options.launcherOverrideParts.length > 0
+      ? options.launcherOverrideParts
+      : usesWslRuntime(options.runtime)
+        ? [DEFAULT_WSL_EXECUTABLE, "-e", executablePath]
+        : [executablePath];
 
-  if (usesWslRuntime(options.runtime)) {
+  if (launcherParts.length > 0) {
     return {
-      command: DEFAULT_WSL_EXECUTABLE,
-      args: ["-e", executablePath, ...codexArgs],
-      launcherParts: [DEFAULT_WSL_EXECUTABLE, "-e", executablePath],
+      command: launcherParts[0] ?? DEFAULT_WSL_EXECUTABLE,
+      args: [...launcherParts.slice(1), ...codexArgs],
+      cwd: resolveSpawnCwd(options.workingDirectory, options.runtime),
+      launcherParts,
     };
   }
 

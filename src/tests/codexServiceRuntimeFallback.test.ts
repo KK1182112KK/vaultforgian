@@ -102,9 +102,56 @@ describe("CodexService launcher resolution", () => {
     }
   });
 
-  it("does not auto-pivot runtime on Windows sandbox bootstrap failures", async () => {
+  it("prefers a WSL fallback launcher for WSL-native turn hints on Windows defaults", () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32",
+    });
+
+    try {
+      const service = createService("C:\\vault") as unknown as {
+        resolveTurnCodexLauncher: (options: {
+          defaultWorkingDirectory: string;
+          workingDirectoryHint: string | null;
+          sourcePathHints: readonly string[];
+        }) => {
+          runtime: "native" | "wsl";
+          executablePath: string;
+          launcherOverrideParts?: string[];
+        };
+      };
+
+      const launcher = service.resolveTurnCodexLauncher({
+        defaultWorkingDirectory: "C:\\vault",
+        workingDirectoryHint: null,
+        sourcePathHints: ["\\\\wsl.localhost\\Ubuntu\\home\\tester\\active\\research\\paper\\8"],
+      });
+
+      expect(launcher.runtime).toBe("wsl");
+      expect(launcher.executablePath).toBe("codex");
+      expect(launcher.launcherOverrideParts?.join(" ")).toContain("bash -lc");
+    } finally {
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: originalPlatform,
+      });
+    }
+  });
+
+  it("retries with a WSL fallback launcher on Windows sandbox bootstrap failures", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "win32",
+    });
+
+    try {
     const service = createService("/vault");
-    const executeSpy = vi.fn().mockRejectedValue(new Error("windows sandbox: spawn setup refresh failed"));
+      const executeSpy = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("windows sandbox: spawn setup refresh failed"))
+        .mockResolvedValueOnce("thread-123");
     Object.assign(service as object, {
       executeCodexStream: executeSpy,
     });
@@ -131,8 +178,8 @@ describe("CodexService launcher resolution", () => {
         onEvent: (event: unknown) => void;
       }) => Promise<{ threadId: string | null }>;
     };
-    await expect(
-      runCodexStream.runCodexStream({
+      await expect(
+        runCodexStream.runCodexStream({
         prompt: "Explain the paper deeply.",
         tabId,
         threadId: null,
@@ -146,10 +193,26 @@ describe("CodexService launcher resolution", () => {
         reasoningEffort: null,
         signal: new AbortController().signal,
         onEvent: vi.fn(),
-      }),
-    ).rejects.toThrow("windows sandbox: spawn setup refresh failed");
+        }),
+      ).resolves.toEqual({
+        threadId: "thread-123",
+      });
 
-    expect(executeSpy).toHaveBeenCalledTimes(2);
-    expect(executeSpy.mock.calls.every(([request]) => request.runtime === "native" && request.executablePath === "codex")).toBe(true);
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+      expect(executeSpy.mock.calls[0]?.[0]).toMatchObject({
+        runtime: "native",
+        executablePath: "codex",
+      });
+      expect(executeSpy.mock.calls[1]?.[0]).toMatchObject({
+        runtime: "wsl",
+        executablePath: "codex",
+      });
+      expect(executeSpy.mock.calls[1]?.[0]?.launcherOverrideParts?.join(" ")).toContain("bash -lc");
+    } finally {
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: originalPlatform,
+      });
+    }
   });
 });

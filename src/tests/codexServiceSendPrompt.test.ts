@@ -108,6 +108,7 @@ type PrivateRunTurn = (
   workingDirectory: string,
   runtime: "native" | "wsl",
   executablePath: string,
+  launcherOverrideParts: string[] | undefined,
   allowVaultWrite: boolean,
   draftBackup: string,
   allowEmptyReplyRecovery?: boolean,
@@ -441,6 +442,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       false,
       "draft",
     );
@@ -526,6 +528,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       false,
       "draft",
     );
@@ -611,6 +614,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       false,
       "draft",
     );
@@ -683,6 +687,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       false,
       "draft",
     );
@@ -773,6 +778,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       false,
       "draft",
       true,
@@ -857,6 +863,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       false,
       "draft",
       true,
@@ -936,6 +943,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       false,
       "draft",
     );
@@ -1005,6 +1013,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       true,
       "draft",
     );
@@ -1107,6 +1116,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       true,
       "draft",
     );
@@ -1194,6 +1204,7 @@ describe("CodexService sendPrompt skill context", () => {
       vaultRoot,
       "native",
       "codex",
+      undefined,
       true,
       "draft",
       true,

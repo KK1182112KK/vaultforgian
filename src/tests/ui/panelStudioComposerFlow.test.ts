@@ -181,6 +181,7 @@ function createHarness(
     rejectSend?: boolean;
     slashCommands?: readonly SlashCommandDefinition[];
     permissionMode?: "suggest" | "auto-edit" | "full-auto";
+    preserveReadyStatusWhileSending?: boolean;
     fastMode?: boolean;
     tabBarPosition?: "header" | "composer";
     isNarrowLayout?: boolean;
@@ -221,10 +222,14 @@ function createHarness(
   let lastEffectiveSkillsCsv: string | null = null;
   const sendPrompt = vi.fn(async (_tabId: string, _prompt: string) => {
     lastEffectiveSkillsCsv = activeTab.activeStudySkillNames.length > 0 ? activeTab.activeStudySkillNames.join(",") : null;
-    activeTab.status = "busy";
-    renderAll();
+    if (!options.preserveReadyStatusWhileSending) {
+      activeTab.status = "busy";
+      renderAll();
+    }
     await sendGate.promise;
-    activeTab.status = "ready";
+    if (!options.preserveReadyStatusWhileSending) {
+      activeTab.status = "ready";
+    }
     if (options.rejectSend) {
       activeTab.lastError = "Send failed";
       renderAll();
@@ -1388,6 +1393,96 @@ describe("Panel Studio composer flow", () => {
 
     expect(harness.service.setPermissionMode).toHaveBeenCalledWith("full-auto");
     expect(yoloButton?.classList.contains("is-active")).toBe(true);
+  });
+
+  it("disables status controls and closes the picker while a send is pending before the tab flips busy", async () => {
+    const harness = createHarness({ preserveReadyStatusWhileSending: true });
+    const input = harness.composerRoot.querySelector<HTMLTextAreaElement>(".obsidian-codex__input")!;
+    const modelButton = harness.composerRoot.querySelector<HTMLButtonElement>('[data-smoke="composer-model-trigger"]')!;
+    const thinkingButton = harness.composerRoot.querySelector<HTMLButtonElement>('[data-smoke="composer-thinking-trigger"]')!;
+    const learningModeButton = harness.composerRoot.querySelector<HTMLButtonElement>('[data-smoke="composer-learning-mode"]')!;
+    const fastModeButton = harness.composerRoot.querySelector<HTMLButtonElement>('[data-smoke="composer-fastmode"]')!;
+    const yoloButton = harness.composerRoot.querySelector<HTMLButtonElement>('[data-smoke="composer-yolo"]')!;
+    const sendButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__send-btn")!;
+
+    input.value = "Keep working on this.";
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+
+    modelButton.click();
+    await tick();
+    expect(harness.composerRoot.querySelector(".obsidian-codex__status-menu")).not.toBeNull();
+    expect(harness.activeTab.status).toBe("ready");
+
+    sendButton.click();
+    await tick();
+
+    expect(harness.sendPrompt).toHaveBeenCalledTimes(1);
+    expect(harness.activeTab.status).toBe("ready");
+    expect(modelButton.disabled).toBe(true);
+    expect(thinkingButton.disabled).toBe(true);
+    expect(learningModeButton.disabled).toBe(true);
+    expect(fastModeButton.disabled).toBe(true);
+    expect(yoloButton.disabled).toBe(true);
+    expect(harness.composerRoot.querySelector(".obsidian-codex__status-menu")).toBeNull();
+
+    harness.sendGate.resolve();
+    await tick();
+    await tick();
+
+    expect(modelButton.disabled).toBe(false);
+    expect(thinkingButton.disabled).toBe(false);
+    expect(learningModeButton.disabled).toBe(false);
+    expect(fastModeButton.disabled).toBe(false);
+    expect(yoloButton.disabled).toBe(false);
+  });
+
+  it("closes the slash menu and keeps it hidden while a send is pending before the tab flips busy", async () => {
+    const harness = createHarness({
+      preserveReadyStatusWhileSending: true,
+      slashCommands: [
+        {
+          command: "/lecture",
+          label: "Lecture",
+          description: "Seed a lecture prompt.",
+          source: "builtin",
+          mode: "prompt",
+        },
+      ],
+    });
+    const input = harness.composerRoot.querySelector<HTMLTextAreaElement>(".obsidian-codex__input")!;
+    const sendButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__send-btn")!;
+
+    input.click();
+    await tick();
+    input.value = "/";
+    input.setSelectionRange(1, 1);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+
+    expect(harness.composerRoot.querySelector(".obsidian-codex__slash-menu.is-visible")).not.toBeNull();
+    expect(harness.composerRoot.classList.contains("has-slash-menu")).toBe(true);
+
+    sendButton.click();
+    await tick();
+
+    expect(harness.sendPrompt).toHaveBeenCalledTimes(1);
+    expect(harness.activeTab.status).toBe("ready");
+    expect(harness.composerRoot.querySelector(".obsidian-codex__slash-menu.is-visible")).toBeNull();
+    expect(harness.composerRoot.classList.contains("has-slash-menu")).toBe(false);
+
+    input.value = "/lecture";
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+
+    expect(harness.composerRoot.querySelector(".obsidian-codex__slash-menu.is-visible")).toBeNull();
+    expect(harness.composerRoot.classList.contains("has-slash-menu")).toBe(false);
+
+    harness.sendGate.resolve();
+    await tick();
+    await tick();
   });
 
   it("toggles Fast mode from the fixed status control", async () => {

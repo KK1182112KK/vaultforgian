@@ -37,6 +37,10 @@ function createHarness(initialCollapsed = false) {
   vi.spyOn(view.contentEl, "getBoundingClientRect").mockImplementation(
     () => ({ width: contentWidth } as DOMRect),
   );
+  Object.defineProperty(view.contentEl, "clientWidth", {
+    configurable: true,
+    get: () => contentWidth,
+  });
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     get: () => windowWidth,
@@ -102,62 +106,53 @@ describe("CodexWorkspaceView responsive hub collapse", () => {
     expect(service.setStudyHubCollapsed).toHaveBeenCalledTimes(1);
   });
 
-  it("uses onResize to react to shell width changes", () => {
-    const { view, service, getCollapsed, setShellWidth, syncInputHeight } = createHarness(false);
+  it("uses onResize to react to content width changes", () => {
+    const { view, service, getCollapsed, setContentWidth, syncInputHeight } = createHarness(false);
 
-    setShellWidth(840);
+    setContentWidth(840);
     view.onResize();
     expect(getCollapsed()).toBe(true);
     expect(service.setStudyHubCollapsed).toHaveBeenNthCalledWith(1, true);
     expect(syncInputHeight).toHaveBeenCalledTimes(1);
 
-    setShellWidth(920);
+    setContentWidth(920);
     view.onResize();
     expect(getCollapsed()).toBe(false);
     expect(service.setStudyHubCollapsed).toHaveBeenNthCalledWith(2, false);
     expect(syncInputHeight).toHaveBeenCalledTimes(2);
   });
 
-  it("auto-collapses when the window is narrow even if the pane stays wide", () => {
+  it("does not auto-collapse when only the window is narrow and the pane stays wide", () => {
     const { view, service, getCollapsed, setShellWidth, setWindowWidth, syncInputHeight } = createHarness(false);
 
     setShellWidth(980);
     setWindowWidth(1080);
     view.onResize();
 
-    expect(getCollapsed()).toBe(true);
-    expect(service.setStudyHubCollapsed).toHaveBeenNthCalledWith(1, true);
-    expect(syncInputHeight).toHaveBeenCalledTimes(1);
-
-    setWindowWidth(1320);
-    view.onResize();
     expect(getCollapsed()).toBe(false);
-    expect(service.setStudyHubCollapsed).toHaveBeenNthCalledWith(2, false);
+    expect(service.setStudyHubCollapsed).not.toHaveBeenCalled();
+    expect(syncInputHeight).toHaveBeenCalledTimes(1);
   });
 
-  it("stays collapsed until both pane and window are wide again", () => {
-    const { view, service, getCollapsed, setShellWidth, setWindowWidth } = createHarness(false);
+  it("restores once the pane is wide again even if the window stays narrow", () => {
+    const { view, service, getCollapsed, setContentWidth, setWindowWidth } = createHarness(false);
 
-    setShellWidth(980);
+    setContentWidth(840);
     setWindowWidth(1080);
-    view.onResize();
-    expect(getCollapsed()).toBe(true);
-
-    setWindowWidth(1320);
-    setShellWidth(840);
     view.onResize();
     expect(getCollapsed()).toBe(true);
     expect(service.setStudyHubCollapsed).toHaveBeenCalledTimes(1);
 
-    setShellWidth(980);
+    setContentWidth(980);
     view.onResize();
     expect(getCollapsed()).toBe(false);
     expect(service.setStudyHubCollapsed).toHaveBeenCalledTimes(2);
   });
 
-  it("reacts through the window resize handler", () => {
-    const { view, service, getCollapsed, setWindowWidth, syncInputHeight } = createHarness(false);
+  it("reacts through the window resize handler using pane width", () => {
+    const { view, service, getCollapsed, setContentWidth, setWindowWidth, syncInputHeight } = createHarness(false);
 
+    setContentWidth(840);
     setWindowWidth(1080);
     view.windowResizeHandler();
     expect(getCollapsed()).toBe(true);

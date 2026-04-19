@@ -189,7 +189,7 @@ describe("release scripts", () => {
     expect(await readFile(join(targetRoot, "main.js"), "utf8")).toBe("bundle\n");
     expect(await readFile(join(targetRoot, "manifest.json"), "utf8")).toContain('"id": "obsidian-codex-study"');
     expect(await readFile(join(targetRoot, "styles.css"), "utf8")).toBe("body {}\n");
-    expect(await readFile(join(targetRoot, "assets", "note.txt"), "utf8")).toBe("asset payload\n");
+    await expect(readFile(join(targetRoot, "assets", "note.txt"), "utf8")).rejects.toThrow();
   });
 
   it("creates a versioned release zip for the plugin bundle", async () => {
@@ -205,5 +205,6 @@ describe("release scripts", () => {
     expect(result.logs).toContain(releaseZipPath);
     expect(zipBuffer.subarray(0, 2).toString("utf8")).toBe("PK");
     expect(zipBuffer.byteLength).toBeGreaterThan(100);
+    expect(zipBuffer.toString("utf8")).not.toContain("assets/note.txt");
   });
 });

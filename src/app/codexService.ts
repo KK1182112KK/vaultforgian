@@ -87,7 +87,12 @@ import { getSlashCommandCatalog, type SlashCommandDefinition } from "../util/sla
 import { expandSlashCommand } from "../util/slashCommands";
 import { buildRequestedSkillGuideText, resolveRequestedSkillDefinitions } from "../util/skillGuides";
 import { collectTurnRequestedSkillRefs } from "../util/turnSkillSelection";
-import { isWslCodexMissingError } from "../util/runtimeFallback";
+import {
+  DEFAULT_WSL_FALLBACK_LAUNCHER_PARTS,
+  isWslCodexMissingError,
+  shouldPreferWslForTurn,
+  shouldRetryWithWslFallback,
+} from "../util/runtimeFallback";
 import { sanitizeOperationalAssistantText } from "../util/assistantChatter";
 import {
   buildCodexRunWatchdogMessage,
@@ -213,6 +218,7 @@ interface CodexRunRequest {
   workingDirectory: string;
   runtime: CodexRuntime;
   executablePath: string;
+  launcherOverrideParts?: string[];
   sandboxMode: "read-only" | "workspace-write";
   approvalPolicy: "untrusted" | "on-failure" | "never";
   images: string[];
@@ -227,6 +233,12 @@ interface CodexRunRequest {
 
 interface CodexRunResult {
   threadId: string | null;
+}
+
+interface ResolvedTurnCodexLauncher {
+  runtime: CodexRuntime;
+  executablePath: string;
+  launcherOverrideParts?: string[];
 }
 
 const MAX_AUTO_APPLY_PROPOSALS_PER_TURN = 5;
@@ -2280,7 +2292,11 @@ export class CodexService {
         return;
       }
       const defaultWorkingDirectory = currentTab?.cwd || this.resolveVaultRoot();
-      const launcher = this.resolveTurnCodexLauncher();
+      const launcher = this.resolveTurnCodexLauncher({
+        defaultWorkingDirectory,
+        workingDirectoryHint: mentionResolution.workingDirectoryHint,
+        sourcePathHints: this.collectTurnSourcePathHints(mentionResolution.sourcePathHints, attachments),
+      });
       const workingDirectory = this.resolveTurnWorkingDirectory(
         defaultWorkingDirectory,
         mentionResolution.workingDirectoryHint,
@@ -2333,6 +2349,7 @@ export class CodexService {
         workingDirectory,
         launcher.runtime,
         launcher.executablePath,
+        launcher.launcherOverrideParts,
         allowVaultWrite,
         input,
         true,
@@ -2432,6 +2449,7 @@ export class CodexService {
     workingDirectory: string,
     runtime: CodexRuntime,
     executablePath: string,
+    launcherOverrideParts: string[] | undefined,
     allowVaultWrite: boolean,
     draftBackup: string,
     allowEmptyReplyRecovery = true,
@@ -2493,6 +2511,7 @@ export class CodexService {
         workingDirectory,
         runtime,
         executablePath,
+        launcherOverrideParts,
         sandboxMode: permissionProfile.sandboxMode,
         approvalPolicy: permissionProfile.approvalPolicy,
         images,
@@ -2575,6 +2594,7 @@ export class CodexService {
             workingDirectory,
             runtime,
             executablePath,
+            launcherOverrideParts,
             allowVaultWrite,
             draftBackup,
             false,
@@ -2621,6 +2641,7 @@ export class CodexService {
             workingDirectory,
             runtime,
             executablePath,
+            launcherOverrideParts,
             allowVaultWrite,
             draftBackup,
             false,
@@ -2731,6 +2752,7 @@ export class CodexService {
             workingDirectory,
             runtime,
             executablePath,
+            launcherOverrideParts,
             allowVaultWrite,
             draftBackup,
             allowEmptyReplyRecovery,
@@ -2775,14 +2797,16 @@ export class CodexService {
     const flags: JsonOutputFlag[] =
       this.jsonOutputFlag === "--experimental-json" ? ["--experimental-json"] : ["--json", "--experimental-json"];
     let lastError: unknown = null;
+    let requestForAllFlags = request;
 
     for (const jsonOutputFlag of flags) {
       let currentEffort = request.reasoningEffort;
+      let currentRequest = requestForAllFlags;
       const attemptedEfforts = new Set<string>([currentEffort ?? "__none__"]);
 
       while (true) {
         try {
-          const threadId = await this.executeCodexStream(request, jsonOutputFlag, currentEffort);
+          const threadId = await this.executeCodexStream(currentRequest, jsonOutputFlag, currentEffort);
           this.jsonOutputFlag = jsonOutputFlag;
           return {
             threadId,
@@ -2793,11 +2817,27 @@ export class CodexService {
             throw error;
           }
           const message = getErrorMessage(error);
+          if (
+            shouldRetryWithWslFallback({
+              platform: process.platform,
+              configuredCommand: this.getConfiguredCommandText(),
+              currentCommand: this.describeCodexLauncher({
+                runtime: currentRequest.runtime,
+                executablePath: currentRequest.executablePath,
+                launcherOverrideParts: currentRequest.launcherOverrideParts,
+              }),
+              errorMessage: message,
+            })
+          ) {
+            currentRequest = this.createWslFallbackRequest(currentRequest);
+            requestForAllFlags = currentRequest;
+            continue;
+          }
           if (jsonOutputFlag === "--json" && isUnsupportedJsonFlagError(message, jsonOutputFlag)) {
             break;
           }
 
-          const fallbackEffort = this.getFallbackReasoningEffort(request.model, message, currentEffort);
+          const fallbackEffort = this.getFallbackReasoningEffort(currentRequest.model, message, currentEffort);
           if (fallbackEffort && !attemptedEfforts.has(fallbackEffort)) {
             attemptedEfforts.add(fallbackEffort);
             currentEffort = fallbackEffort;
@@ -2824,6 +2864,7 @@ export class CodexService {
     const spec = buildCodexSpawnSpec({
       runtime: request.runtime,
       executablePath: resolvedExecutablePath,
+      launcherOverrideParts: request.launcherOverrideParts,
       jsonOutputFlag,
       model: request.model,
       threadId: request.threadId,
@@ -3570,11 +3611,56 @@ export class CodexService {
     return fallback === currentEffort ? null : fallback;
   }
 
-  private resolveTurnCodexLauncher(): { runtime: CodexRuntime; executablePath: string } {
-    return this.resolveConfiguredCodexLauncher();
+  private collectTurnSourcePathHints(sourcePathHints: readonly string[], attachments: readonly ComposerAttachment[]): string[] {
+    const hints = new Set(sourcePathHints.map((value) => value.trim()).filter(Boolean));
+    for (const attachment of attachments) {
+      const candidate = attachment.originalPath?.trim();
+      if (candidate) {
+        hints.add(candidate);
+      }
+    }
+    return [...hints];
   }
 
-  private resolveConfiguredCodexLauncher(): { runtime: CodexRuntime; executablePath: string } {
+  private getConfiguredCommandText(): string {
+    const runtime = this.settingsProvider().codex.runtime;
+    const configuredExecutablePath = this.settingsProvider().codex.executablePath.trim();
+    if (runtime === "wsl") {
+      const executablePath = sanitizeCodexExecutablePath(configuredExecutablePath);
+      return `wsl.exe -e ${executablePath}`;
+    }
+    return configuredExecutablePath;
+  }
+
+  private createWslFallbackLauncher(): ResolvedTurnCodexLauncher {
+    return {
+      runtime: "wsl",
+      executablePath: DEFAULT_CODEX_EXECUTABLE,
+      launcherOverrideParts: [...DEFAULT_WSL_FALLBACK_LAUNCHER_PARTS],
+    };
+  }
+
+  private resolveTurnCodexLauncher(options: {
+    defaultWorkingDirectory: string;
+    workingDirectoryHint: string | null;
+    sourcePathHints: readonly string[];
+  }): ResolvedTurnCodexLauncher {
+    const launcher = this.resolveConfiguredCodexLauncher();
+    if (
+      shouldPreferWslForTurn({
+        platform: process.platform,
+        configuredCommand: this.getConfiguredCommandText(),
+        currentCommand: this.describeCodexLauncher(launcher),
+        workingDirectory: options.workingDirectoryHint ?? options.defaultWorkingDirectory,
+        sourcePathHints: options.sourcePathHints,
+      })
+    ) {
+      return this.createWslFallbackLauncher();
+    }
+    return launcher;
+  }
+
+  private resolveConfiguredCodexLauncher(): ResolvedTurnCodexLauncher {
     const runtime = this.settingsProvider().codex.runtime;
     const configuredExecutablePath = sanitizeCodexExecutablePath(this.settingsProvider().codex.executablePath);
     const safeExecutablePath = isUnsafeCodexExecutablePath(configuredExecutablePath)
@@ -3602,7 +3688,19 @@ export class CodexService {
     };
   }
 
+  private createWslFallbackRequest(request: CodexRunRequest): CodexRunRequest {
+    return {
+      ...request,
+      runtime: "wsl",
+      executablePath: DEFAULT_CODEX_EXECUTABLE,
+      launcherOverrideParts: [...DEFAULT_WSL_FALLBACK_LAUNCHER_PARTS],
+    };
+  }
+
   private describeCodexLauncher(launcher = this.resolveConfiguredCodexLauncher()): string {
+    if (launcher.launcherOverrideParts?.length) {
+      return launcher.launcherOverrideParts.join(" ");
+    }
     if (launcher.runtime === "wsl") {
       return `wsl.exe -e ${launcher.executablePath}`;
     }
@@ -3792,8 +3890,16 @@ export class CodexService {
     }
     if (/windows sandbox.*spawn setup refresh|sandbox bootstrap/i.test(message)) {
       return this.getLocale() === "ja"
-        ? "Windows sandbox の初期化に失敗しました。runtime 設定と実行ファイルパスを確認してから再試行してください。"
-        : "Windows sandbox bootstrap failed. Check the configured runtime and executable path, then retry.";
+        ? [
+            "Windows sandbox の初期化に失敗しました。",
+            "既定の launcher を使っている場合は、native Windows 側の `where codex` と WSL 側の `wsl which codex` の両方を確認してください。",
+            "custom runtime / executable を使っている場合は、その設定値を確認してから再試行してください。",
+          ].join("\n")
+        : [
+            "Windows sandbox bootstrap failed before Codex could start.",
+            "If you use the default launcher, verify both the native Windows install with `where codex` and the WSL install with `wsl which codex`.",
+            'If you use custom settings, verify the selected "Codex runtime" and "Codex executable path", then retry.',
+          ].join("\n");
     }
     if (isUnsupportedJsonFlagError(message, "--json")) {
       return this.getLocale() === "ja"
