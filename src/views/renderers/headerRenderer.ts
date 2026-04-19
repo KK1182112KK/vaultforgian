@@ -1,4 +1,4 @@
-import { Menu, Notice, setIcon } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 import { buildHeaderActionState } from "./viewModels/workspaceViewModels";
 import { renderWorkspaceTabBadges } from "./tabBarRenderer";
 import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "./types";
@@ -24,30 +24,16 @@ export class HeaderRenderer {
 
     this.root.empty();
     this.root.addClass("obsidian-codex__header");
-    this.root.toggleClass("is-narrow", context.isNarrowLayout);
 
     const titleSlotEl = this.root.createDiv({ cls: "obsidian-codex__title-slot" });
     titleSlotEl.createEl("h4", { cls: "obsidian-codex__title-text", text: copy.workspace.title });
     const tabBarPosition = context.service.getTabBarPosition?.() ?? "header";
-    if (tabBarPosition === "header" && !context.isNarrowLayout) {
+    if (tabBarPosition === "header") {
       const tabBarEl = titleSlotEl.createDiv({ cls: "obsidian-codex__tab-bar" });
       renderWorkspaceTabBadges(tabBarEl, context);
     }
 
     const headerActionsEl = this.root.createDiv({ cls: "obsidian-codex__header-actions" });
-    if (context.isNarrowLayout) {
-      const moreButton = this.createHeaderButton(
-        headerActionsEl,
-        copy.workspace.header.moreActions,
-        "more-horizontal",
-        (event) => {
-          this.openOverflowMenu(event.currentTarget as HTMLElement, actions);
-        },
-      );
-      moreButton.dataset.smoke = "header-more-actions";
-      return;
-    }
-
     for (const action of actions) {
       const button = this.createHeaderButton(headerActionsEl, action.label, action.icon, () => {
         action.run();
@@ -153,18 +139,5 @@ export class HeaderRenderer {
     setIcon(button, iconName);
     button.addEventListener("click", (event) => action(event));
     return button;
-  }
-
-  private openOverflowMenu(anchorEl: HTMLElement, actions: HeaderActionDescriptor[]): void {
-    const menu = new Menu();
-    for (const action of actions) {
-      menu.addItem((item) => {
-        item.setTitle(action.label).setIcon(action.icon).setDisabled(action.disabled).onClick(() => {
-          action.run();
-        });
-      });
-    }
-    const rect = anchorEl.getBoundingClientRect();
-    menu.showAtPosition({ x: rect.right, y: rect.bottom + 6 });
   }
 }

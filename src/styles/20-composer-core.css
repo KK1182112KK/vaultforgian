@@ -72,13 +72,19 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__slash-menu {
   display: none;
+  position: relative;
+  z-index: 5;
   max-height: min(320px, 36vh);
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
   gap: 4px;
   margin-bottom: 6px;
-  padding-right: 2px;
+  padding: 4px 6px;
+  border: 1px solid color-mix(in srgb, var(--obsidian-codex-panel-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 10px 18px rgba(7, 10, 18, 0.12);
 }
 
 .obsidian-codex__slash-menu.is-visible {
@@ -91,9 +97,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   padding: 8px 10px;
   border: 1px solid var(--obsidian-codex-panel-border-subtle);
   border-radius: 7px;
-  background:
-    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
-    var(--obsidian-codex-panel-bg-soft);
+  background: var(--background-secondary);
   cursor: pointer;
   transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease;
 }
@@ -104,9 +108,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
     var(--obsidian-codex-panel-border) 78%,
     rgba(var(--obsidian-codex-highlight-rgb), 0.22) 22%
   );
-  background:
-    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.12), transparent 34%),
-    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
+  background: color-mix(in srgb, var(--background-secondary) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 18%);
   transform: translateX(2px);
 }
 

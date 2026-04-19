@@ -5,7 +5,7 @@ import type { WorkspaceState } from "../../model/types";
 import { getLocalizedCopy } from "../../util/i18n";
 import { HeaderRenderer } from "../../views/renderers/headerRenderer";
 import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "../../views/renderers/types";
-import { installObsidianDomHelpers, Menu, Notice } from "../setup/obsidian";
+import { installObsidianDomHelpers, Notice } from "../setup/obsidian";
 
 function createState(): WorkspaceState {
   return {
@@ -136,7 +136,6 @@ describe("HeaderRenderer", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     installObsidianDomHelpers();
-    Menu.reset();
     Notice.reset();
   });
 
@@ -217,7 +216,7 @@ describe("HeaderRenderer", () => {
     expect(root.querySelector(".obsidian-codex__tab-badges")).toBeNull();
   });
 
-  it("collapses header actions into an overflow menu in narrow layout", () => {
+  it("keeps header actions visible in narrow layout", () => {
     const state = createState();
     const callbacks = createCallbacks();
     const context = createContext(state, {}, { isNarrowLayout: true });
@@ -229,26 +228,12 @@ describe("HeaderRenderer", () => {
 
     new HeaderRenderer(root, callbacks).render(context);
 
-    expect(root.classList.contains("is-narrow")).toBe(true);
-    expect(root.querySelector('[data-smoke="header-new-tab"]')).toBeNull();
-    expect(root.querySelector(".obsidian-codex__tab-bar")).toBeNull();
+    expect(root.querySelector(".obsidian-codex__tab-bar")).not.toBeNull();
+    expect(root.querySelector('[data-smoke="header-more-actions"]')).toBeNull();
 
-    root.querySelector<HTMLButtonElement>('[data-smoke="header-more-actions"]')?.click();
-
-    const menu = Menu.lastShown;
-    expect(menu).not.toBeNull();
-    expect(menu?.items.map((item) => item.title)).toEqual([
-      "New tab",
-      "New session",
-      "Fork conversation",
-      "Resume thread in a new tab",
-      "Compact conversation",
-      "Settings",
-    ]);
-
-    menu?.items[0]?.trigger();
-    menu?.items[4]?.trigger();
-    menu?.items[5]?.trigger();
+    root.querySelector<HTMLButtonElement>('[data-smoke="header-new-tab"]')?.click();
+    root.querySelector<HTMLButtonElement>('[data-smoke="header-compact"]')?.click();
+    root.querySelector<HTMLButtonElement>('[data-smoke="header-settings"]')?.click();
 
     expect(service.createTab).toHaveBeenCalledTimes(1);
     expect(service.compactTab).toHaveBeenCalledWith("tab-1");

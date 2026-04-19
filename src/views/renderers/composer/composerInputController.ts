@@ -320,6 +320,7 @@ export class ComposerInputController {
       this.state.composerSelectedIndex = 0;
       this.elements.slashMenuEl.empty();
       this.elements.slashMenuEl.classList.remove("is-visible");
+      this.elements.root.classList.remove("has-slash-menu");
       return;
     }
     if (this.state.composerSelectedIndex >= suggestions.length) {
@@ -328,6 +329,7 @@ export class ComposerInputController {
 
     this.elements.slashMenuEl.empty();
     this.elements.slashMenuEl.classList.add("is-visible");
+    this.elements.root.classList.add("has-slash-menu");
     let selectedItemEl: HTMLDivElement | null = null;
     for (const [index, suggestion] of suggestions.entries()) {
       const itemEl = this.elements.slashMenuEl.createDiv({

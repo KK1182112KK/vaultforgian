@@ -114,15 +114,6 @@
   max-width: min(100%, 260px);
 }
 
-.obsidian-codex__header.is-narrow {
-  align-items: center;
-}
-
-.obsidian-codex__header.is-narrow .obsidian-codex__header-actions {
-  flex-wrap: nowrap;
-  max-width: none;
-}
-
 .obsidian-codex__header-btn {
   appearance: none;
   display: flex;

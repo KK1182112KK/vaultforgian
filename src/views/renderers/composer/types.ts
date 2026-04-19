@@ -23,7 +23,9 @@ export interface ComposerElements {
   fileInputEl: HTMLInputElement;
   statusBarEl: HTMLDivElement;
   statusPrimaryEl: HTMLDivElement;
+  statusHeaderEl: HTMLDivElement;
   statusControlsEl: HTMLDivElement;
+  statusTogglesEl: HTMLDivElement;
   modelGroupEl: HTMLDivElement;
   modelButtonEl: HTMLButtonElement;
   modelValueEl: HTMLSpanElement;

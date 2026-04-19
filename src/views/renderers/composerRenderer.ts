@@ -49,9 +49,7 @@ export class ComposerRenderer {
     this.state.context = context;
     const displayState = buildComposerDisplayState(context.activeTab, context.service.getHubPanels(), context.locale);
     this.root.dataset.workflow = context.activeTab?.studyWorkflow ?? "";
-    this.root.toggleClass("is-narrow", context.isNarrowLayout);
     this.elements.planModeTextEl.textContent = context.copy.workspace.planMode;
-    this.elements.statusBarEl.toggleClass("is-narrow", context.isNarrowLayout);
 
     this.renderTabBar(context);
     this.contextSections.render(displayState);
@@ -143,7 +141,8 @@ export class ComposerRenderer {
 
     const statusBarEl = this.root.createDiv({ cls: "obsidian-codex__status-bar" });
     const statusPrimaryEl = statusBarEl.createDiv({ cls: "obsidian-codex__status-primary" });
-    const statusControlsEl = statusPrimaryEl.createDiv({ cls: "obsidian-codex__status-controls" });
+    const statusHeaderEl = statusPrimaryEl.createDiv({ cls: "obsidian-codex__status-header" });
+    const statusControlsEl = statusHeaderEl.createDiv({ cls: "obsidian-codex__status-controls" });
     const modelGroupEl = statusControlsEl.createDiv({
       cls: "obsidian-codex__status-stack obsidian-codex__status-stack-model",
     });
@@ -163,24 +162,25 @@ export class ComposerRenderer {
     const thinkingChevron = thinkingButtonEl.createSpan({ cls: "obsidian-codex__status-picker-chevron" });
     setIcon(thinkingChevron, "chevron-down");
 
-    const executionStateEl = statusPrimaryEl.createDiv({ cls: "obsidian-codex__execution-state" });
-    const usageMetersEl = statusPrimaryEl.createDiv({ cls: "obsidian-codex__usage-meters" });
+    const executionStateEl = statusHeaderEl.createDiv({ cls: "obsidian-codex__execution-state" });
     const planWarningEl = statusBarEl.createDiv({ cls: "obsidian-codex__plan-warning" });
-    const learningModeControlEl = statusBarEl.createEl("button", { cls: "obsidian-codex__learning-mode-control" });
+    const statusTogglesEl = statusBarEl.createDiv({ cls: "obsidian-codex__status-toggles" });
+    const learningModeControlEl = statusTogglesEl.createEl("button", { cls: "obsidian-codex__learning-mode-control" });
     learningModeControlEl.type = "button";
     const learningModeLabel = learningModeControlEl.createDiv({ cls: "obsidian-codex__learning-mode-label" });
     const learningModeTextEl = learningModeLabel.createSpan({ cls: "obsidian-codex__learning-mode-text" });
     const learningModeToggle = learningModeControlEl.createDiv({ cls: "obsidian-codex__toggle-switch" });
     learningModeToggle.createDiv({ cls: "obsidian-codex__toggle-knob" });
 
-    const fastModeControlEl = statusBarEl.createEl("button", { cls: "obsidian-codex__fastmode-control" });
+    const fastModeControlEl = statusTogglesEl.createEl("button", { cls: "obsidian-codex__fastmode-control" });
     fastModeControlEl.type = "button";
     const fastModeLabel = fastModeControlEl.createDiv({ cls: "obsidian-codex__fastmode-label" });
     const fastModeTextEl = fastModeLabel.createSpan({ cls: "obsidian-codex__fastmode-text" });
     const fastModeToggle = fastModeControlEl.createDiv({ cls: "obsidian-codex__toggle-switch" });
     fastModeToggle.createDiv({ cls: "obsidian-codex__toggle-knob" });
 
-    const yoloControlEl = statusBarEl.createEl("button", { cls: "obsidian-codex__yolo-control" });
+    const usageMetersEl = statusBarEl.createDiv({ cls: "obsidian-codex__usage-meters" });
+    const yoloControlEl = statusTogglesEl.createEl("button", { cls: "obsidian-codex__yolo-control" });
     yoloControlEl.type = "button";
     const yoloLabel = yoloControlEl.createDiv({ cls: "obsidian-codex__yolo-label" });
     yoloLabel.createSpan({ cls: "obsidian-codex__yolo-text" });
@@ -208,7 +208,9 @@ export class ComposerRenderer {
       fileInputEl,
       statusBarEl,
       statusPrimaryEl,
+      statusHeaderEl,
       statusControlsEl,
+      statusTogglesEl,
       modelGroupEl,
       modelButtonEl,
       modelValueEl,
@@ -227,7 +229,7 @@ export class ComposerRenderer {
 
   private renderTabBar(context: WorkspaceRenderContext): void {
     const tabBarPosition = context.service.getTabBarPosition?.() ?? "header";
-    const showInComposer = context.isNarrowLayout || tabBarPosition === "composer";
+    const showInComposer = tabBarPosition === "composer";
     this.elements.tabBarEl.classList.toggle("is-visible", showInComposer);
     if (!showInComposer) {
       this.elements.tabBarEl.empty();

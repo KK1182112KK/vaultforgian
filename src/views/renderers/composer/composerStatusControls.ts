@@ -160,6 +160,7 @@ export class ComposerStatusControls {
   closeStatusMenu(): void {
     this.state.statusMenuEl?.remove();
     this.state.statusMenuEl = null;
+    this.elements.root.classList.remove("has-status-menu");
     this.state.statusMenuAnchorEl?.classList.remove("is-open");
     this.state.statusMenuAnchorEl = null;
     this.statusMenuOwnerTabId = null;
@@ -308,6 +309,7 @@ export class ComposerStatusControls {
     }
     this.closeStatusMenu();
     anchor.classList.add("is-open");
+    this.elements.root.classList.add("has-status-menu");
 
     const container = config.container ?? this.elements.statusBarEl;
     const placement = config.placement ?? "above";

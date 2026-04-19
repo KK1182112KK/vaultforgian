@@ -1256,21 +1256,34 @@ describe("Panel Studio composer flow", () => {
     expect(composerTabBar?.querySelectorAll(".obsidian-codex__tab-badge").length).toBe(1);
   });
 
-  it("forces tab badges above the composer in narrow layout even when the setting is header", async () => {
+  it("does not force tab badges above the composer in narrow layout when the setting is header", async () => {
     const harness = createHarness({ tabBarPosition: "header", isNarrowLayout: true });
     await tick();
 
     const composerTabBar = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__composer-tab-bar");
-    expect(composerTabBar?.classList.contains("is-visible")).toBe(true);
-    expect(composerTabBar?.querySelectorAll(".obsidian-codex__tab-badge").length).toBe(1);
+    expect(composerTabBar?.classList.contains("is-visible")).toBe(false);
+    expect(composerTabBar?.querySelectorAll(".obsidian-codex__tab-badge").length ?? 0).toBe(0);
   });
 
-  it("marks the composer status bar as narrow when the shared layout is narrow", async () => {
+  it("keeps a compact two-column status layout when the shared layout is narrow", async () => {
     const harness = createHarness({ isNarrowLayout: true });
     await tick();
 
     const statusBar = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__status-bar");
-    expect(statusBar?.classList.contains("is-narrow")).toBe(true);
+    const statusPrimary = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__status-primary");
+    const statusControls = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__status-controls");
+    const modelButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__status-picker-model");
+    const thinkingButton = harness.composerRoot.querySelector<HTMLButtonElement>(".obsidian-codex__status-picker-thinking");
+    const usageMeters = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__usage-meters");
+    const statusToggles = harness.composerRoot.querySelector<HTMLDivElement>(".obsidian-codex__status-toggles");
+    expect(statusBar?.classList.contains("is-narrow")).toBe(false);
+    expect(statusPrimary?.parentElement).toBe(statusBar);
+    expect(modelButton?.closest(".obsidian-codex__status-controls")).toBe(statusControls);
+    expect(thinkingButton?.parentElement).toBe(statusControls);
+    expect(usageMeters?.parentElement).toBe(statusBar);
+    expect(statusToggles).not.toBeNull();
+    expect(statusToggles?.parentElement).toBe(statusBar);
+    expect(statusToggles?.querySelectorAll("button").length).toBe(3);
   });
 
   it("hides the workflow brief modifier row when no modifiers are active", async () => {

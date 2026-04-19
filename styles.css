@@ -287,15 +287,6 @@ body.theme-light .obsidian-codex {
   max-width: min(100%, 260px);
 }
 
-.obsidian-codex__header.is-narrow {
-  align-items: center;
-}
-
-.obsidian-codex__header.is-narrow .obsidian-codex__header-actions {
-  flex-wrap: nowrap;
-  max-width: none;
-}
-
 .obsidian-codex__header-btn {
   appearance: none;
   display: flex;
@@ -1167,13 +1158,19 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__slash-menu {
   display: none;
+  position: relative;
+  z-index: 5;
   max-height: min(320px, 36vh);
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
   gap: 4px;
   margin-bottom: 6px;
-  padding-right: 2px;
+  padding: 4px 6px;
+  border: 1px solid color-mix(in srgb, var(--obsidian-codex-panel-border) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 10px 18px rgba(7, 10, 18, 0.12);
 }
 
 .obsidian-codex__slash-menu.is-visible {
@@ -1186,9 +1183,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   padding: 8px 10px;
   border: 1px solid var(--obsidian-codex-panel-border-subtle);
   border-radius: 7px;
-  background:
-    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 42%),
-    var(--obsidian-codex-panel-bg-soft);
+  background: var(--background-secondary);
   cursor: pointer;
   transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease;
 }
@@ -1199,9 +1194,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
     var(--obsidian-codex-panel-border) 78%,
     rgba(var(--obsidian-codex-highlight-rgb), 0.22) 22%
   );
-  background:
-    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.12), transparent 34%),
-    color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
+  background: color-mix(in srgb, var(--background-secondary) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 18%);
   transform: translateX(2px);
 }
 
@@ -2964,6 +2957,11 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   color: color-mix(in srgb, var(--text-muted) 88%, transparent);
 }
 
+.obsidian-codex__input-area.has-status-menu .obsidian-codex__input::placeholder,
+.obsidian-codex__input-area.has-slash-menu .obsidian-codex__input::placeholder {
+  color: transparent;
+}
+
 .obsidian-codex__send-btn {
   appearance: none;
   display: flex;
@@ -3033,20 +3031,30 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__status-bar {
   position: relative;
+  z-index: 5;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
   grid-template-areas:
     "warning warning"
-    "primary learning"
-    "primary fastmode"
-    "primary yolo";
-  align-items: end;
+    "primary toggles"
+    "usage toggles";
+  align-items: start;
   row-gap: 6px;
   column-gap: 10px;
   margin-top: 4px;
   padding: 8px 0 0;
   border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 86%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 14%);
   background: transparent;
+}
+
+.obsidian-codex__input-area.has-status-menu .obsidian-codex__status-bar {
+  z-index: 12;
+}
+
+.obsidian-codex__input-area.has-status-menu .obsidian-codex__input-row,
+.obsidian-codex__input-area.has-status-menu .obsidian-codex__input-actions {
+  z-index: 1;
 }
 
 .obsidian-codex__status-stack {
@@ -3058,25 +3066,32 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__status-primary {
   grid-area: primary;
-  align-self: end;
+  align-self: start;
   justify-self: start;
   display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 5px 10px;
+  flex-direction: column;
   min-width: 0;
   width: 100%;
   max-width: 100%;
   padding-top: 2px;
 }
 
+.obsidian-codex__status-header {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  min-width: 0;
+}
+
 .obsidian-codex__status-controls {
   display: inline-flex;
   align-items: flex-start;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 5px;
   min-width: 0;
+  width: fit-content;
 }
 
 .obsidian-codex__status-stack-model {
@@ -3094,6 +3109,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__status-picker-thinking {
+  flex: 0 0 auto;
   width: 80px;
   min-width: 80px;
 }
@@ -3180,12 +3196,15 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__usage-meters {
+  grid-area: usage;
   display: none;
   --obsidian-codex-usage-gauge-width: 124px;
   gap: 4px;
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
+  min-width: 0;
   align-self: flex-start;
+  padding-top: 0;
 }
 
 .obsidian-codex__usage-meters.is-visible {
@@ -3223,36 +3242,30 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 @media (max-width: 860px) {
   .obsidian-codex__status-bar {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "warning"
-      "primary"
-      "learning"
-      "fastmode"
-      "yolo";
-    align-items: stretch;
+    column-gap: 8px;
+    row-gap: 5px;
   }
 
-  .obsidian-codex__status-primary {
-    gap: 6px 8px;
+  .obsidian-codex__status-header {
+    gap: 5px 6px;
+  }
+
+  .obsidian-codex__status-controls {
+    gap: 4px;
   }
 
   .obsidian-codex__learning-mode-control,
   .obsidian-codex__fastmode-control,
   .obsidian-codex__yolo-control {
-    justify-self: start;
-    max-width: 100%;
-  }
-
-  .obsidian-codex__usage-meters {
-    flex: 1 1 100%;
-    width: 100%;
-    min-width: 0;
+    inline-size: min(100%, 136px);
   }
 
   .obsidian-codex__usage-meter {
-    width: 100%;
     grid-template-columns: 32px minmax(0, 1fr) 40px;
+  }
+
+  .obsidian-codex__usage-meters {
+    --obsidian-codex-usage-gauge-width: 96px;
   }
 
   .obsidian-codex__learning-mode-label,
@@ -3260,55 +3273,6 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   .obsidian-codex__yolo-label {
     min-width: 0;
   }
-}
-
-.obsidian-codex__status-bar.is-narrow {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas:
-    "warning"
-    "primary"
-    "learning"
-    "fastmode"
-    "yolo";
-  align-items: stretch;
-}
-
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-primary {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  width: 100%;
-}
-
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-stack-model,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-picker-thinking,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__execution-state,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__usage-meters,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__learning-mode-control,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__fastmode-control,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__yolo-control {
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-picker-model,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__status-picker-thinking {
-  width: 100%;
-  min-width: 0;
-}
-
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__learning-mode-control,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__fastmode-control,
-.obsidian-codex__status-bar.is-narrow .obsidian-codex__yolo-control {
-  justify-self: stretch;
-  inline-size: 100%;
 }
 
 .obsidian-codex__usage-freshness {
@@ -3473,16 +3437,14 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   align-self: start;
 }
 
-.obsidian-codex__learning-mode-control {
-  grid-area: learning;
+.obsidian-codex__status-toggles {
+  grid-area: toggles;
+  display: grid;
+  gap: 4px;
   align-self: end;
+  justify-items: end;
   justify-self: end;
-}
-
-.obsidian-codex__fastmode-control {
-  grid-area: fastmode;
-  align-self: end;
-  justify-self: end;
+  min-width: 0;
 }
 
 .obsidian-codex__status-bar.is-streaming .obsidian-codex__status-picker-thinking .obsidian-codex__status-picker-value {
@@ -3503,7 +3465,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__learning-mode-control,
 .obsidian-codex__fastmode-control,
 .obsidian-codex__yolo-control {
-  align-self: end;
+  align-self: start;
   justify-self: end;
   inline-size: min(100%, 152px);
   appearance: none;
@@ -3524,18 +3486,6 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
     inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.06),
     0 8px 14px rgba(5, 8, 16, 0.06);
   transition: none;
-}
-
-.obsidian-codex__learning-mode-control {
-  grid-area: learning;
-}
-
-.obsidian-codex__fastmode-control {
-  grid-area: fastmode;
-}
-
-.obsidian-codex__yolo-control {
-  grid-area: yolo;
 }
 
 .obsidian-codex__learning-mode-control:hover,
@@ -3669,9 +3619,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   left: 0;
   width: 248px;
   max-height: min(320px, 38vh);
-  background:
-    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 52%),
-    linear-gradient(180deg, color-mix(in srgb, var(--obsidian-codex-panel-bg-strong) 96%, rgba(var(--obsidian-codex-edge-rgb), 0.04) 4%), var(--obsidian-codex-panel-bg-strong));
+  background: var(--background-primary);
   border: 1px solid var(--obsidian-codex-panel-border);
   border-radius: 10px;
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
@@ -3690,9 +3638,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   line-height: 1.2;
-  background:
-    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 52%),
-    linear-gradient(180deg, color-mix(in srgb, var(--obsidian-codex-panel-bg) 97%, rgba(var(--obsidian-codex-brand-rgb), 0.03) 3%), var(--obsidian-codex-panel-bg));
+  background: var(--background-secondary);
   border-bottom: 1px solid color-mix(in srgb, var(--obsidian-codex-panel-border) 88%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 12%);
   pointer-events: none;
 }
@@ -3705,6 +3651,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   pointer-events: auto;
+  background: var(--background-primary);
 }
 
 .obsidian-codex__status-menu-item {
@@ -3712,13 +3659,14 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   align-items: flex-start;
   gap: 10px;
   padding: 9px 12px;
+  background: var(--background-secondary);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
   pointer-events: auto;
 }
 
 .obsidian-codex__status-menu-item:hover {
-  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 92%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 8%);
+  background: color-mix(in srgb, var(--background-secondary) 84%, rgba(var(--obsidian-codex-brand-rgb), 0.16) 16%);
   transform: translateX(2px);
 }
 
@@ -3763,7 +3711,7 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 }
 
 .obsidian-codex__status-menu-item:focus-visible {
-  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 90%, rgba(var(--obsidian-codex-brand-rgb), 0.1) 10%);
+  background: color-mix(in srgb, var(--background-secondary) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 18%);
   transform: translateX(2px);
 }
 
