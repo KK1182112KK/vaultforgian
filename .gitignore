@@ -1,3 +1,9 @@
 node_modules
 coverage
 *.log
+.superpowers/
+*:Zone.Identifier
+*.tsbuildinfo
+release/
+site/vite.config.js
+site/vite.config.d.ts
