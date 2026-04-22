@@ -1,31 +1,501 @@
 import { makeId } from "../util/id";
 import { getFallbackModelCatalog } from "../util/models";
-import { createEmptyAccountUsageSummary, createEmptyUsageSummary } from "../util/usage";
+import { EMPTY_COMPOSER_HISTORY_STATE } from "../util/composerHistory";
+import {
+  createEmptyAccountUsageSummary,
+  createEmptyUsageSummary,
+  normalizeAccountUsageSummary,
+  shouldPreferAccountUsageSummary,
+} from "../util/usage";
 import { DEFAULT_PRIMARY_MODEL } from "./types";
 import type {
   AccountUsageSummary,
   ChatMessage,
-  RefactorCampaign,
-  RefactorRecipe,
+  ComposerHistorySnapshot,
+  RestartDropNotice,
   RecentStudySource,
-  SmartSet,
+  StudyCoachState,
   StudyHubState,
+  StudyWeakPoint,
   StudyWorkflowKind,
   ConversationTabState,
   ModelCatalogEntry,
   PatchProposal,
   PendingApproval,
   PersistedWorkspaceState,
+  StudyRecipe,
   ToolCallRecord,
+  UserAdaptationMemory,
+  UserAdaptationProfile,
   UsageSummary,
   WaitingState,
   WorkspaceState,
 } from "./types";
 
 type Listener = (state: WorkspaceState) => void;
+type SessionModeDefaults = {
+  fastMode: boolean;
+  learningMode: boolean;
+};
+
+const MAX_PERSISTED_COMPOSER_HISTORY_ENTRIES = 50;
+const LEGACY_TRANSIENT_RUNTIME_SYSTEM_MESSAGE_PATTERNS = [
+  /^Codex stopped emitting events for 120 seconds, so this turn was aborted\.$/i,
+  /^The reply came back empty, so this conversation was compacted and retried on a fresh thread\.$/i,
+  /^The session file was not found\.$/i,
+  /^Codex が 120 秒以上 event を返さなかったため、この turn を中断しました。$/i,
+  /^返信が空だったため、この会話を compact して fresh thread で再試行しました。$/i,
+  /^session file が見つかりませんでした。$/i,
+] as const;
+
+const RESTART_DROP_NOTICE_META_KEY = "restartDropNotice";
+
+function normalizeLineage(lineage: ConversationTabState["lineage"] | null | undefined): ConversationTabState["lineage"] {
+  return {
+    parentTabId: null,
+    forkedFromThreadId: null,
+    resumedFromThreadId: null,
+    compactedAt: null,
+    pendingThreadReset: false,
+    compactedFromThreadId: null,
+    ...lineage,
+  };
+}
+
+function normalizeStudyWeakPoint(point: StudyWeakPoint | null | undefined): StudyWeakPoint | null {
+  if (!point) {
+    return null;
+  }
+  const conceptLabel = typeof point.conceptLabel === "string" ? point.conceptLabel.trim() : "";
+  const workflow = point.workflow;
+  const explanationSummary = typeof point.explanationSummary === "string" ? point.explanationSummary.trim() : "";
+  const nextQuestion = typeof point.nextQuestion === "string" ? point.nextQuestion.trim() : "";
+  const updatedAt = typeof point.updatedAt === "number" && Number.isFinite(point.updatedAt) ? point.updatedAt : Date.now();
+  if (!conceptLabel || !workflow || !explanationSummary || !nextQuestion) {
+    return null;
+  }
+  return {
+    conceptLabel,
+    workflow,
+    updatedAt,
+    explanationSummary,
+    nextQuestion,
+    resolved: Boolean(point.resolved),
+  };
+}
+
+function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | undefined): StudyCoachState | null {
+  if (!studyCoachState) {
+    return null;
+  }
+  const latestRecap = studyCoachState.latestRecap
+    ? {
+        workflow: studyCoachState.latestRecap.workflow,
+        mastered: Array.isArray(studyCoachState.latestRecap.mastered)
+          ? studyCoachState.latestRecap.mastered.map((entry) => entry.trim()).filter(Boolean)
+          : [],
+        unclear: Array.isArray(studyCoachState.latestRecap.unclear)
+          ? studyCoachState.latestRecap.unclear.map((entry) => entry.trim()).filter(Boolean)
+          : [],
+        nextStep: typeof studyCoachState.latestRecap.nextStep === "string" ? studyCoachState.latestRecap.nextStep.trim() : "",
+        confidenceNote:
+          typeof studyCoachState.latestRecap.confidenceNote === "string" ? studyCoachState.latestRecap.confidenceNote.trim() : "",
+      }
+    : null;
+  const weakPointLedger = Array.isArray(studyCoachState.weakPointLedger)
+    ? studyCoachState.weakPointLedger
+        .map((entry) => normalizeStudyWeakPoint(entry))
+        .filter((entry): entry is StudyWeakPoint => Boolean(entry))
+    : [];
+  const lastCheckpointAt =
+    typeof studyCoachState.lastCheckpointAt === "number" && Number.isFinite(studyCoachState.lastCheckpointAt)
+      ? studyCoachState.lastCheckpointAt
+      : latestRecap
+        ? Date.now()
+        : null;
+  if (!latestRecap && weakPointLedger.length === 0 && lastCheckpointAt === null) {
+    return null;
+  }
+  return {
+    latestRecap:
+      latestRecap && latestRecap.nextStep && latestRecap.confidenceNote
+        ? latestRecap
+        : null,
+    weakPointLedger,
+    lastCheckpointAt,
+  };
+}
+
+function cloneStudyCoachState(studyCoachState: StudyCoachState | null | undefined): StudyCoachState | null {
+  const normalized = normalizeStudyCoachState(studyCoachState);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    latestRecap: normalized.latestRecap
+      ? {
+          workflow: normalized.latestRecap.workflow,
+          mastered: [...normalized.latestRecap.mastered],
+          unclear: [...normalized.latestRecap.unclear],
+          nextStep: normalized.latestRecap.nextStep,
+          confidenceNote: normalized.latestRecap.confidenceNote,
+        }
+      : null,
+    weakPointLedger: normalized.weakPointLedger.map((entry) => ({ ...entry })),
+    lastCheckpointAt: normalized.lastCheckpointAt,
+  };
+}
+
+function normalizeUserAdaptationMemory(memory: UserAdaptationMemory | null | undefined): UserAdaptationMemory | null {
+  if (!memory) {
+    return null;
+  }
+  const globalProfile: UserAdaptationProfile | null = memory.globalProfile
+    ? {
+        explanationDepth:
+          memory.globalProfile.explanationDepth === "concise" || memory.globalProfile.explanationDepth === "step_by_step"
+            ? memory.globalProfile.explanationDepth
+            : "balanced",
+        preferredFocusTags: Array.isArray(memory.globalProfile.preferredFocusTags)
+          ? [...new Set(memory.globalProfile.preferredFocusTags.map((entry) => entry.trim()).filter(Boolean))]
+          : [],
+        preferredNoteStyleHints: Array.isArray(memory.globalProfile.preferredNoteStyleHints)
+          ? [...new Set(memory.globalProfile.preferredNoteStyleHints.map((entry) => entry.trim()).filter(Boolean))]
+          : [],
+        avoidResponsePatterns: Array.isArray(memory.globalProfile.avoidResponsePatterns)
+          ? [...new Set(memory.globalProfile.avoidResponsePatterns.map((entry) => entry.trim()).filter(Boolean))]
+          : [],
+        updatedAt:
+          typeof memory.globalProfile.updatedAt === "number" && Number.isFinite(memory.globalProfile.updatedAt)
+            ? memory.globalProfile.updatedAt
+            : Date.now(),
+      }
+    : null;
+  const panelEntries = Object.entries(memory.panelOverlays ?? {}).flatMap(([panelId, overlay]) => {
+    const normalizedPanelId = panelId.trim();
+    if (!normalizedPanelId || !overlay) {
+      return [];
+    }
+    return [
+      [
+        normalizedPanelId,
+        {
+          panelId: typeof overlay.panelId === "string" && overlay.panelId.trim() ? overlay.panelId.trim() : normalizedPanelId,
+          preferredFocusTags: Array.isArray(overlay.preferredFocusTags)
+            ? [...new Set(overlay.preferredFocusTags.map((entry) => entry.trim()).filter(Boolean))]
+            : [],
+          preferredNoteStyleHints: Array.isArray(overlay.preferredNoteStyleHints)
+            ? [...new Set(overlay.preferredNoteStyleHints.map((entry) => entry.trim()).filter(Boolean))]
+            : [],
+          preferredSkillNames: Array.isArray(overlay.preferredSkillNames)
+            ? [...new Set(overlay.preferredSkillNames.map((entry) => entry.trim()).filter(Boolean))]
+            : [],
+          lastAppliedTargetPath:
+            typeof overlay.lastAppliedTargetPath === "string" && overlay.lastAppliedTargetPath.trim()
+              ? overlay.lastAppliedTargetPath.trim()
+              : null,
+          updatedAt:
+            typeof overlay.updatedAt === "number" && Number.isFinite(overlay.updatedAt) ? overlay.updatedAt : Date.now(),
+        },
+      ] as const,
+    ];
+  });
+  if (!globalProfile && panelEntries.length === 0) {
+    return null;
+  }
+  return {
+    globalProfile,
+    panelOverlays: Object.fromEntries(panelEntries),
+  };
+}
+
+function cloneUserAdaptationMemory(memory: UserAdaptationMemory | null | undefined): UserAdaptationMemory | null {
+  const normalized = normalizeUserAdaptationMemory(memory);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    globalProfile: normalized.globalProfile
+      ? {
+          explanationDepth: normalized.globalProfile.explanationDepth,
+          preferredFocusTags: [...normalized.globalProfile.preferredFocusTags],
+          preferredNoteStyleHints: [...normalized.globalProfile.preferredNoteStyleHints],
+          avoidResponsePatterns: [...normalized.globalProfile.avoidResponsePatterns],
+          updatedAt: normalized.globalProfile.updatedAt,
+        }
+      : null,
+    panelOverlays: Object.fromEntries(
+      Object.entries(normalized.panelOverlays).map(([panelId, overlay]) => [
+        panelId,
+        {
+          panelId: overlay.panelId,
+          preferredFocusTags: [...overlay.preferredFocusTags],
+          preferredNoteStyleHints: [...overlay.preferredNoteStyleHints],
+          preferredSkillNames: [...overlay.preferredSkillNames],
+          lastAppliedTargetPath: overlay.lastAppliedTargetPath,
+          updatedAt: overlay.updatedAt,
+        },
+      ]),
+    ),
+  };
+}
+
+function normalizeRestartDropNotice(notice: RestartDropNotice | null | undefined): RestartDropNotice | null {
+  if (!notice) {
+    return null;
+  }
+  const approvalCount =
+    typeof notice.approvalCount === "number" && Number.isFinite(notice.approvalCount) ? Math.max(0, notice.approvalCount) : 0;
+  const patchCount =
+    typeof notice.patchCount === "number" && Number.isFinite(notice.patchCount) ? Math.max(0, notice.patchCount) : 0;
+  const createdAt = typeof notice.createdAt === "number" && Number.isFinite(notice.createdAt) ? notice.createdAt : Date.now();
+  if (approvalCount === 0 && patchCount === 0) {
+    return null;
+  }
+  return {
+    approvalCount,
+    patchCount,
+    createdAt,
+  };
+}
+
+function formatRestartDropCount(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function buildRestartDropNoticeId(notice: RestartDropNotice): string {
+  return `restart-drop-${notice.createdAt}-${notice.approvalCount}-${notice.patchCount}`;
+}
+
+function buildRestartDropMessage(notice: RestartDropNotice): ChatMessage {
+  const dropped: string[] = [];
+  if (notice.approvalCount > 0) {
+    dropped.push(formatRestartDropCount(notice.approvalCount, "approval", "approvals"));
+  }
+  if (notice.patchCount > 0) {
+    dropped.push(formatRestartDropCount(notice.patchCount, "patch proposal", "patch proposals"));
+  }
+  const verb = dropped.length === 1 ? "was" : "were";
+  return {
+    id: buildRestartDropNoticeId(notice),
+    kind: "system",
+    text: `${dropped.join(" and ")} ${verb} cleared when this tab was restored after restart. Review state from the previous session could not be recovered automatically.`,
+    createdAt: notice.createdAt,
+    meta: {
+      [RESTART_DROP_NOTICE_META_KEY]: true,
+      restartDropApprovalCount: notice.approvalCount,
+      restartDropPatchCount: notice.patchCount,
+      restartDropCreatedAt: notice.createdAt,
+    },
+  };
+}
+
+function hasRestartDropMessage(messages: ChatMessage[], notice: RestartDropNotice): boolean {
+  return messages.some((message) => {
+    if (message.kind !== "system") {
+      return false;
+    }
+    return (
+      message.meta?.[RESTART_DROP_NOTICE_META_KEY] === true &&
+      message.meta?.restartDropCreatedAt === notice.createdAt &&
+      message.meta?.restartDropApprovalCount === notice.approvalCount &&
+      message.meta?.restartDropPatchCount === notice.patchCount
+    );
+  });
+}
+
+function appendRestartDropMessage(
+  messages: ChatMessage[] | null | undefined,
+  notice: RestartDropNotice | null,
+): ChatMessage[] {
+  const normalizedMessages = normalizeRestoredMessages(messages);
+  if (!notice || hasRestartDropMessage(normalizedMessages, notice)) {
+    return normalizedMessages;
+  }
+  return [...normalizedMessages, buildRestartDropMessage(notice)];
+}
+
+function buildPersistedRestartDropNotice(tab: ConversationTabState): RestartDropNotice | null {
+  const approvalCount = tab.pendingApprovals.length;
+  const patchCount = tab.patchBasket.length;
+  if (approvalCount === 0 && patchCount === 0) {
+    return null;
+  }
+  return {
+    approvalCount,
+    patchCount,
+    createdAt: Date.now(),
+  };
+}
 
 function deriveActiveStudyWorkflow(tabs: ConversationTabState[], activeTabId: string | null): StudyWorkflowKind | null {
   return tabs.find((tab) => tab.id === activeTabId)?.studyWorkflow ?? null;
+}
+
+function deriveActiveStudyRecipeId(tabs: ConversationTabState[], activeTabId: string | null): string | null {
+  return tabs.find((tab) => tab.id === activeTabId)?.activeStudyRecipeId ?? null;
+}
+
+function findStudyRecipe(recipeId: string | null, recipes: StudyRecipe[]): StudyRecipe | null {
+  return recipeId ? recipes.find((recipe) => recipe.id === recipeId) ?? null : null;
+}
+
+function normalizeLinkedSkillNames(skillNames: string[], linkedSkillNames: string[]): string[] {
+  const allowed = new Set(linkedSkillNames.map((entry) => entry.trim()).filter(Boolean));
+  if (allowed.size === 0) {
+    return [];
+  }
+  return [...new Set(skillNames.map((skillName) => skillName.trim()).filter((skillName) => allowed.has(skillName)))];
+}
+
+function normalizePanelSelection(
+  recipeId: string | null,
+  skillNames: string[],
+  recipes: StudyRecipe[],
+): { recipeId: string | null; skillNames: string[] } {
+  const recipe = findStudyRecipe(recipeId, recipes);
+  if (!recipe) {
+    return {
+      recipeId: null,
+      skillNames: [],
+    };
+  }
+  return {
+    recipeId: recipe.id,
+    skillNames: normalizeLinkedSkillNames(skillNames, recipe.linkedSkillNames),
+  };
+}
+
+function clearPanelSelection(tab: ConversationTabState): void {
+  tab.activeStudyRecipeId = null;
+  tab.activeStudySkillNames = [];
+}
+
+function cloneComposerHistory(history: ComposerHistorySnapshot | null | undefined): ComposerHistorySnapshot {
+  return {
+    entries: [...(history?.entries ?? EMPTY_COMPOSER_HISTORY_STATE.entries)],
+    index: history?.index ?? EMPTY_COMPOSER_HISTORY_STATE.index,
+    draft: history?.draft ?? EMPTY_COMPOSER_HISTORY_STATE.draft,
+  };
+}
+
+function normalizeComposerHistory(history: ComposerHistorySnapshot | null | undefined): ComposerHistorySnapshot {
+  const entries = Array.isArray(history?.entries)
+    ? history.entries
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter(Boolean)
+        .slice(-MAX_PERSISTED_COMPOSER_HISTORY_ENTRIES)
+    : [];
+  const index =
+    typeof history?.index === "number" && history.index >= 0 && history.index < entries.length ? history.index : null;
+  return {
+    entries,
+    index,
+    draft: typeof history?.draft === "string" ? history.draft : null,
+  };
+}
+
+function isTransientRuntimeSystemMessage(message: Pick<ChatMessage, "kind" | "text">): boolean {
+  if (message.kind !== "system") {
+    return false;
+  }
+  const text = message.text.trim();
+  if (!text) {
+    return false;
+  }
+  return LEGACY_TRANSIENT_RUNTIME_SYSTEM_MESSAGE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function normalizeRestoredMessages(messages: ChatMessage[] | null | undefined): ChatMessage[] {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  return messages
+    .filter((message): message is ChatMessage => Boolean(message))
+    .filter((message) => !isTransientRuntimeSystemMessage(message))
+    .map((message) => ({ ...message }));
+}
+
+function normalizePanelSessionOrigin(
+  panelSessionOrigin: ConversationTabState["panelSessionOrigin"],
+  recipes: StudyRecipe[],
+): ConversationTabState["panelSessionOrigin"] {
+  if (!panelSessionOrigin) {
+    return null;
+  }
+  const recipe = findStudyRecipe(panelSessionOrigin.panelId, recipes);
+  if (!recipe) {
+    return null;
+  }
+  return {
+    ...panelSessionOrigin,
+    panelId: recipe.id,
+    selectedSkillNames: normalizeLinkedSkillNames(panelSessionOrigin.selectedSkillNames, recipe.linkedSkillNames),
+  };
+}
+
+function normalizeChatSuggestion(
+  chatSuggestion: ConversationTabState["chatSuggestion"],
+  recipes: StudyRecipe[],
+): ConversationTabState["chatSuggestion"] {
+  if (!chatSuggestion) {
+    return null;
+  }
+  const recipe = findStudyRecipe(chatSuggestion.panelId, recipes);
+  if (chatSuggestion.panelId && !recipe) {
+    return null;
+  }
+  return {
+    ...chatSuggestion,
+    panelId: recipe?.id ?? chatSuggestion.panelId,
+    panelTitle: recipe?.title?.trim() || chatSuggestion.panelTitle,
+    matchedSkillName:
+      recipe && chatSuggestion.matchedSkillName
+        ? normalizeLinkedSkillNames([chatSuggestion.matchedSkillName], recipe.linkedSkillNames)[0] ?? null
+        : chatSuggestion.matchedSkillName,
+  };
+}
+
+function normalizeTabStudyState(tab: ConversationTabState, recipes: StudyRecipe[]): void {
+  const normalized = normalizePanelSelection(tab.activeStudyRecipeId, tab.activeStudySkillNames, recipes);
+  tab.activeStudyRecipeId = normalized.recipeId;
+  tab.activeStudySkillNames = normalized.skillNames;
+  tab.panelSessionOrigin = normalizePanelSessionOrigin(tab.panelSessionOrigin, recipes);
+  tab.chatSuggestion = normalizeChatSuggestion(tab.chatSuggestion, recipes);
+}
+
+function reconcileStudyRecipeState(state: WorkspaceState): void {
+  for (const tab of state.tabs) {
+    normalizeTabStudyState(tab, state.studyRecipes);
+  }
+  state.activeStudyRecipeId = deriveActiveStudyRecipeId(state.tabs, state.activeTabId);
+}
+
+function ensureUniqueTabIds(
+  tabs: ConversationTabState[],
+): { tabs: ConversationTabState[]; remappedIds: Map<string, string> } {
+  const seen = new Set<string>();
+  const remappedIds = new Map<string, string>();
+  const normalizedTabs = tabs.map((tab) => {
+    if (!seen.has(tab.id)) {
+      seen.add(tab.id);
+      return tab;
+    }
+    let nextId = makeId("tab");
+    while (seen.has(nextId)) {
+      nextId = makeId("tab");
+    }
+    seen.add(nextId);
+    remappedIds.set(tab.id, nextId);
+    return {
+      ...tab,
+      id: nextId,
+    };
+  });
+  return {
+    tabs: normalizedTabs,
+    remappedIds,
+  };
 }
 
 function cloneUsageSummary(usageSummary: ConversationTabState["usageSummary"]) {
@@ -36,31 +506,64 @@ function cloneUsageSummary(usageSummary: ConversationTabState["usageSummary"]) {
   };
 }
 
+function cloneChatMessage(message: ChatMessage): ChatMessage {
+  return structuredClone(message);
+}
+
+function clonePendingApproval(approval: PendingApproval): PendingApproval {
+  return structuredClone(approval);
+}
+
+function clonePatchProposal(proposal: PatchProposal): PatchProposal {
+  return structuredClone(proposal);
+}
+
 function cloneAccountUsage(accountUsage: AccountUsageSummary): AccountUsageSummary {
+  const normalized = normalizeAccountUsageSummary(accountUsage);
   return {
-    limits: { ...accountUsage.limits },
-    source: accountUsage.source,
-    updatedAt: accountUsage.updatedAt,
-    threadId: accountUsage.threadId,
+    limits: { ...normalized.limits },
+    source: normalized.source,
+    updatedAt: normalized.updatedAt,
+    lastObservedAt: normalized.lastObservedAt,
+    lastCheckedAt: normalized.lastCheckedAt,
+    threadId: normalized.threadId,
   };
 }
 
-function deriveRestoredAccountUsage(tabs: ConversationTabState[]): AccountUsageSummary {
-  const firstWithLimits = tabs.find(
-    (tab) =>
-      tab.usageSummary.limits.fiveHourPercent !== null ||
-      tab.usageSummary.limits.weekPercent !== null ||
-      tab.usageSummary.limits.planType !== null,
-  );
-  if (!firstWithLimits) {
-    return createEmptyAccountUsageSummary();
+function deriveRestoredAccountUsage(
+  tabs: ConversationTabState[],
+  activeTabId: string | null,
+  restoredAccountUsage?: AccountUsageSummary | null,
+): AccountUsageSummary {
+  const normalizedRestored = restoredAccountUsage ? normalizeAccountUsageSummary(restoredAccountUsage) : null;
+  const activeTab = activeTabId ? tabs.find((tab) => tab.id === activeTabId) ?? null : null;
+  const firstWithLimits =
+    (activeTab &&
+    (activeTab.usageSummary.limits.fiveHourPercent !== null ||
+      activeTab.usageSummary.limits.weekPercent !== null ||
+      activeTab.usageSummary.limits.planType !== null)
+      ? activeTab
+      : null) ??
+    tabs.find(
+      (tab) =>
+        tab.usageSummary.limits.fiveHourPercent !== null ||
+        tab.usageSummary.limits.weekPercent !== null ||
+        tab.usageSummary.limits.planType !== null,
+    );
+  const derived = !firstWithLimits
+    ? createEmptyAccountUsageSummary()
+    : {
+        limits: { ...firstWithLimits.usageSummary.limits },
+        source: "restored" as const,
+        updatedAt: null,
+        lastObservedAt: null,
+        lastCheckedAt: null,
+        threadId: firstWithLimits.codexThreadId ?? null,
+      };
+  if (!normalizedRestored) {
+    return derived;
   }
-  return {
-    limits: { ...firstWithLimits.usageSummary.limits },
-    source: "restored",
-    updatedAt: null,
-    threadId: firstWithLimits.codexThreadId ?? null,
-  };
+  return shouldPreferAccountUsageSummary(derived, normalizedRestored) ? normalizedRestored : derived;
 }
 
 function cloneState(state: WorkspaceState): WorkspaceState {
@@ -70,28 +573,31 @@ function cloneState(state: WorkspaceState): WorkspaceState {
     activeStudyWorkflow: deriveActiveStudyWorkflow(state.tabs, state.activeTabId),
     recentStudySources: state.recentStudySources.map((source) => ({ ...source })),
     studyHubState: { ...state.studyHubState },
-    smartSets: state.smartSets.map((set) => structuredClone(set)),
-    activeSmartSetId: state.activeSmartSetId,
-    refactorRecipes: state.refactorRecipes.map((recipe) => structuredClone(recipe)),
-    activeRefactorRecipeId: state.activeRefactorRecipeId,
+    studyRecipes: state.studyRecipes.map((recipe) => structuredClone(recipe)),
+    activeStudyRecipeId: state.activeStudyRecipeId,
+    userAdaptationMemory: cloneUserAdaptationMemory(state.userAdaptationMemory),
     availableModels: state.availableModels.map((model) => ({
       ...model,
       supportedReasoningLevels: [...model.supportedReasoningLevels],
     })),
     tabs: state.tabs.map((tab) => ({
       ...tab,
-      instructionChips: tab.instructionChips.map((chip) => ({ ...chip })),
+      activeStudyRecipeId: tab.activeStudyRecipeId,
+      activeStudySkillNames: [...tab.activeStudySkillNames],
       summary: tab.summary ? { ...tab.summary } : null,
-      lineage: { ...tab.lineage },
+      studyCoachState: cloneStudyCoachState(tab.studyCoachState),
+      lineage: normalizeLineage(tab.lineage),
       targetNotePath: tab.targetNotePath,
       selectionContext: tab.selectionContext ? { ...tab.selectionContext } : null,
+      panelSessionOrigin: tab.panelSessionOrigin ? structuredClone(tab.panelSessionOrigin) : null,
+      chatSuggestion: tab.chatSuggestion ? structuredClone(tab.chatSuggestion) : null,
+      composerHistory: cloneComposerHistory(tab.composerHistory),
       contextPaths: [...tab.contextPaths],
       sessionItems: tab.sessionItems.map((item) => structuredClone(item)),
-      messages: tab.messages.map((message) => ({ ...message })),
-      pendingApprovals: tab.pendingApprovals.map((approval) => ({ ...approval })),
+      messages: tab.messages.map((message) => cloneChatMessage(message)),
+      pendingApprovals: tab.pendingApprovals.map((approval) => clonePendingApproval(approval)),
       toolLog: tab.toolLog.map((entry) => ({ ...entry })),
-      patchBasket: tab.patchBasket.map((proposal) => ({ ...proposal })),
-      campaigns: tab.campaigns.map((campaign) => structuredClone(campaign)),
+      patchBasket: tab.patchBasket.map((proposal) => clonePatchProposal(proposal)),
       sessionApprovals: { ...tab.sessionApprovals },
       usageSummary: cloneUsageSummary(tab.usageSummary),
       waitingState: tab.waitingState ? { ...tab.waitingState } : null,
@@ -106,85 +612,137 @@ function createTab(cwd: string, partial?: Partial<ConversationTabState>): Conver
     draft: partial?.draft ?? "",
     cwd,
     studyWorkflow: partial?.studyWorkflow ?? null,
-    instructionChips: partial?.instructionChips ?? [],
+    activeStudyRecipeId: partial?.activeStudyRecipeId ?? null,
+    activeStudySkillNames: partial?.activeStudySkillNames ? [...partial.activeStudySkillNames] : [],
     summary: partial?.summary ?? null,
-    lineage: partial?.lineage ?? {
-      parentTabId: null,
-      forkedFromThreadId: null,
-      resumedFromThreadId: null,
-      compactedAt: null,
-    },
+    studyCoachState: cloneStudyCoachState(partial?.studyCoachState),
+    lineage: normalizeLineage(partial?.lineage),
     targetNotePath: partial?.targetNotePath ?? null,
     selectionContext: partial?.selectionContext ? { ...partial.selectionContext } : null,
+    panelSessionOrigin: partial?.panelSessionOrigin ? structuredClone(partial.panelSessionOrigin) : null,
+    chatSuggestion: partial?.chatSuggestion ? structuredClone(partial.chatSuggestion) : null,
+    composerHistory: normalizeComposerHistory(partial?.composerHistory),
     composeMode: partial?.composeMode ?? "chat",
+    learningMode: partial?.learningMode ?? false,
     contextPaths: partial?.contextPaths ?? [],
     lastResponseId: partial?.lastResponseId ?? null,
-    sessionItems: partial?.sessionItems ?? [],
+    sessionItems: partial?.sessionItems?.map((item) => structuredClone(item)) ?? [],
     codexThreadId: partial?.codexThreadId ?? null,
     model: partial?.model ?? DEFAULT_PRIMARY_MODEL,
     reasoningEffort: partial?.reasoningEffort ?? "xhigh",
+    fastMode: partial?.fastMode ?? false,
     usageSummary: partial?.usageSummary ?? createEmptyUsageSummary(),
-    messages: partial?.messages ?? [],
+    messages: normalizeRestoredMessages(partial?.messages),
     diffText: partial?.diffText ?? "",
-    toolLog: partial?.toolLog ?? [],
-    patchBasket: partial?.patchBasket ?? [],
-    campaigns: partial?.campaigns ?? [],
+    toolLog: partial?.toolLog?.map((entry) => ({ ...entry })) ?? [],
+    patchBasket: partial?.patchBasket?.map((proposal) => clonePatchProposal(proposal)) ?? [],
     status: partial?.status ?? "ready",
     runtimeMode: partial?.runtimeMode ?? "normal",
     lastError: partial?.lastError ?? null,
-    pendingApprovals: partial?.pendingApprovals ?? [],
+    pendingApprovals: partial?.pendingApprovals?.map((approval) => clonePendingApproval(approval)) ?? [],
     sessionApprovals: partial?.sessionApprovals ?? { write: false, shell: false },
     waitingState: partial?.waitingState ?? null,
   };
 }
 
+function normalizeSessionModeDefaults(defaults?: Partial<SessionModeDefaults> | null): SessionModeDefaults {
+  return {
+    fastMode: defaults?.fastMode === true,
+    learningMode: defaults?.learningMode === true,
+  };
+}
+
+function deriveWorkspaceSessionModeDefaults(initial: PersistedWorkspaceState | null): SessionModeDefaults {
+  const activeTab =
+    initial?.activeTabId && initial.tabs.some((tab) => tab.id === initial.activeTabId)
+      ? initial.tabs.find((tab) => tab.id === initial.activeTabId) ?? null
+      : initial?.tabs[0] ?? null;
+  return normalizeSessionModeDefaults(activeTab ?? null);
+}
+
 export class AgentStore {
   private state: WorkspaceState;
   private listeners = new Set<Listener>();
+  private sessionModeDefaults: SessionModeDefaults;
 
-  constructor(initial: PersistedWorkspaceState | null, fallbackCwd: string, hasLogin: boolean) {
+  constructor(initial: PersistedWorkspaceState | null, fallbackCwd: string, hasLogin: boolean, defaults?: Partial<SessionModeDefaults> | null) {
+    this.sessionModeDefaults =
+      defaults === undefined
+        ? deriveWorkspaceSessionModeDefaults(initial)
+        : normalizeSessionModeDefaults(defaults);
     const tabs =
       initial?.tabs.length && initial.tabs.length > 0
-        ? initial.tabs.map((tab) =>
-            createTab(tab.cwd || fallbackCwd, {
+        ? initial.tabs.map((tab) => {
+            const restartDropNotice = normalizeRestartDropNotice(tab.restartDropNotice);
+            return createTab(tab.cwd || fallbackCwd, {
               ...tab,
+              learningMode: this.sessionModeDefaults.learningMode,
+              fastMode: this.sessionModeDefaults.fastMode,
+              messages: appendRestartDropMessage(tab.messages, restartDropNotice),
               status: hasLogin ? "ready" : "missing_login",
               pendingApprovals: [],
               sessionApprovals: { write: false, shell: false },
+            });
+          })
+        : [
+            createTab(fallbackCwd, {
+              title: "Study chat",
+              status: hasLogin ? "ready" : "missing_login",
+              ...this.sessionModeDefaults,
             }),
-          )
-        : [createTab(fallbackCwd, { title: "Study chat", status: hasLogin ? "ready" : "missing_login" })];
+          ];
+    const { tabs: normalizedTabs, remappedIds } = ensureUniqueTabIds(tabs);
     const requestedActiveTabId = initial?.activeTabId ?? null;
+    const remappedActiveTabId =
+      requestedActiveTabId && normalizedTabs.some((tab) => tab.id === requestedActiveTabId)
+        ? requestedActiveTabId
+        : requestedActiveTabId
+          ? remappedIds.get(requestedActiveTabId) ?? requestedActiveTabId
+          : null;
     const activeTabId =
-      requestedActiveTabId && tabs.some((tab) => tab.id === requestedActiveTabId) ? requestedActiveTabId : tabs[0]?.id ?? null;
-    const accountUsage = initial?.accountUsage ? cloneAccountUsage(initial.accountUsage) : deriveRestoredAccountUsage(tabs);
+      remappedActiveTabId && normalizedTabs.some((tab) => tab.id === remappedActiveTabId)
+        ? remappedActiveTabId
+        : normalizedTabs[0]?.id ?? null;
+    const accountUsage = deriveRestoredAccountUsage(
+      normalizedTabs,
+      activeTabId,
+      initial?.accountUsage ? cloneAccountUsage(initial.accountUsage) : null,
+    );
     const recentStudySources = initial?.recentStudySources?.map((source) => ({ ...source })) ?? [];
     const studyHubState: StudyHubState = {
       lastOpenedAt: initial?.studyHubState?.lastOpenedAt ?? null,
       isCollapsed: initial?.studyHubState?.isCollapsed ?? false,
     };
-    const smartSets = initial?.smartSets?.map((set) => structuredClone(set)) ?? [];
-    const requestedActiveSmartSetId = initial?.activeSmartSetId ?? null;
-    const activeSmartSetId =
-      requestedActiveSmartSetId && smartSets.some((set) => set.id === requestedActiveSmartSetId) ? requestedActiveSmartSetId : smartSets[0]?.id ?? null;
-    const refactorRecipes = initial?.refactorRecipes?.map((recipe) => structuredClone(recipe)) ?? [];
-    const requestedActiveRefactorRecipeId = initial?.activeRefactorRecipeId ?? null;
-    const activeRefactorRecipeId =
-      requestedActiveRefactorRecipeId && refactorRecipes.some((recipe) => recipe.id === requestedActiveRefactorRecipeId)
-        ? requestedActiveRefactorRecipeId
-        : refactorRecipes[0]?.id ?? null;
+    const studyRecipes = initial?.studyRecipes?.map((recipe) => structuredClone(recipe)) ?? [];
+    const userAdaptationMemory = normalizeUserAdaptationMemory(initial?.userAdaptationMemory);
+
+    const tabsWithPanelSelection = normalizedTabs.map((tab) => {
+      const nextTab: ConversationTabState = {
+        ...tab,
+        lineage: {
+          ...normalizeLineage(tab.lineage),
+          parentTabId:
+            tab.lineage.parentTabId && normalizedTabs.some((entry) => entry.id === tab.lineage.parentTabId)
+              ? tab.lineage.parentTabId
+              : tab.lineage.parentTabId
+                ? remappedIds.get(tab.lineage.parentTabId) ?? tab.lineage.parentTabId
+                : null,
+        },
+      };
+      normalizeTabStudyState(nextTab, studyRecipes);
+      return nextTab;
+    });
 
     this.state = {
-      tabs,
+      tabs: tabsWithPanelSelection,
       activeTabId,
       accountUsage,
-      activeStudyWorkflow: deriveActiveStudyWorkflow(tabs, activeTabId),
+      activeStudyWorkflow: deriveActiveStudyWorkflow(tabsWithPanelSelection, activeTabId),
       recentStudySources,
       studyHubState,
-      smartSets,
-      activeSmartSetId,
-      refactorRecipes,
-      activeRefactorRecipeId,
+      studyRecipes,
+      activeStudyRecipeId: deriveActiveStudyRecipeId(tabsWithPanelSelection, activeTabId),
+      userAdaptationMemory,
       runtimeIssue: null,
       authState: hasLogin ? "ready" : "missing_login",
       availableModels: getFallbackModelCatalog(),
@@ -207,6 +765,10 @@ export class AgentStore {
     return this.state.tabs.find((tab) => tab.id === this.state.activeTabId) ?? null;
   }
 
+  getSessionModeDefaults(): { fastMode: boolean; learningMode: boolean } {
+    return { ...this.sessionModeDefaults };
+  }
+
   serialize(): PersistedWorkspaceState {
     return {
       tabs: this.state.tabs.map((tab) => ({
@@ -215,18 +777,29 @@ export class AgentStore {
         draft: tab.draft,
         cwd: tab.cwd,
         studyWorkflow: tab.studyWorkflow,
-        instructionChips: tab.instructionChips.map((chip) => ({ ...chip })),
+        activeStudyRecipeId: tab.activeStudyRecipeId,
+        activeStudySkillNames: [...tab.activeStudySkillNames],
         summary: tab.summary ? { ...tab.summary } : null,
-        lineage: { ...tab.lineage },
+        studyCoachState: cloneStudyCoachState(tab.studyCoachState),
+        lineage: normalizeLineage(tab.lineage),
         targetNotePath: tab.targetNotePath,
         selectionContext: tab.selectionContext ? { ...tab.selectionContext } : null,
+        panelSessionOrigin: tab.panelSessionOrigin ? structuredClone(tab.panelSessionOrigin) : null,
+        chatSuggestion: tab.chatSuggestion ? structuredClone(tab.chatSuggestion) : null,
+        composerHistory: {
+          entries: [...tab.composerHistory.entries],
+          index: tab.composerHistory.index,
+          draft: tab.composerHistory.draft,
+        },
         composeMode: tab.composeMode,
+        learningMode: tab.learningMode,
         contextPaths: [...tab.contextPaths],
         lastResponseId: tab.lastResponseId,
-        sessionItems: tab.sessionItems.map((item) => structuredClone(item)),
+        sessionItems: [],
         codexThreadId: tab.codexThreadId,
         model: tab.model,
         reasoningEffort: tab.reasoningEffort,
+        fastMode: tab.fastMode,
         usageSummary: cloneUsageSummary(tab.usageSummary),
         messages: tab.messages.map((message) => ({
           id: message.id,
@@ -237,24 +810,29 @@ export class AgentStore {
         })),
         diffText: tab.diffText,
         toolLog: tab.toolLog.map((entry) => ({ ...entry })),
-        patchBasket: tab.patchBasket.map((proposal) => ({ ...proposal })),
-        campaigns: tab.campaigns.map((campaign) => structuredClone(campaign)),
+        patchBasket: [],
+        restartDropNotice: buildPersistedRestartDropNotice(tab),
       })),
       activeTabId: this.state.activeTabId,
       accountUsage: cloneAccountUsage(this.state.accountUsage),
       activeStudyWorkflow: deriveActiveStudyWorkflow(this.state.tabs, this.state.activeTabId),
       recentStudySources: this.state.recentStudySources.map((source) => ({ ...source })),
       studyHubState: { ...this.state.studyHubState },
-      smartSets: this.state.smartSets.map((set) => structuredClone(set)),
-      activeSmartSetId: this.state.activeSmartSetId,
-      refactorRecipes: this.state.refactorRecipes.map((recipe) => structuredClone(recipe)),
-      activeRefactorRecipeId: this.state.activeRefactorRecipeId,
+      studyRecipes: this.state.studyRecipes.map((recipe) => structuredClone(recipe)),
+      activeStudyRecipeId: this.state.activeStudyRecipeId,
+      userAdaptationMemory: cloneUserAdaptationMemory(this.state.userAdaptationMemory),
     };
   }
 
   createTab(cwd: string, title = "New study chat", partial?: Partial<ConversationTabState>): ConversationTabState {
     const status = this.state.authState === "ready" ? "ready" : "missing_login";
-    const tab = createTab(cwd, { ...partial, title, status });
+    const tab = createTab(cwd, {
+      learningMode: this.sessionModeDefaults.learningMode,
+      fastMode: this.sessionModeDefaults.fastMode,
+      ...partial,
+      title,
+      status,
+    });
     this.mutate((state) => {
       state.tabs.push(tab);
       state.activeTabId = tab.id;
@@ -262,7 +840,8 @@ export class AgentStore {
     return tab;
   }
 
-  closeTab(tabId: string, fallbackCwd: string): void {
+  closeTab(tabId: string, fallbackCwd: string, defaults?: Partial<SessionModeDefaults> | null): void {
+    const fallbackModes = normalizeSessionModeDefaults(defaults ?? this.sessionModeDefaults);
     this.mutate((state) => {
       state.tabs = state.tabs.filter((tab) => tab.id !== tabId);
       if (state.tabs.length === 0) {
@@ -270,12 +849,14 @@ export class AgentStore {
           createTab(fallbackCwd, {
             title: "Study chat",
             status: state.authState === "ready" ? "ready" : "missing_login",
+            ...fallbackModes,
           }),
         ];
       }
       if (state.activeTabId === tabId) {
         state.activeTabId = state.tabs[0]?.id ?? null;
       }
+      state.activeStudyRecipeId = deriveActiveStudyRecipeId(state.tabs, state.activeTabId);
     });
   }
 
@@ -283,6 +864,7 @@ export class AgentStore {
     this.mutate((state) => {
       state.activeTabId = tabId;
       state.activeStudyWorkflow = deriveActiveStudyWorkflow(state.tabs, state.activeTabId);
+      state.activeStudyRecipeId = deriveActiveStudyRecipeId(state.tabs, state.activeTabId);
     });
   }
 
@@ -323,6 +905,60 @@ export class AgentStore {
   setStudyHubState(studyHubState: StudyHubState): void {
     this.mutate((state) => {
       state.studyHubState = { ...studyHubState };
+    });
+  }
+
+  setStudyRecipes(studyRecipes: StudyRecipe[]): void {
+    this.mutate((state) => {
+      state.studyRecipes = studyRecipes.map((recipe) => structuredClone(recipe));
+      reconcileStudyRecipeState(state);
+    });
+  }
+
+  setUserAdaptationMemory(userAdaptationMemory: UserAdaptationMemory | null): void {
+    this.mutate((state) => {
+      state.userAdaptationMemory = cloneUserAdaptationMemory(userAdaptationMemory);
+    });
+  }
+
+  activateStudyRecipe(recipeId: string | null): void {
+    this.mutate((state) => {
+      const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+      if (activeTab) {
+        const normalized = normalizePanelSelection(recipeId, activeTab.activeStudySkillNames, state.studyRecipes);
+        activeTab.activeStudyRecipeId = normalized.recipeId;
+        activeTab.activeStudySkillNames = normalized.skillNames;
+      }
+    });
+  }
+
+  upsertStudyRecipe(recipe: StudyRecipe): void {
+    this.mutate((state) => {
+      const index = state.studyRecipes.findIndex((entry) => entry.id === recipe.id);
+      if (index >= 0) {
+        state.studyRecipes[index] = structuredClone(recipe);
+      } else {
+        state.studyRecipes.push(structuredClone(recipe));
+      }
+      reconcileStudyRecipeState(state);
+    });
+  }
+
+  removeStudyRecipe(recipeId: string): void {
+    this.mutate((state) => {
+      state.studyRecipes = state.studyRecipes.filter((recipe) => recipe.id !== recipeId);
+      for (const tab of state.tabs) {
+        if (tab.activeStudyRecipeId === recipeId) {
+          clearPanelSelection(tab);
+        }
+        if (tab.panelSessionOrigin?.panelId === recipeId) {
+          tab.panelSessionOrigin = null;
+        }
+        if (tab.chatSuggestion?.panelId === recipeId) {
+          tab.chatSuggestion = null;
+        }
+      }
+      state.activeStudyRecipeId = deriveActiveStudyRecipeId(state.tabs, state.activeTabId);
     });
   }
 
@@ -369,6 +1005,53 @@ export class AgentStore {
     });
   }
 
+  setLearningMode(tabId: string, learningMode: boolean): void {
+    this.updateTab(tabId, (tab) => {
+      tab.learningMode = learningMode;
+    });
+  }
+
+  setAllTabsLearningMode(learningMode: boolean): void {
+    this.sessionModeDefaults = {
+      ...this.sessionModeDefaults,
+      learningMode,
+    };
+    this.mutate((state) => {
+      for (const tab of state.tabs) {
+        tab.learningMode = learningMode;
+      }
+    });
+  }
+
+  setActiveStudyPanel(tabId: string, recipeId: string | null, skillNames: string[] = []): void {
+    this.mutate((state) => {
+      const tab = state.tabs.find((entry) => entry.id === tabId);
+      if (!tab) {
+        return;
+      }
+      const normalized = normalizePanelSelection(recipeId, skillNames, state.studyRecipes);
+      tab.activeStudyRecipeId = normalized.recipeId;
+      tab.activeStudySkillNames = normalized.skillNames;
+      tab.panelSessionOrigin = normalizePanelSessionOrigin(tab.panelSessionOrigin, state.studyRecipes);
+      tab.chatSuggestion = normalizeChatSuggestion(tab.chatSuggestion, state.studyRecipes);
+      if (state.activeTabId === tabId) {
+        state.activeStudyRecipeId = normalized.recipeId;
+      }
+    });
+  }
+
+  setPanelSessionOrigin(tabId: string, panelSessionOrigin: ConversationTabState["panelSessionOrigin"]): void {
+    this.updateTab(tabId, (tab) => {
+      tab.panelSessionOrigin = panelSessionOrigin ? structuredClone(panelSessionOrigin) : null;
+    });
+  }
+
+  setChatSuggestion(tabId: string, chatSuggestion: ConversationTabState["chatSuggestion"]): void {
+    this.updateTab(tabId, (tab) => {
+      tab.chatSuggestion = chatSuggestion ? structuredClone(chatSuggestion) : null;
+    });
+  }
+
   setActiveTabStudyWorkflow(workflow: StudyWorkflowKind | null): void {
     if (!this.state.activeTabId) {
       return;
@@ -382,21 +1065,21 @@ export class AgentStore {
     });
   }
 
-  setInstructionChips(tabId: string, instructionChips: ConversationTabState["instructionChips"]): void {
-    this.updateTab(tabId, (tab) => {
-      tab.instructionChips = instructionChips.map((chip) => ({ ...chip }));
-    });
-  }
-
   setSummary(tabId: string, summary: ConversationTabState["summary"]): void {
     this.updateTab(tabId, (tab) => {
       tab.summary = summary ? { ...summary } : null;
     });
   }
 
+  setStudyCoachState(tabId: string, studyCoachState: ConversationTabState["studyCoachState"]): void {
+    this.updateTab(tabId, (tab) => {
+      tab.studyCoachState = cloneStudyCoachState(studyCoachState);
+    });
+  }
+
   setLineage(tabId: string, lineage: ConversationTabState["lineage"]): void {
     this.updateTab(tabId, (tab) => {
-      tab.lineage = { ...lineage };
+      tab.lineage = normalizeLineage(lineage);
     });
   }
 
@@ -461,87 +1144,46 @@ export class AgentStore {
     });
   }
 
+  setTabFastMode(tabId: string, fastMode: boolean): void {
+    this.updateTab(tabId, (tab) => {
+      tab.fastMode = fastMode;
+    });
+  }
+
+  setAllTabsFastMode(fastMode: boolean): void {
+    this.sessionModeDefaults = {
+      ...this.sessionModeDefaults,
+      fastMode,
+    };
+    this.mutate((state) => {
+      for (const tab of state.tabs) {
+        tab.fastMode = fastMode;
+      }
+    });
+  }
+
+  setSessionModeDefaults(defaults: Partial<SessionModeDefaults> | null | undefined): void {
+    this.sessionModeDefaults = normalizeSessionModeDefaults({
+      ...this.sessionModeDefaults,
+      ...(defaults ?? {}),
+    });
+  }
+
   setUsageSummary(tabId: string, usageSummary: UsageSummary): void {
     this.updateTab(tabId, (tab) => {
       tab.usageSummary = cloneUsageSummary(usageSummary);
     });
   }
 
+  setComposerHistory(tabId: string, composerHistory: ConversationTabState["composerHistory"]): void {
+    this.updateTab(tabId, (tab) => {
+      tab.composerHistory = normalizeComposerHistory(composerHistory);
+    });
+  }
+
   setAccountUsage(accountUsage: AccountUsageSummary): void {
     this.mutate((state) => {
       state.accountUsage = cloneAccountUsage(accountUsage);
-    });
-  }
-
-  setSmartSets(smartSets: SmartSet[]): void {
-    this.mutate((state) => {
-      state.smartSets = smartSets.map((set) => structuredClone(set));
-      if (state.activeSmartSetId && !state.smartSets.some((set) => set.id === state.activeSmartSetId)) {
-        state.activeSmartSetId = state.smartSets[0]?.id ?? null;
-      }
-    });
-  }
-
-  activateSmartSet(smartSetId: string | null): void {
-    this.mutate((state) => {
-      state.activeSmartSetId = smartSetId;
-    });
-  }
-
-  setRefactorRecipes(refactorRecipes: RefactorRecipe[]): void {
-    this.mutate((state) => {
-      state.refactorRecipes = refactorRecipes.map((recipe) => structuredClone(recipe));
-      if (state.activeRefactorRecipeId && !state.refactorRecipes.some((recipe) => recipe.id === state.activeRefactorRecipeId)) {
-        state.activeRefactorRecipeId = state.refactorRecipes[0]?.id ?? null;
-      }
-    });
-  }
-
-  activateRefactorRecipe(recipeId: string | null): void {
-    this.mutate((state) => {
-      state.activeRefactorRecipeId = recipeId;
-    });
-  }
-
-  upsertRefactorRecipe(recipe: RefactorRecipe): void {
-    this.mutate((state) => {
-      const index = state.refactorRecipes.findIndex((entry) => entry.id === recipe.id);
-      if (index >= 0) {
-        state.refactorRecipes[index] = structuredClone(recipe);
-      } else {
-        state.refactorRecipes.push(structuredClone(recipe));
-      }
-      state.activeRefactorRecipeId = recipe.id;
-    });
-  }
-
-  removeRefactorRecipe(recipeId: string): void {
-    this.mutate((state) => {
-      state.refactorRecipes = state.refactorRecipes.filter((recipe) => recipe.id !== recipeId);
-      if (state.activeRefactorRecipeId === recipeId) {
-        state.activeRefactorRecipeId = state.refactorRecipes[0]?.id ?? null;
-      }
-    });
-  }
-
-  upsertSmartSet(smartSet: SmartSet): void {
-    this.mutate((state) => {
-      const index = state.smartSets.findIndex((entry) => entry.id === smartSet.id);
-      if (index >= 0) {
-        state.smartSets[index] = structuredClone(smartSet);
-      } else {
-        state.smartSets.push(structuredClone(smartSet));
-      }
-      state.activeSmartSetId = smartSet.id;
-    });
-  }
-
-  removeSmartSet(smartSetId: string): void {
-    this.mutate((state) => {
-      state.smartSets = state.smartSets.filter((set) => set.id !== smartSetId);
-      if (state.activeSmartSetId === smartSetId) {
-        state.activeSmartSetId = state.smartSets[0]?.id ?? null;
-      }
     });
   }
 
@@ -566,7 +1208,11 @@ export class AgentStore {
         ...partial,
         id: current.id,
         cwd: partial.cwd ?? current.cwd,
+        composerHistory: partial.composerHistory ?? EMPTY_COMPOSER_HISTORY_STATE,
       });
+      if (state.activeTabId === tabId) {
+        state.activeStudyRecipeId = deriveActiveStudyRecipeId(state.tabs, state.activeTabId);
+      }
     });
   }
 
@@ -578,19 +1224,13 @@ export class AgentStore {
 
   setPatchBasket(tabId: string, patchBasket: PatchProposal[]): void {
     this.updateTab(tabId, (tab) => {
-      tab.patchBasket = patchBasket.map((proposal) => ({ ...proposal }));
-    });
-  }
-
-  setCampaigns(tabId: string, campaigns: RefactorCampaign[]): void {
-    this.updateTab(tabId, (tab) => {
-      tab.campaigns = campaigns.map((campaign) => structuredClone(campaign));
+      tab.patchBasket = patchBasket.map((proposal) => clonePatchProposal(proposal));
     });
   }
 
   addMessage(tabId: string, message: ChatMessage): void {
     this.updateTab(tabId, (tab) => {
-      tab.messages.push({ ...message });
+      tab.messages.push(cloneChatMessage(message));
     });
   }
 
@@ -609,13 +1249,13 @@ export class AgentStore {
 
   addApproval(tabId: string, approval: PendingApproval): void {
     this.updateTab(tabId, (tab) => {
-      tab.pendingApprovals.push({ ...approval });
+      tab.pendingApprovals.push(clonePendingApproval(approval));
     });
   }
 
   setApprovals(tabId: string, approvals: PendingApproval[]): void {
     this.updateTab(tabId, (tab) => {
-      tab.pendingApprovals = approvals.map((approval) => ({ ...approval }));
+      tab.pendingApprovals = approvals.map((approval) => clonePendingApproval(approval));
     });
   }
 
@@ -638,7 +1278,10 @@ export class AgentStore {
       const retained = tab.pendingApprovals.filter(
         (approval) => !(approval.transport === "plugin_proposal" && approval.sourceMessageId === sourceMessageId),
       );
-      tab.pendingApprovals = [...retained, ...approvals.map((approval) => ({ ...approval }))];
+      tab.pendingApprovals = [
+        ...retained,
+        ...approvals.map((approval) => clonePendingApproval(approval)),
+      ];
     });
   }
 
@@ -682,7 +1325,7 @@ export class AgentStore {
   replacePatchProposals(tabId: string, sourceMessageId: string, proposals: PatchProposal[]): void {
     this.updateTab(tabId, (tab) => {
       const retained = tab.patchBasket.filter((proposal) => proposal.sourceMessageId !== sourceMessageId);
-      tab.patchBasket = [...retained, ...proposals.map((proposal) => ({ ...proposal }))].sort(
+      tab.patchBasket = [...retained, ...proposals.map((proposal) => clonePatchProposal(proposal))].sort(
         (left, right) => left.createdAt - right.createdAt,
       );
     });
@@ -691,25 +1334,6 @@ export class AgentStore {
   updatePatchProposal(tabId: string, patchId: string, updater: (proposal: PatchProposal) => PatchProposal): void {
     this.updateTab(tabId, (tab) => {
       tab.patchBasket = tab.patchBasket.map((proposal) => (proposal.id === patchId ? { ...updater(proposal) } : proposal));
-    });
-  }
-
-  replaceCampaign(tabId: string, sourceMessageId: string, campaign: RefactorCampaign | null): void {
-    this.updateTab(tabId, (tab) => {
-      const retained = tab.campaigns.filter((entry) => entry.sourceMessageId !== sourceMessageId);
-      tab.campaigns = campaign ? [...retained, structuredClone(campaign)] : retained;
-    });
-  }
-
-  updateCampaign(tabId: string, campaignId: string, updater: (campaign: RefactorCampaign) => RefactorCampaign): void {
-    this.updateTab(tabId, (tab) => {
-      tab.campaigns = tab.campaigns.map((campaign) => (campaign.id === campaignId ? structuredClone(updater(campaign)) : campaign));
-    });
-  }
-
-  removeCampaign(tabId: string, campaignId: string): void {
-    this.updateTab(tabId, (tab) => {
-      tab.campaigns = tab.campaigns.filter((campaign) => campaign.id !== campaignId);
     });
   }
 
@@ -726,7 +1350,12 @@ export class AgentStore {
   private mutate(mutator: (state: WorkspaceState) => void): void {
     const next = cloneState(this.state);
     mutator(next);
+    next.tabs.forEach((tab) => {
+      normalizeTabStudyState(tab, next.studyRecipes);
+      tab.composerHistory = normalizeComposerHistory(tab.composerHistory);
+    });
     next.activeStudyWorkflow = deriveActiveStudyWorkflow(next.tabs, next.activeTabId);
+    next.activeStudyRecipeId = deriveActiveStudyRecipeId(next.tabs, next.activeTabId);
     this.state = next;
     const snapshot = this.getState();
     for (const listener of this.listeners) {

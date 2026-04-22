@@ -7,7 +7,9 @@ import {
 
 describe("codex CLI spawn spec", () => {
   it("builds a direct exec invocation", () => {
-    const spec = buildCodexSpawnSpec("codex", {
+    const spec = buildCodexSpawnSpec({
+      runtime: "native",
+      executablePath: "codex",
       jsonOutputFlag: "--json",
       model: "gpt-5.1-codex",
       workingDirectory: "/vault",
@@ -24,7 +26,7 @@ describe("codex CLI spawn spec", () => {
       "-i",
       "/vault/assets/mock.png",
       "-s",
-      "workspace-write",
+      "read-only",
       "-C",
       "/vault",
       "--skip-git-repo-check",
@@ -32,12 +34,16 @@ describe("codex CLI spawn spec", () => {
       'approval_policy="never"',
       "--config",
       "sandbox_workspace_write.network_access=true",
+      "--config",
+      "features.fast_mode=false",
       "-",
     ]);
   });
 
   it("builds a WSL direct invocation with converted paths", () => {
-    const spec = buildCodexSpawnSpec("wsl.exe -e codex", {
+    const spec = buildCodexSpawnSpec({
+      runtime: "wsl",
+      executablePath: "codex",
       jsonOutputFlag: "--json",
       model: "gpt-5.1-codex",
       workingDirectory: "C:\\Obsidian\\My brain sync",
@@ -56,7 +62,7 @@ describe("codex CLI spawn spec", () => {
       "-i",
       "/mnt/c/Obsidian/My brain sync/assets/diagram.png",
       "-s",
-      "workspace-write",
+      "read-only",
       "-C",
       "/mnt/c/Obsidian/My brain sync",
       "--skip-git-repo-check",
@@ -64,12 +70,29 @@ describe("codex CLI spawn spec", () => {
       'approval_policy="never"',
       "--config",
       "sandbox_workspace_write.network_access=true",
+      "--config",
+      "features.fast_mode=false",
       "-",
     ]);
   });
 
-  it("builds a WSL bash launcher invocation", () => {
-    const spec = buildCodexSpawnSpec("wsl.exe -e bash -lc codex", {
+  it("builds a WSL invocation from WSL UNC working directories", () => {
+    const spec = buildCodexSpawnSpec({
+      runtime: "wsl",
+      executablePath: "codex",
+      jsonOutputFlag: "--json",
+      model: "gpt-5.1-codex",
+      workingDirectory: "\\\\wsl.localhost\\Ubuntu\\home\\tester\\active\\research\\paper\\8",
+    });
+
+    expect(spec.args).toContain("-C");
+    expect(spec.args).toContain("/home/tester/active/research/paper/8");
+  });
+
+  it("builds a WSL resume invocation without shell launchers", () => {
+    const spec = buildCodexSpawnSpec({
+      runtime: "wsl",
+      executablePath: "codex",
       jsonOutputFlag: "--json",
       model: "gpt-5.1-codex",
       workingDirectory: "C:\\Obsidian\\My brain sync",
@@ -78,12 +101,42 @@ describe("codex CLI spawn spec", () => {
     });
 
     expect(spec.command).toBe("wsl.exe");
-    expect(spec.args).toHaveLength(4);
-    expect(spec.args.slice(0, 3)).toEqual(["-e", "bash", "-lc"]);
-    expect(spec.args[3]).toContain("codex 'exec' 'resume' '--json'");
-    expect(spec.args[3]).toContain("'-i' '/mnt/c/Obsidian/My brain sync/assets/diagram.png'");
-    expect(spec.args[3]).toContain("'thread-123' '-'");
-    expect(renderCodexSpawnSpec(spec)).toContain("\"codex 'exec' 'resume' '--json'");
+    expect(spec.args.slice(0, 5)).toEqual(["-e", "codex", "exec", "resume", "--json"]);
+    expect(spec.args).toContain("/mnt/c/Obsidian/My brain sync/assets/diagram.png");
+    expect(spec.args).toContain("thread-123");
+    expect(renderCodexSpawnSpec(spec)).toContain("wsl.exe -e codex exec resume --json");
+  });
+
+  it("builds a WSL invocation from fallback launcher parts when provided", () => {
+    const spec = buildCodexSpawnSpec({
+      runtime: "wsl",
+      executablePath: "codex",
+      jsonOutputFlag: "--json",
+      model: "gpt-5.4",
+      workingDirectory: "C:\\Obsidian\\My brain sync",
+      launcherOverrideParts: ["wsl.exe", "-e", "bash", "-lc", 'echo "$@"', "__obsidian_codex_fallback__"],
+    });
+
+    expect(spec.command).toBe("wsl.exe");
+    expect(spec.args.slice(0, 6)).toEqual(["-e", "bash", "-lc", 'echo "$@"', "__obsidian_codex_fallback__", "exec"]);
+    expect(spec.args).toContain("/mnt/c/Obsidian/My brain sync");
+  });
+
+  it("passes full-auto through resume invocations only for workspace-write sessions", () => {
+    const spec = buildCodexSpawnSpec({
+      runtime: "native",
+      executablePath: "codex",
+      jsonOutputFlag: "--json",
+      model: "gpt-5.4",
+      workingDirectory: "/vault",
+      threadId: "thread-123",
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never",
+    });
+
+    expect(spec.args).toContain("resume");
+    expect(spec.args).toContain("--full-auto");
+    expect(spec.args).toContain('approval_policy="never"');
   });
 
   it("detects unsupported JSON flags", () => {
@@ -92,7 +145,9 @@ describe("codex CLI spawn spec", () => {
   });
 
   it("adds a reasoning effort override when provided", () => {
-    const spec = buildCodexSpawnSpec("codex", {
+    const spec = buildCodexSpawnSpec({
+      runtime: "native",
+      executablePath: "codex",
       jsonOutputFlag: "--json",
       model: "gpt-5.4",
       workingDirectory: "/vault",
@@ -103,12 +158,27 @@ describe("codex CLI spawn spec", () => {
     expect(spec.args).toContain('model_reasoning_effort="xhigh"');
   });
 
-  it("respects a read-only sandbox override for new threads", () => {
-    const spec = buildCodexSpawnSpec("codex", {
+  it("adds an explicit fast mode override when enabled", () => {
+    const spec = buildCodexSpawnSpec({
+      runtime: "native",
+      executablePath: "codex",
       jsonOutputFlag: "--json",
       model: "gpt-5.4",
       workingDirectory: "/vault",
-      sandboxMode: "read-only",
+      fastMode: true,
+    });
+
+    expect(spec.args).toContain("--config");
+    expect(spec.args).toContain("features.fast_mode=true");
+  });
+
+  it("respects a read-only sandbox override for new threads", () => {
+    const spec = buildCodexSpawnSpec({
+      runtime: "native",
+      executablePath: "codex",
+      jsonOutputFlag: "--json",
+      model: "gpt-5.4",
+      workingDirectory: "/vault",
     });
 
     expect(spec.args).toContain("-s");
@@ -116,7 +186,9 @@ describe("codex CLI spawn spec", () => {
   });
 
   it("passes through a non-default approval policy", () => {
-    const spec = buildCodexSpawnSpec("codex", {
+    const spec = buildCodexSpawnSpec({
+      runtime: "native",
+      executablePath: "codex",
       jsonOutputFlag: "--json",
       model: "gpt-5.4",
       workingDirectory: "/vault",
