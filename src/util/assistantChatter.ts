@@ -63,6 +63,33 @@ const OPERATIONAL_STATUS_PATTERNS = [
   /現時点ではまだ .*読めていません/iu,
 ];
 
+const INTERNAL_REWRITE_FOLLOWUP_START_PATTERN =
+  /^Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block\.$/imu;
+
+const INTERNAL_REWRITE_TARGET_RESOLUTION_PATTERNS = [
+  /^Target resolution order for this rewrite:/imu,
+  /^Target the current session target note if one is set; otherwise target the active note for this turn\.$/imu,
+];
+
+const INTERNAL_REWRITE_FOLLOWUP_REQUIRED_PATTERNS = [
+  INTERNAL_REWRITE_FOLLOWUP_START_PATTERN,
+  /^Apply the Formatting bundle:/imu,
+  /^Add concise evidence lines to the patch header when possible/imu,
+  /^Do not ask whether to apply the change\./imu,
+];
+
+const PROPOSAL_REPAIR_SCAFFOLDING_PATTERNS = [
+  INTERNAL_REWRITE_FOLLOWUP_START_PATTERN,
+  ...INTERNAL_REWRITE_TARGET_RESOLUTION_PATTERNS,
+  /^If a selection snapshot is attached,/imu,
+  /^Apply the Formatting bundle:/imu,
+  /^Add concise evidence lines to the patch header when possible/imu,
+  /^Prefer vault-note and attachment evidence first\./imu,
+  /^Do not ask whether to apply the change\./imu,
+  /^Assistant answer to convert:/imu,
+  /^Output exactly one fenced .*obsidian-patch.* block/imu,
+];
+
 function normalizeBlock(block: string): string {
   return block.replace(/\s+/gu, " ").trim();
 }
@@ -81,8 +108,77 @@ function isOperationalChatterBlock(block: string): boolean {
   );
 }
 
+function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n/g, "\n");
+}
+
+function stripAssistantAnswerPrefix(line: string): string | null {
+  const marker = "Assistant answer to convert:";
+  if (!line.trim().startsWith(marker)) {
+    return line;
+  }
+  const remainder = line.trim().slice(marker.length).trim();
+  return remainder || null;
+}
+
+function stripProposalRepairScaffolding(text: string): string {
+  if (!PROPOSAL_REPAIR_SCAFFOLDING_PATTERNS.some((pattern) => pattern.test(text))) {
+    return text;
+  }
+  const lines = normalizeNewlines(text).split("\n");
+  const kept: string[] = [];
+  let inCodeFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^```/u.test(trimmed)) {
+      inCodeFence = !inCodeFence;
+      kept.push(line);
+      continue;
+    }
+    if (inCodeFence) {
+      kept.push(line);
+      continue;
+    }
+    if (!trimmed) {
+      kept.push("");
+      continue;
+    }
+    const stripped = stripAssistantAnswerPrefix(line);
+    if (stripped === null) {
+      continue;
+    }
+    if (PROPOSAL_REPAIR_SCAFFOLDING_PATTERNS.some((pattern) => pattern.test(stripped.trim()))) {
+      continue;
+    }
+    kept.push(stripped);
+  }
+
+  return kept.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
+}
+
+export function isInternalRewriteFollowupPrompt(text: string | null | undefined): boolean {
+  if (!text?.trim()) {
+    return false;
+  }
+  const normalized = normalizeNewlines(text).trim();
+  return INTERNAL_REWRITE_FOLLOWUP_REQUIRED_PATTERNS.every((pattern) => pattern.test(normalized));
+}
+
+export function normalizeVisibleUserPromptText(
+  text: string,
+  rewriteFollowupLabel: string,
+  internalPromptKind: string | null | undefined = null,
+): string {
+  if (internalPromptKind === "rewrite_followup" || isInternalRewriteFollowupPrompt(text)) {
+    return rewriteFollowupLabel;
+  }
+  return text;
+}
+
 export function sanitizeOperationalAssistantText(text: string): string | null {
-  const blocks = text
+  const sanitizedText = stripProposalRepairScaffolding(text);
+  const blocks = sanitizedText
     .split(/\n{2,}/u)
     .map((block) => block.trim())
     .filter(Boolean);

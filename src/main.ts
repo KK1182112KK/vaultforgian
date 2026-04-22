@@ -556,6 +556,9 @@ export default class ObsidianCodexPlugin extends Plugin {
     const vaultSettings: VaultSettings = {
       defaultModel: coerceModelForPicker(modelCatalog, usesLegacyDefaultPair ? DEFAULT_SETTINGS.defaultModel : configuredDefaultModel),
       defaultReasoningEffort: getCompatibleReasoningEffort(model, configuredDefaultReasoningEffort) ?? configuredDefaultReasoningEffort,
+      defaultFastMode: typeof settings.defaultFastMode === "boolean" ? settings.defaultFastMode : DEFAULT_VAULT_SETTINGS.defaultFastMode,
+      defaultLearningMode:
+        typeof settings.defaultLearningMode === "boolean" ? settings.defaultLearningMode : DEFAULT_VAULT_SETTINGS.defaultLearningMode,
       permissionMode: configuredPermissionMode ?? DEFAULT_SETTINGS.permissionMode,
       uiLanguage: configuredUiLanguage,
       onboardingVersionSeen:
@@ -672,6 +675,8 @@ export default class ObsidianCodexPlugin extends Plugin {
     );
     const fallbackReasoningEffort =
       getCompatibleReasoningEffort(fallbackModel, this.settings.defaultReasoningEffort) ?? this.settings.defaultReasoningEffort;
+    const fallbackFastMode = this.settings.defaultFastMode;
+    const fallbackLearningMode = this.settings.defaultLearningMode;
 
     return {
       tabs: input.tabs
@@ -842,7 +847,7 @@ export default class ObsidianCodexPlugin extends Plugin {
                     draft: null,
                   },
             composeMode: ("composeMode" in tab && persisted.composeMode === "plan" ? "plan" : "chat") as "plan" | "chat",
-            learningMode: "learningMode" in tab ? Boolean(persisted.learningMode) : false,
+            learningMode: fallbackLearningMode,
             contextPaths: Array.isArray("contextPaths" in tab ? persisted.contextPaths : undefined) ? [...persisted.contextPaths] : [],
             lastResponseId: "lastResponseId" in tab && typeof persisted.lastResponseId === "string" ? persisted.lastResponseId : null,
             sessionItems: [],
@@ -854,6 +859,7 @@ export default class ObsidianCodexPlugin extends Plugin {
                   : null,
             model,
             reasoningEffort,
+            fastMode: fallbackFastMode,
             usageSummary:
               "usageSummary" in tab && persisted.usageSummary
                 ? {

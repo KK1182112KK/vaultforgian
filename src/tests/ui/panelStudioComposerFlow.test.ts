@@ -1352,6 +1352,58 @@ describe("Panel Studio composer flow", () => {
     ]);
   });
 
+  it("shows a readability warning for review-required patches", async () => {
+    const harness = createHarness();
+    const proposal: PatchProposal = {
+      id: "patch-1",
+      threadId: null,
+      sourceMessageId: "assistant-1",
+      originTurnId: "turn-1",
+      targetPath: "courses/lecture-15.md",
+      kind: "update",
+      baseSnapshot: "# Before",
+      proposedText: "# After",
+      unifiedDiff: "@@ -1 +1 @@",
+      summary: "Normalize LaTeX notation and tighten headings.",
+      status: "pending",
+      createdAt: 1,
+      qualityState: "review_required",
+      qualityIssues: [{ code: "display_math_single_dollar", line: 4 }],
+    };
+    harness.service.getTabPatchBasket = () => [proposal];
+    harness.renderAll();
+    await tick();
+
+    expect(harness.composerRoot.textContent).toContain("Review required: Markdown structure may reduce note readability.");
+    expect(harness.composerRoot.textContent).toContain("Line 4: replace standalone `$` display-math delimiters with `$$`.");
+  });
+
+  it("shows the auto-healed warning copy for normalized patches waiting for review", async () => {
+    const harness = createHarness();
+    const proposal: PatchProposal = {
+      id: "patch-2",
+      threadId: null,
+      sourceMessageId: "assistant-2",
+      originTurnId: "turn-2",
+      targetPath: "courses/lecture-15.md",
+      kind: "update",
+      baseSnapshot: "# Before",
+      proposedText: "# After",
+      unifiedDiff: "@@ -1 +1 @@",
+      summary: "Normalize quoted display math.",
+      status: "pending",
+      createdAt: 2,
+      qualityState: "auto_healed",
+      qualityIssues: [],
+      healedByPlugin: true,
+    };
+    harness.service.getTabPatchBasket = () => [proposal];
+    harness.renderAll();
+    await tick();
+
+    expect(harness.composerRoot.textContent).toContain("Plugin normalized Markdown structure. Review it before applying.");
+  });
+
   it("focuses the textarea when the input row is clicked", async () => {
     const harness = createHarness();
     const input = harness.composerRoot.querySelector<HTMLTextAreaElement>(".obsidian-codex__input")!;

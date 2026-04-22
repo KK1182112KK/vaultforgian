@@ -54,6 +54,41 @@ describe("ThreadEventReducer", () => {
     expect(waiting.at(-1)?.phase).toBe("finalizing");
   });
 
+  it("can queue assistant artifacts without inserting visible transcript messages", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer, queued, waiting } = createReducer(store);
+    const error = reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "response_item",
+        timestamp: "2026-04-09T14:00:00Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "```obsidian-patch\npath: notes/current.md\nkind: update\nsummary: Repair\n\n---content\nUpdated.\n---end\n```",
+        },
+      },
+      "artifact_only",
+    );
+
+    const messages = store.getState().tabs.find((tab) => tab.id === tabId)?.messages ?? [];
+    expect(error).toBeNull();
+    expect(messages).toHaveLength(0);
+    expect(queued).toEqual([
+      expect.objectContaining({
+        tabId,
+        text: "```obsidian-patch\npath: notes/current.md\nkind: update\nsummary: Repair\n\n---content\nUpdated.\n---end\n```",
+      }),
+    ]);
+    expect(waiting.at(-1)?.phase).toBe("finalizing");
+  });
+
   it("suppresses operational sandbox chatter from assistant messages", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

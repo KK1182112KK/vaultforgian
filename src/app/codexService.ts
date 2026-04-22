@@ -15,10 +15,12 @@ import type {
   ComposerAttachmentInput,
   ConversationTabState,
   ComposeMode,
+  EditOutcome,
   ModelCatalogEntry,
   PendingApproval,
   PatchProposal,
   RecentStudySource,
+  SkillFeedbackRecord,
   StudyRecipe,
   PersistedWorkspaceState,
   PluginSettings,
@@ -30,6 +32,7 @@ import type {
 } from "../model/types";
 import { DEFAULT_PRIMARY_MODEL as DEFAULT_MODEL } from "../model/types";
 import { getLocalizedCopy, type SupportedLocale } from "../util/i18n";
+import { resolveEditTarget } from "../util/editTarget";
 import { makeId } from "../util/id";
 import {
   buildCodexSpawnSpec,
@@ -93,7 +96,7 @@ import {
   shouldPreferWslForTurn,
   shouldRetryWithWslFallback,
 } from "../util/runtimeFallback";
-import { sanitizeOperationalAssistantText } from "../util/assistantChatter";
+import { normalizeVisibleUserPromptText, sanitizeOperationalAssistantText } from "../util/assistantChatter";
 import {
   buildCodexRunWatchdogMessage,
   getCodexRunWatchdogStage,
@@ -111,11 +114,22 @@ import {
   extractAssistantProposals,
   type ParsedAssistantProposalResult,
   type ParsedAssistantPatch,
-  stripAssistantProposalBlocks,
 } from "../util/assistantProposals";
 import { applyAnchorReplacements } from "../util/patchApply";
 import { PatchConflictError } from "../util/patchConflicts";
+import {
+  assessPatchReadability,
+  PatchReadabilityError,
+  shouldBlockAutomaticPatchApply,
+} from "../util/patchReadability";
+import { buildSkillImprovementDiff, buildSkillImprovementProposal } from "../util/skillImprovement";
+import {
+  buildDelimiterPatchExample,
+  buildPatchMathFormattingRules,
+  buildQuotedPatchMathFormattingRules,
+} from "../util/patchPromptContract";
 import { buildUnifiedDiff } from "../util/unifiedDiff";
+import { buildUserAdaptationMemoryText, updateUserAdaptationMemory } from "../util/userAdaptation";
 import { validateManagedNotePath } from "../util/vaultPathPolicy";
 import { AUTO_APPLY_CONSENT_VERSION } from "../util/permissionLifecycle";
 import {
@@ -133,7 +147,7 @@ import { resolveEffectiveExecutionState } from "../util/planExecution";
 import {
   findSessionFileForThread,
   listRecentSessionFiles as listRecentUsageSessionFiles,
-  readLastAssistantMessageFromSessionFile,
+  readLastVisibleAssistantMessageFromSessionFile,
   readSessionUsageSnapshot,
 } from "../util/usageSessions";
 import { allowsVaultWrite } from "../util/vaultEdit";
@@ -168,7 +182,7 @@ import {
   type StudyRecipeSavePreview,
   type StudyRecipeSkillDraft,
 } from "./studyPanelCoordinator";
-import { ThreadEventReducer } from "./threadEventReducer";
+import { ThreadEventReducer, type AssistantOutputVisibility } from "./threadEventReducer";
 import { ApprovalCoordinator, type ApprovalResult, type ToolDecision } from "./approvalCoordinator";
 import { UsageSyncCoordinator } from "./usageSyncCoordinator";
 
@@ -209,6 +223,8 @@ interface SendPromptContext {
   file: TFile | null;
   editor: Editor | null;
   images?: string[];
+  transcriptPrompt?: string | null;
+  transcriptMeta?: Record<string, string | number | boolean | null | undefined>;
 }
 
 interface CodexRunRequest {
@@ -248,9 +264,31 @@ interface ResolvedTurnSkillContext {
   resolvedSkillDefinitions: InstalledSkillDefinition[];
 }
 
-type TranscriptSyncResult = "appended_reply" | "no_reply_found" | "session_missing" | "session_read_error";
+type TranscriptSyncResult =
+  | "appended_reply"
+  | "duplicate_reply"
+  | "no_reply_found"
+  | "no_visible_reply_found"
+  | "session_missing"
+  | "session_read_error";
 
 type ProposalRepairReason = "malformed" | "empty" | "promise_without_block";
+type ProposalRepairFailureMode = "error" | "silent";
+type NoteReflectionRescueStrength = "strong_repair" | "cta_only";
+
+interface NoteReflectionRescueCandidate {
+  message: ChatMessage;
+  parsed: ParsedAssistantProposalResult;
+  strength: NoteReflectionRescueStrength;
+  targetPath: string;
+  rewriteSummary: string | null;
+  rewriteQuestion: string | null;
+}
+
+interface TurnArtifactSnapshot {
+  patchIds: Set<string>;
+  approvalIds: Set<string>;
+}
 
 const PATCH_PROMISE_PATTERNS: RegExp[] = [
   /パッチ/,
@@ -267,6 +305,47 @@ const PATCH_PROMISE_PATTERNS: RegExp[] = [
   /\breplace(?:ment)?\b/i,
   /\bfence(?:d)?\s+block\b/i,
   /\brewrit(?:e|ten)\b/i,
+];
+
+const STRONG_NOTE_REFLECTION_PATTERNS: RegExp[] = [
+  /changes proposed below\.?$/im,
+  /\bwant me to apply this to the note now\??$/im,
+  /(?:この|この説明を|この内容を).{0,80}(?:追記|反映|適用|書き加え|追加).{0,24}(?:しますか|しましょうか|していいですか|してよいですか)[？?]?/u,
+  /(?:note|ノート).{0,32}(?:was not changed yet|まだ変更していません)/iu,
+  /\b(?:applied|updated|reflected|revised|rewritten)\b.{0,40}\b(?:note|section|step)\b/iu,
+];
+
+const CTA_ONLY_NOTE_REFLECTION_PATTERNS: RegExp[] = [
+  /\bclarif(?:y|ies|ied)\b.{0,40}\bnote\b/iu,
+  /\btighten(?:ed|s)?\b.{0,40}\b(?:note|section|step|explanation)\b/iu,
+  /\breorgani[sz](?:e|ed|es)\b.{0,40}\b(?:note|section|explanation)\b/iu,
+  /\bclean(?:ed)?\s+up\b.{0,40}\b(?:note|section|explanation)\b/iu,
+  /(?:この説明|この内容|この整理).{0,40}(?:ノート|step|ステップ|節|セクション)/iu,
+];
+
+const REWRITE_APPLY_QUESTION_PATTERNS: RegExp[] = [
+  /\bwant me to apply this to the note now\??$/im,
+  /\bapply this to the note\??$/im,
+  /(?:この|この説明を|この内容を).{0,80}(?:追記|反映|適用|書き加え|追加).{0,24}(?:しますか|しましょうか|していいですか|してよいですか)[？?]?/u,
+];
+
+const NOTE_REFLECTION_OPT_OUT_PATTERNS: RegExp[] = [
+  /\bdon't edit\b/iu,
+  /\bdo not edit\b/iu,
+  /\bjust explain\b/iu,
+  /\bdon't apply\b/iu,
+  /\bdo not apply\b/iu,
+  /編集しない/iu,
+  /反映しない/iu,
+  /適用しない/iu,
+  /説明だけ/iu,
+  /追記しない/iu,
+];
+
+const NOTE_REFLECTION_SUMMARY_DROP_PATTERNS: RegExp[] = [
+  /changes proposed below\.?$/im,
+  ...REWRITE_APPLY_QUESTION_PATTERNS,
+  /(?:note|ノート).{0,32}(?:was not changed yet|まだ変更していません)/iu,
 ];
 
 function hasPatchPromiseKeywords(text: string): boolean {
@@ -481,6 +560,7 @@ export class CodexService {
   readonly store: AgentStore;
   private readonly activeRuns = new Map<string, ActiveRunState>();
   private readonly assistantArtifactSyncs = new Map<string, Promise<void>>();
+  private readonly assistantArtifactMessageIds = new Map<string, Set<string>>();
   private readonly pendingTurns = new Map<string, PendingTurnState>();
   private readonly sessionFileCache = new Map<string, string>();
   private readonly pendingPromptSends = new Set<string>();
@@ -496,6 +576,8 @@ export class CodexService {
   private customPromptCatalog: CodexPromptDefinition[] = [];
   private allInstalledSkillCatalog: InstalledSkillDefinition[] = [];
   private installedSkillCatalog: InstalledSkillDefinition[] = [];
+  private readonly processedApprovedEditKeys = new Set<string>();
+  private readonly queuedSkillUpdateApprovalKeys = new Set<string>();
 
   constructor(
     private readonly app: App,
@@ -505,7 +587,7 @@ export class CodexService {
     private readonly saveWorkspaceState: (state: PersistedWorkspaceState) => Promise<void>,
     private readonly updateSettings: (next: PluginSettings) => Promise<void>,
   ) {
-    this.store = new AgentStore(initialWorkspaceState, this.resolveVaultRoot(), this.hasAuthEvidence());
+    this.store = new AgentStore(initialWorkspaceState, this.resolveVaultRoot(), this.hasAuthEvidence(), this.resolveModeDefaults());
     this.studyPanels = new StudyPanelCoordinator({
       app: this.app,
       store: this.store,
@@ -532,7 +614,8 @@ export class CodexService {
       setWaitingPhase: (tabId, phase, mode) => this.setWaitingPhase(tabId, phase, mode),
       updateAccountUsageFromPatch: (limits, threadId, source, updatedAt) =>
         this.updateAccountUsageFromPatch(limits, threadId, source, updatedAt),
-      queueAssistantArtifactSync: (tabId, messageId, text) => this.queueAssistantArtifactSync(tabId, messageId, text),
+      queueAssistantArtifactSync: (tabId, messageId, text, visibility) =>
+        this.queueAssistantArtifactSync(tabId, messageId, text, visibility),
     });
     this.approvalCoordinator = new ApprovalCoordinator({
       app: this.app,
@@ -543,6 +626,11 @@ export class CodexService {
       hasCodexLogin: () => this.hasAuthEvidence(),
       getMissingLoginMessage: () => this.getMissingLoginMessage(),
       isTabRunning: (tabId) => this.activeRuns.has(tabId),
+      onApprovedEditApplied: async (event) => {
+        await this.handleApprovedEditApplied(event).catch((error) => {
+          console.error("Failed to process approved edit follow-up", error);
+        });
+      },
     });
     this.usageSync = new UsageSyncCoordinator({
       getTabs: () => this.store.getState().tabs,
@@ -1108,14 +1196,25 @@ export class CodexService {
       tab.activeStudyRecipeId
         ? this.getHubPanels().find((panel) => panel.id === tab.activeStudyRecipeId)?.title.trim() || null
         : null;
+    const latestRecap = tab.studyCoachState?.latestRecap ?? null;
+    const unresolvedWeakPoints = (tab.studyCoachState?.weakPointLedger ?? []).filter((entry) => !entry.resolved).slice(0, 3);
     const userPrompts = tab.messages
-      .filter((message) => message.kind === "user" && message.text.trim())
+      .map((message) =>
+        message.kind === "user"
+          ? this.getVisibleUserPromptText(
+              message.text,
+              typeof message.meta?.internalPromptKind === "string" ? message.meta.internalPromptKind : null,
+            )
+          : "",
+      )
+      .filter((text) => text.trim())
       .slice(-6)
-      .map((message) => `- ${message.text.trim()}`);
+      .map((text) => `- ${text}`);
     const assistantReplies = tab.messages
-      .filter((message) => message.kind === "assistant" && message.text.trim())
+      .map((message) => (message.kind === "assistant" ? this.getVisibleAssistantText(message.text) : ""))
+      .filter((text) => text.trim())
       .slice(-6)
-      .map((message) => `- ${message.text.trim()}`);
+      .map((text) => `- ${text}`);
     const lines = [
       `Conversation: ${tab.title}`,
       locale === "ja" ? `Compose mode: ${tab.composeMode}` : `Compose mode: ${tab.composeMode}`,
@@ -1128,12 +1227,61 @@ export class CodexService {
           : `Active skills: ${tab.activeStudySkillNames.map((name) => `/${name}`).join(", ")}`
         : null,
       tab.targetNotePath ? (locale === "ja" ? `Reference note: ${tab.targetNotePath}` : `Reference note: ${tab.targetNotePath}`) : null,
+      latestRecap ? (locale === "ja" ? "Current understanding state:" : "Current understanding state:") : null,
+      latestRecap?.mastered.length ? `- Mastered: ${latestRecap.mastered.join(" / ")}` : null,
+      latestRecap?.unclear.length ? `- Still unclear: ${latestRecap.unclear.join(" / ")}` : null,
+      latestRecap?.nextStep ? `- Next study step: ${latestRecap.nextStep}` : null,
+      latestRecap?.confidenceNote ? `- Confidence note: ${latestRecap.confidenceNote}` : null,
+      unresolvedWeakPoints.length > 0 ? (locale === "ja" ? "Open weak points:" : "Open weak points:") : null,
+      ...unresolvedWeakPoints.map((entry) => `- ${entry.conceptLabel}: ${entry.explanationSummary}`),
       userPrompts.length > 0 ? (locale === "ja" ? "Recent user requests:" : "Recent user requests:") : null,
       ...userPrompts,
       assistantReplies.length > 0 ? (locale === "ja" ? "Recent Codex replies:" : "Recent Codex replies:") : null,
       ...assistantReplies,
     ];
     return lines.filter((entry): entry is string => Boolean(entry));
+  }
+
+  private buildStudyCoachCarryForwardText(tab: ConversationTabState | null): string | null {
+    if (!tab?.learningMode) {
+      return null;
+    }
+    const locale = this.getLocale();
+    const studyCoachState = tab.studyCoachState;
+    const workflowKind = tab.studyWorkflow ?? studyCoachState?.latestRecap?.workflow ?? null;
+    const lines: string[] = ["Study coach carry-forward:"];
+
+    if (workflowKind) {
+      const definition = getStudyWorkflowDefinition(workflowKind, locale);
+      const coachContract = definition.coachContract ?? [];
+      if (coachContract.length > 0) {
+        lines.push("Workflow-specific coach guidance:");
+        lines.push(...coachContract.map((entry) => `- ${entry}`));
+      }
+    }
+
+    if (!studyCoachState) {
+      return lines.length > 1 ? lines.join("\n") : null;
+    }
+
+    if (studyCoachState.latestRecap?.mastered.length) {
+      lines.push(`- Latest recap: ${studyCoachState.latestRecap.mastered.join(" / ")}`);
+    }
+    if (studyCoachState.latestRecap?.confidenceNote) {
+      lines.push(`- Confidence note: ${studyCoachState.latestRecap.confidenceNote}`);
+    }
+    const activeWeakPoint = studyCoachState.weakPointLedger.find((entry) => !entry.resolved) ?? null;
+    if (activeWeakPoint) {
+      lines.push(`- Weak point: ${activeWeakPoint.explanationSummary}`);
+      lines.push(`- Next check: ${activeWeakPoint.nextQuestion}`);
+    } else if (studyCoachState.latestRecap?.nextStep) {
+      lines.push(`- Next check: ${studyCoachState.latestRecap.nextStep}`);
+    }
+    if (studyCoachState.latestRecap?.unclear.length) {
+      lines.push(`- Current unclear points: ${studyCoachState.latestRecap.unclear.join(" / ")}`);
+    }
+
+    return lines.length > 1 ? lines.join("\n") : null;
   }
 
   private buildCompactionSystemNote(reason: "auto" | "retry"): string {
@@ -1297,8 +1445,10 @@ export class CodexService {
           ? "session 由来の visible reply を確認できませんでした。"
           : result === "session_read_error"
             ? "session 由来の visible reply を読み出せませんでした。"
-            : result === "no_reply_found"
+            : result === "no_reply_found" || result === "no_visible_reply_found"
               ? "session に visible reply がありませんでした。"
+              : result === "duplicate_reply"
+                ? "session 側の reply は既に transcript に反映済みでした。"
               : "visible reply の復元に失敗しました。";
       return `Codex の turn は終了しましたが、visible な assistant reply が残りませんでした。${detail}`;
     }
@@ -1307,8 +1457,10 @@ export class CodexService {
         ? "The plugin could not confirm a recoverable reply from session data."
         : result === "session_read_error"
           ? "The plugin could not read a recoverable reply from session data."
-          : result === "no_reply_found"
+          : result === "no_reply_found" || result === "no_visible_reply_found"
             ? "No visible assistant reply was found in the session."
+            : result === "duplicate_reply"
+              ? "The recoverable reply was already present in the transcript."
             : "Visible assistant reply recovery failed.";
     return `Codex finished the turn without leaving a visible assistant reply. ${detail}`;
   }
@@ -1388,6 +1540,7 @@ export class CodexService {
     assistantCountBefore: number;
     assistantMessageIdsBefore: ReadonlySet<string>;
     turnContext: TurnContextSnapshot;
+    assistantOutputVisibility: AssistantOutputVisibility;
   }): Promise<{
     transcriptSyncResult: TranscriptSyncResult;
     assistantCountAfter: number;
@@ -1404,6 +1557,7 @@ export class CodexService {
         params.threadId,
         params.assistantCountBefore,
         params.turnContext,
+        params.assistantOutputVisibility,
       );
     }
     const newAssistantMessageIds = await this.ensureAssistantArtifactsReady(params.tabId, params.assistantMessageIdsBefore);
@@ -1421,6 +1575,205 @@ export class CodexService {
       return [];
     }
     return tab.messages.filter((message) => message.kind === "assistant" && assistantMessageIds.has(message.id));
+  }
+
+  private getResolvedNoteReflectionTargetPath(turnContext: TurnContextSnapshot): string | null {
+    return resolveEditTarget({
+      selectionSourcePath: turnContext.selectionSourcePath ?? null,
+      activeFilePath: turnContext.activeFilePath ?? null,
+      sessionTargetPath: turnContext.targetNotePath ?? null,
+    }).path;
+  }
+
+  private getCurrentTurnUserPromptMessage(tabId: string): ChatMessage | null {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return null;
+    }
+    const pending = this.pendingTurns.get(tabId);
+    if (pending) {
+      const direct = tab.messages.find((message) => message.id === pending.userMessageId && message.kind === "user") ?? null;
+      if (direct) {
+        return direct;
+      }
+    }
+    return [...tab.messages]
+      .reverse()
+      .find((message) => message.kind === "user" && message.meta?.selectionContext !== true) ?? null;
+  }
+
+  private shouldSkipInferredNoteReflection(tabId: string): boolean {
+    const promptText = this.getCurrentTurnUserPromptMessage(tabId)?.text.trim() ?? "";
+    if (!promptText) {
+      return false;
+    }
+    return NOTE_REFLECTION_OPT_OUT_PATTERNS.some((pattern) => pattern.test(promptText));
+  }
+
+  private getVisibleAssistantText(text: string): string {
+    return extractAssistantProposals(text).sanitizedDisplayText.trim();
+  }
+
+  private normalizeVisibleAssistantReplyForCompare(text: string): string {
+    return this.getVisibleAssistantText(text)
+      .replace(/\s+/gu, " ")
+      .trim();
+  }
+
+  private getAssistantRepliesSinceLastPrompt(tabId: string): ChatMessage[] {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return [];
+    }
+
+    const lastPromptIndex = [...tab.messages]
+      .map((message, index) => ({ message, index }))
+      .reverse()
+      .find(({ message }) => message.kind === "user" && message.meta?.selectionContext !== true)?.index;
+
+    const messages = typeof lastPromptIndex === "number" ? tab.messages.slice(lastPromptIndex + 1) : tab.messages;
+    return messages.filter((message) => message.kind === "assistant" && !message.pending && message.text.trim().length > 0);
+  }
+
+  private hasDuplicateVisibleAssistantReply(tabId: string, candidateText: string): boolean {
+    const normalizedCandidate = this.normalizeVisibleAssistantReplyForCompare(candidateText);
+    if (!normalizedCandidate) {
+      return false;
+    }
+
+    return this.getAssistantRepliesSinceLastPrompt(tabId).some(
+      (message) => this.normalizeVisibleAssistantReplyForCompare(message.text) === normalizedCandidate,
+    );
+  }
+
+  private getVisibleUserPromptText(text: string, internalPromptKind: string | null | undefined = null): string {
+    return normalizeVisibleUserPromptText(text, this.getLocalizedCopy().workspace.reflectInNote, internalPromptKind).trim();
+  }
+
+  private inferRewriteFollowupQuestion(text: string): string | null {
+    const paragraphs = this.getVisibleAssistantText(text)
+      .split(/\n{2,}/u)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    for (const paragraph of paragraphs.reverse()) {
+      if (REWRITE_APPLY_QUESTION_PATTERNS.some((pattern) => pattern.test(paragraph))) {
+        return paragraph;
+      }
+    }
+    return null;
+  }
+
+  private inferRewriteFollowupSummary(text: string): string | null {
+    const cleaned = this.getVisibleAssistantText(text)
+      .split(/\n{2,}/u)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .filter((entry) => !NOTE_REFLECTION_SUMMARY_DROP_PATTERNS.some((pattern) => pattern.test(entry)))
+      .join("\n\n")
+      .trim();
+    if (!cleaned) {
+      return null;
+    }
+    return cleaned.slice(0, 280);
+  }
+
+  private isStrongNoteReflectionSignal(text: string): boolean {
+    return STRONG_NOTE_REFLECTION_PATTERNS.some((pattern) => pattern.test(text));
+  }
+
+  private looksLikeNoteReadyRewrite(text: string, turnContext: TurnContextSnapshot): boolean {
+    if (this.isStrongNoteReflectionSignal(text)) {
+      return true;
+    }
+    if (CTA_ONLY_NOTE_REFLECTION_PATTERNS.some((pattern) => pattern.test(text))) {
+      return true;
+    }
+    return (
+      turnContext.sourceAcquisitionMode === "vault_note" &&
+      /(?:note|ノート|step|ステップ|section|セクション|説明|内容)/iu.test(text)
+    );
+  }
+
+  private classifyNoteReflectionRescueCandidate(
+    tabId: string,
+    assistantMessageIds: ReadonlySet<string>,
+    turnContext: TurnContextSnapshot,
+  ): NoteReflectionRescueCandidate | null {
+    const targetPath = this.getResolvedNoteReflectionTargetPath(turnContext);
+    if (!targetPath || this.shouldSkipInferredNoteReflection(tabId)) {
+      return null;
+    }
+    const messages = this.getNewAssistantMessages(tabId, assistantMessageIds);
+    for (const message of [...messages].reverse()) {
+      const parsed = extractAssistantProposals(message.text);
+      if (parsed.patches.length > 0 || parsed.ops.length > 0 || parsed.plan || parsed.suggestion) {
+        continue;
+      }
+      const visibleText = parsed.sanitizedDisplayText.trim();
+      if (!visibleText || !this.looksLikeNoteReadyRewrite(visibleText, turnContext)) {
+        continue;
+      }
+      return {
+        message,
+        parsed,
+        strength: this.isStrongNoteReflectionSignal(visibleText) ? "strong_repair" : "cta_only",
+        targetPath,
+        rewriteSummary: this.inferRewriteFollowupSummary(visibleText),
+        rewriteQuestion: this.inferRewriteFollowupQuestion(visibleText) ?? this.getLocalizedCopy().workspace.reflectInNoteQuestion,
+      };
+    }
+    return null;
+  }
+
+  private captureTurnArtifacts(tabId: string): TurnArtifactSnapshot {
+    const tab = this.findTab(tabId);
+    return {
+      patchIds: new Set(tab?.patchBasket.map((proposal) => proposal.id) ?? []),
+      approvalIds: new Set(tab?.pendingApprovals.map((approval) => approval.id) ?? []),
+    };
+  }
+
+  private collectNewTurnArtifacts(
+    tabId: string,
+    snapshot: TurnArtifactSnapshot,
+  ): { patchBasket: PatchProposal[]; approvals: PendingApproval[] } {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return { patchBasket: [], approvals: [] };
+    }
+    return {
+      patchBasket: tab.patchBasket.filter((proposal) => !snapshot.patchIds.has(proposal.id)),
+      approvals: tab.pendingApprovals.filter((approval) => !snapshot.approvalIds.has(approval.id)),
+    };
+  }
+
+  private setRewriteFollowupSuggestion(
+    tabId: string,
+    messageId: string,
+    rewriteSummary: string | null,
+    rewriteQuestion: string | null,
+  ): void {
+    const tab = this.findTab(tabId);
+    if (!tab || tab.composeMode === "plan") {
+      return;
+    }
+    this.store.setChatSuggestion(tabId, {
+      id: makeId("chat-suggestion"),
+      kind: "rewrite_followup",
+      status: "pending",
+      messageId,
+      panelId: null,
+      panelTitle: null,
+      promptSnapshot: "",
+      matchedSkillName: null,
+      canUpdatePanel: false,
+      canSaveCopy: false,
+      planSummary: null,
+      planStatus: null,
+      rewriteSummary,
+      rewriteQuestion,
+      createdAt: Date.now(),
+    });
   }
 
   private getProposalRepairCandidate(
@@ -1484,22 +1837,11 @@ export class CodexService {
       "Output exactly one fenced ```obsidian-patch``` block. No prose, no markdown headings, no other code fences.",
       `Target note path: ${targetPath}`,
       "Required delimiter format — copy the shape exactly:",
-      [
-        "```obsidian-patch",
-        `path: ${targetPath}`,
-        "kind: update",
-        "summary: <one short sentence describing the change>",
-        "",
-        "---anchorBefore",
-        "<verbatim substring from the current note that appears exactly once, immediately BEFORE the region to change>",
-        "---anchorAfter",
-        "<verbatim substring from the current note that appears exactly once, immediately AFTER the region to change>",
-        "---replacement",
-        "<the new text that will sit between anchorBefore and anchorAfter — real newlines and `$$math$$` OK, no escaping>",
-        "---end",
-        "```",
-      ].join("\n"),
+      buildDelimiterPatchExample(targetPath),
       "For multiple regions, repeat `---anchorBefore` ... `---end` for each region inside the same fenced block.",
+      "Formatting rules for the patch body:",
+      ...buildPatchMathFormattingRules().map((line) => `- ${line}`),
+      ...buildQuotedPatchMathFormattingRules().map((line) => `- ${line}`),
       visibleSummary ? `Visible summary from the prior reply:\n${visibleSummary}` : null,
       rawExcerpt ? `Previous invalid reply (for context only — do not copy its JSON):\n\`\`\`text\n${rawExcerpt}\n\`\`\`` : null,
     ]
@@ -1507,8 +1849,199 @@ export class CodexService {
       .join("\n\n");
   }
 
+  private buildPatchReadabilityRepairPrompt(
+    turnContext: TurnContextSnapshot,
+    message: ChatMessage,
+    proposal: PatchProposal,
+  ): string {
+    const targetPath = proposal.targetPath || turnContext.targetNotePath || turnContext.activeFilePath || "the current target note";
+    const visibleSummary = this.getVisibleAssistantText(message.text).trim();
+    const rawExcerpt = message.text.trim().slice(0, 6000);
+    const currentText = proposal.proposedText.trim().slice(0, 6000);
+    const qualityIssues = proposal.qualityIssues ?? [];
+    const issueSummary =
+      qualityIssues.length > 0
+        ? qualityIssues.map((issue) => issue.code).join(", ")
+        : "structural markdown readability issues";
+    return [
+      "The previous reply produced a parseable Obsidian patch, but the markdown structure is still unsafe to auto-apply.",
+      `Detected issues: ${issueSummary}.`,
+      "Re-emit exactly one fenced `obsidian-patch` block and nothing else.",
+      `Target note path: ${targetPath}`,
+      "Required delimiter format — copy the shape exactly:",
+      buildDelimiterPatchExample(targetPath),
+      "Use canonical markdown structure for math-heavy notes:",
+      ...buildPatchMathFormattingRules().map((line) => `- ${line}`),
+      ...buildQuotedPatchMathFormattingRules().map((line) => `- ${line}`),
+      visibleSummary ? `Visible summary from the prior reply:\n${visibleSummary}` : null,
+      currentText ? `Current low-quality patch body (repair its structure, do not repeat these mistakes):\n\`\`\`markdown\n${currentText}\n\`\`\`` : null,
+      rawExcerpt ? `Previous assistant reply for context:\n\`\`\`text\n${rawExcerpt}\n\`\`\`` : null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
   private buildInvalidPatchRepairFailedMessage(): string {
     return this.getLocalizedCopy().service.invalidPatchRepairFailed;
+  }
+
+  private async attemptHiddenNoteReflectionRepair(params: {
+    tabId: string;
+    candidate: NoteReflectionRescueCandidate;
+    mode: RuntimeMode;
+    composeMode: ComposeMode;
+    skillNames: string[];
+    turnContext: TurnContextSnapshot;
+    images: string[];
+    workingDirectory: string;
+    runtime: CodexRuntime;
+    executablePath: string;
+    launcherOverrideParts: string[] | undefined;
+    draftBackup: string;
+    watchdogRecoveryAttempted: boolean;
+    turnId: string | null;
+    userMessageId: string | null;
+  }): Promise<boolean> {
+    const beforeArtifacts = this.captureTurnArtifacts(params.tabId);
+    const beforeSuggestion = this.findTab(params.tabId)?.chatSuggestion ?? null;
+    await this.runTurn(
+      params.tabId,
+      this.buildRewriteFollowupPromptFromMessage(
+        params.tabId,
+        params.candidate.message.id,
+        params.candidate.rewriteSummary,
+      ),
+      params.mode,
+      params.composeMode,
+      params.skillNames,
+      params.turnContext,
+      params.images,
+      params.workingDirectory,
+      params.runtime,
+      params.executablePath,
+      params.launcherOverrideParts,
+      true,
+      params.draftBackup,
+      false,
+      params.watchdogRecoveryAttempted,
+      params.turnId,
+      params.userMessageId,
+      true,
+      "silent",
+    );
+    const createdArtifacts = this.collectNewTurnArtifacts(params.tabId, beforeArtifacts);
+    if (createdArtifacts.patchBasket.length === 0 && createdArtifacts.approvals.length === 0) {
+      const liveSuggestion = this.findTab(params.tabId)?.chatSuggestion ?? null;
+      if (liveSuggestion && liveSuggestion.messageId !== params.candidate.message.id) {
+        this.store.setChatSuggestion(params.tabId, beforeSuggestion);
+      }
+      return false;
+    }
+    this.recordAssistantEditOutcome(
+      params.tabId,
+      params.candidate.message.id,
+      this.resolveAssistantEditOutcome(
+        params.tabId,
+        params.candidate.message.text,
+        params.candidate.parsed,
+        createdArtifacts.patchBasket,
+        createdArtifacts.approvals,
+      ),
+    );
+    return true;
+  }
+
+  private getLowQualityPatchRepairCandidate(
+    tabId: string,
+    newAssistantMessageIds: ReadonlySet<string>,
+  ): { message: ChatMessage; proposals: PatchProposal[] } | null {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return null;
+    }
+    for (const messageId of newAssistantMessageIds) {
+      const proposals = tab.patchBasket.filter(
+        (proposal) => proposal.sourceMessageId === messageId && proposal.status === "pending" && proposal.qualityState === "review_required",
+      );
+      if (proposals.length === 0) {
+        continue;
+      }
+      const message = tab.messages.find((entry) => entry.id === messageId && entry.kind === "assistant") ?? null;
+      if (!message) {
+        continue;
+      }
+      return { message, proposals };
+    }
+    return null;
+  }
+
+  private async attemptHiddenLowQualityPatchRepair(params: {
+    tabId: string;
+    candidate: { message: ChatMessage; proposals: PatchProposal[] };
+    mode: RuntimeMode;
+    composeMode: ComposeMode;
+    skillNames: string[];
+    turnContext: TurnContextSnapshot;
+    images: string[];
+    workingDirectory: string;
+    runtime: CodexRuntime;
+    executablePath: string;
+    launcherOverrideParts: string[] | undefined;
+    draftBackup: string;
+    watchdogRecoveryAttempted: boolean;
+    turnId: string | null;
+    userMessageId: string | null;
+  }): Promise<boolean> {
+    if (params.candidate.proposals.length !== 1) {
+      return false;
+    }
+    const beforeArtifacts = this.captureTurnArtifacts(params.tabId);
+    await this.runTurn(
+      params.tabId,
+      this.buildPatchReadabilityRepairPrompt(params.turnContext, params.candidate.message, params.candidate.proposals[0]!),
+      params.mode,
+      params.composeMode,
+      params.skillNames,
+      params.turnContext,
+      params.images,
+      params.workingDirectory,
+      params.runtime,
+      params.executablePath,
+      params.launcherOverrideParts,
+      true,
+      params.draftBackup,
+      false,
+      params.watchdogRecoveryAttempted,
+      params.turnId,
+      params.userMessageId,
+      true,
+      "silent",
+    );
+    const createdArtifacts = this.collectNewTurnArtifacts(params.tabId, beforeArtifacts);
+    if (createdArtifacts.patchBasket.length === 0) {
+      return false;
+    }
+    this.store.replacePatchProposals(params.tabId, params.candidate.message.id, []);
+    this.recordAssistantEditOutcome(
+      params.tabId,
+      params.candidate.message.id,
+      this.resolveAssistantEditOutcome(
+        params.tabId,
+        params.candidate.message.text,
+        extractAssistantProposals(params.candidate.message.text),
+        createdArtifacts.patchBasket,
+        createdArtifacts.approvals,
+      ),
+    );
+    return true;
+  }
+
+  private rescueMissingNoteReflection(tabId: string, candidate: NoteReflectionRescueCandidate): void {
+    this.setRewriteFollowupSuggestion(tabId, candidate.message.id, candidate.rewriteSummary, candidate.rewriteQuestion);
+    this.recordAssistantEditOutcome(tabId, candidate.message.id, {
+      outcome: "explanation_only",
+      targetPath: null,
+    });
   }
 
   private async finalizeSuccessfulTurn(tabId: string): Promise<void> {
@@ -1553,23 +2086,24 @@ export class CodexService {
     threadId: string,
     assistantCountBefore: number,
     turnContext: TurnContextSnapshot,
+    assistantOutputVisibility: AssistantOutputVisibility,
   ): Promise<TranscriptSyncResult> {
-    let result = await this.syncTranscriptFromSession(tabId, threadId);
+    let result = await this.syncTranscriptFromSession(tabId, threadId, assistantOutputVisibility);
     if (this.countVisibleAssistantReplies(tabId) > assistantCountBefore || result === "appended_reply") {
       return result;
     }
-    if (result !== "session_missing" && result !== "no_reply_found") {
+    if (result !== "session_missing" && result !== "no_reply_found" && result !== "no_visible_reply_found") {
       return result;
     }
 
     const settlePolicy = this.getTranscriptSyncSettlePolicy(turnContext);
     for (let attempt = 0; attempt < settlePolicy.attempts; attempt += 1) {
       await this.waitForTranscriptSyncRetryDelay(settlePolicy.delayMs);
-      result = await this.syncTranscriptFromSession(tabId, threadId);
+      result = await this.syncTranscriptFromSession(tabId, threadId, assistantOutputVisibility);
       if (this.countVisibleAssistantReplies(tabId) > assistantCountBefore || result === "appended_reply") {
         return result;
       }
-      if (result !== "session_missing" && result !== "no_reply_found") {
+      if (result !== "session_missing" && result !== "no_reply_found" && result !== "no_visible_reply_found") {
         return result;
       }
     }
@@ -1677,7 +2211,9 @@ export class CodexService {
     if (!tab) {
       return;
     }
-    this.store.setTabFastMode(tabId, enabled);
+    this.store.setSessionModeDefaults({ fastMode: enabled });
+    this.store.setAllTabsFastMode(enabled);
+    this.persistModeDefaults({ defaultFastMode: enabled });
   }
 
   setTabLearningMode(tabId: string, enabled: boolean): boolean {
@@ -1685,7 +2221,9 @@ export class CodexService {
     if (!tab) {
       return false;
     }
-    this.store.setLearningMode(tabId, enabled);
+    this.store.setSessionModeDefaults({ learningMode: enabled });
+    this.store.setAllTabsLearningMode(enabled);
+    this.persistModeDefaults({ defaultLearningMode: enabled });
     return enabled;
   }
 
@@ -1695,8 +2233,7 @@ export class CodexService {
       return false;
     }
     const next = !tab.learningMode;
-    this.store.setLearningMode(tabId, next);
-    return next;
+    return this.setTabLearningMode(tabId, next);
   }
 
   setTabComposeMode(tabId: string, composeMode: ComposeMode): ComposeMode | null {
@@ -1747,8 +2284,10 @@ export class CodexService {
     }
     const attachments = this.getTabSessionItems(tabId);
     this.abortTabRun(tabId, false, "tab_close");
+    this.usageSync.untrackTab(tabId, tab.codexThreadId);
+    this.clearAssistantArtifactTracking(tabId);
     this.store.clearApprovals(tabId);
-    this.store.closeTab(tabId, this.resolveVaultRoot());
+    this.store.closeTab(tabId, this.resolveVaultRoot(), this.resolveModeDefaults());
     void this.cleanupSessionItems(attachments);
   }
 
@@ -1762,6 +2301,8 @@ export class CodexService {
     const activeFile = this.getPreferredTargetFile();
     const attachments = this.getTabSessionItems(tabId);
     const copy = this.getLocalizedCopy();
+    this.usageSync.untrackTab(tabId, tab.codexThreadId);
+    this.clearAssistantArtifactTracking(tabId);
     this.store.resetTab(tabId, {
       title: copy.service.newChatTitle,
       draft: "",
@@ -1786,6 +2327,8 @@ export class CodexService {
       codexThreadId: null,
       model: defaults.model,
       reasoningEffort: defaults.reasoningEffort,
+      learningMode: defaults.learningMode,
+      fastMode: defaults.fastMode,
       usageSummary: createEmptyUsageSummary(),
       messages: [],
       diffText: "",
@@ -2033,6 +2576,10 @@ export class CodexService {
       await this.sendPrompt(tabId, this.buildRewriteFollowupPrompt(tabId, suggestion), {
         file: context?.file ?? null,
         editor: context?.editor ?? null,
+        transcriptPrompt: this.getLocalizedCopy().workspace.reflectInNote,
+        transcriptMeta: {
+          internalPromptKind: "rewrite_followup",
+        },
       });
     } catch (error) {
       this.store.setChatSuggestion(tabId, suggestion);
@@ -2057,14 +2604,24 @@ export class CodexService {
     tabId: string,
     suggestion: NonNullable<ConversationTabState["chatSuggestion"]>,
   ): string {
-    const assistantMessage = this.findTab(tabId)?.messages.find((message) => message.id === suggestion.messageId) ?? null;
-    const visibleAnswer = assistantMessage ? stripAssistantProposalBlocks(assistantMessage.text).trim() : "";
-    const summary = visibleAnswer || suggestion.rewriteSummary?.trim() || "";
+    return this.buildRewriteFollowupPromptFromMessage(tabId, suggestion.messageId, suggestion.rewriteSummary ?? null);
+  }
+
+  private buildRewriteFollowupPromptFromMessage(
+    tabId: string,
+    messageId: string,
+    fallbackSummary: string | null,
+  ): string {
+    const assistantMessage = this.findTab(tabId)?.messages.find((message) => message.id === messageId) ?? null;
+    const visibleAnswer = assistantMessage ? this.getVisibleAssistantText(assistantMessage.text) : "";
+    const summary = visibleAnswer || fallbackSummary?.trim() || "";
     const lines = [
       "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
-      "Target the current session target note if one is set; otherwise target the active note for this turn.",
+      "Target resolution order for this rewrite: an explicitly mentioned note or path, then the selection source note, then prefer the active note for this turn, then the current session target note.",
       "If a selection snapshot is attached, limit the rewrite to that selected section or the nearest matching section instead of rewriting the whole note.",
       "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+      ...buildPatchMathFormattingRules(),
+      ...buildQuotedPatchMathFormattingRules(),
       "Add concise evidence lines to the patch header when possible using `evidence: kind|label|sourceRef|snippet`.",
       "Prefer vault-note and attachment evidence first. If that is insufficient, you may use web research and mark those evidence lines with `kind` = `web` and a source URL.",
       "Do not ask whether to apply the change. Emit the patch now and keep any visible chat summary to at most 2 short sentences.",
@@ -2239,6 +2796,7 @@ export class CodexService {
       if (!prompt) {
         throw new Error(this.getLocalizedCopy().service.promptEmptyAfterExpansion);
       }
+      const visiblePrompt = (context?.transcriptPrompt?.trim() || prompt).trim();
 
       this.studyPanels.capturePanelSessionOrigin(tabId, normalizedInput);
 
@@ -2274,6 +2832,7 @@ export class CodexService {
         expanded.command,
         attachments,
         mentionResolution.contextText,
+        mentionResolution.explicitTargetNotePath,
         skillNames,
         resolvedSkillDefinitions,
       );
@@ -2311,7 +2870,7 @@ export class CodexService {
       this.store.setRuntimeIssue(null);
       this.store.setRuntimeMode(tabId, runtimeMode);
       if (this.settingsProvider().autoGenerateTitle && !(getCurrentTab()?.messages.length ?? 0)) {
-        this.store.setTitle(tabId, sanitizeTitle(prompt, this.getLocalizedCopy().service.newChatTitle));
+        this.store.setTitle(tabId, sanitizeTitle(visiblePrompt, this.getLocalizedCopy().service.newChatTitle));
       }
 
       this.appendSelectionContextMessage(tabId, selectionContext);
@@ -2319,19 +2878,22 @@ export class CodexService {
       const createdAt = Date.now();
       const turnId = makeId("turn");
       let userMessageId: string | null = null;
-      if (!shouldSuppressImmediateDuplicateUserPrompt(getCurrentTab()?.messages ?? [], prompt, createdAt)) {
+      if (!shouldSuppressImmediateDuplicateUserPrompt(getCurrentTab()?.messages ?? [], visiblePrompt, createdAt)) {
         const effectiveSkillsCsv = skillNames.length > 0 ? skillNames.join(",") : null;
+        const activePanelId = currentTab?.activeStudyRecipeId ?? null;
         userMessageId = makeId("user");
         this.store.addMessage(tabId, {
           id: userMessageId,
           kind: "user",
-          text: prompt,
+          text: visiblePrompt,
           createdAt,
           meta: {
             turnId,
             turnStatus: "submitted",
             effectiveSkillsCsv,
             effectiveSkillCount: effectiveSkillsCsv ? skillNames.length : undefined,
+            activePanelId,
+            ...(context?.transcriptMeta ?? {}),
           },
         });
         this.armPendingTurn(tabId, turnId, userMessageId, createdAt);
@@ -2434,6 +2996,9 @@ export class CodexService {
         openPatchConflictModal(this.app, this, this.getLocalizedCopy().workspace, error);
         return;
       }
+      if (error instanceof PatchReadabilityError) {
+        return;
+      }
       throw error;
     }
   }
@@ -2457,6 +3022,7 @@ export class CodexService {
     turnId: string | null = null,
     userMessageId: string | null = null,
     proposalRepairPhase = false,
+    proposalRepairFailureMode: ProposalRepairFailureMode = "error",
   ): Promise<void> {
     if (turnId && userMessageId && !this.pendingTurns.has(tabId)) {
       this.armPendingTurn(tabId, turnId, userMessageId, Date.now());
@@ -2482,6 +3048,7 @@ export class CodexService {
     let transcriptSyncResult: TranscriptSyncResult = "no_reply_found";
     const assistantCountBefore = this.countVisibleAssistantReplies(tabId);
     const assistantMessageIdsBefore = this.collectAssistantMessageIds(tabId);
+    const assistantOutputVisibility: AssistantOutputVisibility = proposalRepairPhase ? "artifact_only" : "visible";
     const model = this.resolveSelectedModel(tabId);
     const reasoningEffort = this.resolveSelectedReasoningEffort(tabId, model);
     const fastMode = Boolean(this.findTab(tabId)?.fastMode);
@@ -2521,7 +3088,7 @@ export class CodexService {
         signal: controller.signal,
         watchdogRecoveryAttempted,
         onEvent: (event) => {
-          terminalError = this.threadEventReducer.handleThreadEvent(tabId, event) ?? terminalError;
+          terminalError = this.threadEventReducer.handleThreadEvent(tabId, event, assistantOutputVisibility) ?? terminalError;
         },
         onWatchdogStageChange: (stage) => {
           const run = this.activeRuns.get(tabId);
@@ -2554,9 +3121,13 @@ export class CodexService {
         assistantCountBefore,
         assistantMessageIdsBefore,
         turnContext,
+        assistantOutputVisibility,
       });
       transcriptSyncResult = outcome.transcriptSyncResult;
       if (terminalError) {
+        if (proposalRepairPhase && proposalRepairFailureMode === "silent") {
+          return;
+        }
         this.store.setRuntimeIssue(terminalError);
         this.store.setStatus(tabId, this.isLoginError(terminalError) ? "missing_login" : "error", terminalError);
         if (this.isLoginError(terminalError)) {
@@ -2577,12 +3148,6 @@ export class CodexService {
       if (allowVaultWrite && !proposalRepairPhase && !outcome.hasArtifactOutcome) {
         const repairCandidate = this.getProposalRepairCandidate(tabId, outcome.newAssistantMessageIds);
         if (repairCandidate) {
-          this.store.addMessage(tabId, {
-            id: makeId("proposal-repairing"),
-            kind: "system",
-            text: this.getLocalizedCopy().service.invalidPatchRepairing,
-            createdAt: Date.now(),
-          });
           await this.runTurn(
             tabId,
             this.buildProposalRepairPrompt(turnContext, repairCandidate.message, repairCandidate.parsed, repairCandidate.reason),
@@ -2607,8 +3172,66 @@ export class CodexService {
         }
       }
 
+      if (allowVaultWrite && !proposalRepairPhase && outcome.hasArtifactOutcome) {
+        const lowQualityCandidate = this.getLowQualityPatchRepairCandidate(tabId, outcome.newAssistantMessageIds);
+        if (lowQualityCandidate) {
+          const repaired = await this.attemptHiddenLowQualityPatchRepair({
+            tabId,
+            candidate: lowQualityCandidate,
+            mode,
+            composeMode,
+            skillNames,
+            turnContext,
+            images,
+            workingDirectory,
+            runtime,
+            executablePath,
+            launcherOverrideParts,
+            draftBackup,
+            watchdogRecoveryAttempted,
+            turnId,
+            userMessageId,
+          });
+          if (repaired) {
+            return;
+          }
+        }
+      }
+
+      if (!allowVaultWrite && !proposalRepairPhase && !outcome.hasArtifactOutcome) {
+        const reflectionRescue = this.classifyNoteReflectionRescueCandidate(tabId, outcome.newAssistantMessageIds, turnContext);
+        if (reflectionRescue) {
+          if (reflectionRescue.strength === "strong_repair") {
+            const repaired = await this.attemptHiddenNoteReflectionRepair({
+              tabId,
+              candidate: reflectionRescue,
+              mode,
+              composeMode,
+              skillNames,
+              turnContext,
+              images,
+              workingDirectory,
+              runtime,
+              executablePath,
+              launcherOverrideParts,
+              draftBackup,
+              watchdogRecoveryAttempted,
+              turnId,
+              userMessageId,
+            });
+            if (repaired) {
+              return;
+            }
+          }
+          this.rescueMissingNoteReflection(tabId, reflectionRescue);
+        }
+      }
+
       if (outcome.assistantCountAfter <= assistantCountBefore && !outcome.hasArtifactOutcome) {
         if (proposalRepairPhase) {
+          if (proposalRepairFailureMode === "silent") {
+            return;
+          }
           const repairFailedMessage = this.buildInvalidPatchRepairFailedMessage();
           this.store.setRuntimeIssue(repairFailedMessage);
           this.store.setStatus(tabId, "error", repairFailedMessage);
@@ -2649,6 +3272,7 @@ export class CodexService {
             turnId,
             userMessageId,
             proposalRepairPhase,
+            proposalRepairFailureMode,
           );
           return;
         }
@@ -2668,6 +3292,9 @@ export class CodexService {
       }
 
       if (proposalRepairPhase && !outcome.hasArtifactOutcome) {
+        if (proposalRepairFailureMode === "silent") {
+          return;
+        }
         const repairFailedMessage = this.buildInvalidPatchRepairFailedMessage();
         this.store.setRuntimeIssue(repairFailedMessage);
         this.store.setStatus(tabId, "error", repairFailedMessage);
@@ -2703,6 +3330,10 @@ export class CodexService {
       this.finalizePendingMessages(tabId);
       this.store.setWaitingState(tabId, null);
       if (isAbortError(error)) {
+        if (proposalRepairPhase && proposalRepairFailureMode === "silent") {
+          this.approvalCoordinator.reconcileApprovalStatus(tabId);
+          return;
+        }
         if (abortReason === "user_interrupt") {
           this.store.addMessage(tabId, {
             id: makeId("aborted"),
@@ -2727,6 +3358,7 @@ export class CodexService {
             assistantCountBefore,
             assistantMessageIdsBefore,
             turnContext,
+            assistantOutputVisibility,
           });
           if (recovered.assistantCountAfter > assistantCountBefore || recovered.hasArtifactOutcome) {
             this.store.setWaitingState(tabId, null);
@@ -2760,6 +3392,7 @@ export class CodexService {
             turnId,
             userMessageId,
             proposalRepairPhase,
+            proposalRepairFailureMode,
           );
           return;
         }
@@ -2767,6 +3400,9 @@ export class CodexService {
 
       const message = getErrorMessage(error);
       const normalizedMessage = this.normalizeCodexError(message);
+      if (proposalRepairPhase && proposalRepairFailureMode === "silent") {
+        return;
+      }
       const missingLogin = this.isLoginError(normalizedMessage);
       if (missingLogin) {
         this.store.setAuthState(false);
@@ -3197,10 +3833,20 @@ export class CodexService {
     });
   }
 
-  private appendAssistantFallbackMessage(tabId: string, text: string, messageId: string): boolean {
+  private appendAssistantFallbackMessageWithVisibility(
+    tabId: string,
+    text: string,
+    messageId: string,
+    visibility: AssistantOutputVisibility,
+  ): boolean {
     const normalizedText = sanitizeOperationalAssistantText(text) ?? "";
     if (!normalizedText) {
       return false;
+    }
+
+    if (visibility === "artifact_only") {
+      this.queueAssistantArtifactSync(tabId, messageId, normalizedText, visibility);
+      return true;
     }
 
     const tab = this.findTab(tabId);
@@ -3208,18 +3854,12 @@ export class CodexService {
       return false;
     }
 
-    const lastPromptIndex = [...tab.messages]
-      .map((message, index) => ({ message, index }))
-      .reverse()
-      .find(({ message }) => message.kind === "user" && message.meta?.selectionContext !== true)?.index;
+    if (this.hasDuplicateVisibleAssistantReply(tabId, normalizedText)) {
+      return false;
+    }
 
-    if (typeof lastPromptIndex === "number") {
-      const hasAssistantReply = tab.messages
-        .slice(lastPromptIndex + 1)
-        .some((message) => message.kind === "assistant" && !message.pending && message.text.trim().length > 0);
-      if (hasAssistantReply) {
-        return false;
-      }
+    if (this.getAssistantRepliesSinceLastPrompt(tabId).length > 0) {
+      return false;
     }
 
     this.store.upsertMessage(tabId, messageId, (current) => ({
@@ -3229,11 +3869,16 @@ export class CodexService {
       createdAt: current?.createdAt ?? Date.now(),
       pending: false,
     }));
-    this.queueAssistantArtifactSync(tabId, messageId, normalizedText);
+    this.queueAssistantArtifactSync(tabId, messageId, normalizedText, visibility);
     return true;
   }
 
-  private async syncAssistantArtifacts(tabId: string, messageId: string, text: string): Promise<void> {
+  private async syncAssistantArtifacts(
+    tabId: string,
+    messageId: string,
+    text: string,
+    visibility: AssistantOutputVisibility = "visible",
+  ): Promise<void> {
     const tab = this.findTab(tabId);
     if (!tab) {
       return;
@@ -3250,12 +3895,351 @@ export class CodexService {
 
     const approvals = await this.approvalCoordinator.buildVaultOpApprovals(tabId, messageId, parsed.ops, true, originTurnId);
     this.store.replaceProposalApprovals(tabId, messageId, approvals);
+    this.maybeStoreStudyCheckpoint(tabId, parsed);
     this.maybeStorePlanExecutionSuggestion(tabId, messageId, parsed.plan);
-    this.maybeStoreRewriteSuggestion(tabId, messageId, parsed, patchBasket, approvals);
+    this.maybeStoreRewriteSuggestion(tabId, messageId, parsed, patchBasket, approvals, visibility);
     await this.maybeAutoApplyArtifacts(tabId, patchBasket, approvals, originTurnId);
+    this.recordAssistantEditOutcome(
+      tabId,
+      messageId,
+      this.resolveAssistantEditOutcome(tabId, text, parsed, patchBasket, approvals),
+      visibility,
+    );
     if (!this.activeRuns.has(tabId)) {
       this.approvalCoordinator.reconcileApprovalStatus(tabId);
     }
+  }
+
+  private findUserMessageForApprovedEdit(
+    tabId: string,
+    originTurnId: string | null,
+    sourceMessageId: string | null,
+  ): ChatMessage | null {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return null;
+    }
+    if (originTurnId) {
+      const directMatch =
+        [...tab.messages]
+          .reverse()
+          .find(
+            (message) =>
+              message.kind === "user" &&
+              message.meta?.turnId === originTurnId &&
+              message.meta?.selectionContext !== true,
+          ) ?? null;
+      if (directMatch) {
+        return directMatch;
+      }
+    }
+    if (sourceMessageId) {
+      const assistantIndex = tab.messages.findIndex((message) => message.id === sourceMessageId);
+      if (assistantIndex > 0) {
+        for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+          const candidate = tab.messages[index];
+          if (candidate?.kind === "user" && candidate.meta?.selectionContext !== true) {
+            return candidate;
+          }
+        }
+      }
+    }
+    return [...tab.messages].reverse().find((message) => message.kind === "user" && message.meta?.selectionContext !== true) ?? null;
+  }
+
+  private findAssistantMessage(tabId: string, messageId: string | null): ChatMessage | null {
+    if (!messageId) {
+      return null;
+    }
+    return this.findTab(tabId)?.messages.find((message) => message.id === messageId && message.kind === "assistant") ?? null;
+  }
+
+  private resolveSelectedSkillNamesForApprovedEdit(tabId: string, userMessage: ChatMessage | null): string[] {
+    const rawCsv = typeof userMessage?.meta?.effectiveSkillsCsv === "string" ? userMessage.meta.effectiveSkillsCsv : "";
+    const csvNames = rawCsv
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (csvNames.length > 0) {
+      return [...new Set(csvNames)];
+    }
+    const tab = this.findTab(tabId);
+    return [...new Set([...(tab?.panelSessionOrigin?.selectedSkillNames ?? []), ...(tab?.activeStudySkillNames ?? [])].map((entry) => entry.trim()).filter(Boolean))];
+  }
+
+  private resolveActivePanelIdForApprovedEdit(tabId: string, userMessage: ChatMessage | null): string | null {
+    const userPanelId =
+      typeof userMessage?.meta?.activePanelId === "string" && userMessage.meta.activePanelId.trim().length > 0
+        ? userMessage.meta.activePanelId.trim()
+        : null;
+    if (userPanelId) {
+      return userPanelId;
+    }
+    const tab = this.findTab(tabId);
+    return tab?.panelSessionOrigin?.panelId ?? tab?.activeStudyRecipeId ?? null;
+  }
+
+  private resolveAppliedContentForApprovedEdit(
+    tabId: string,
+    sourceMessageId: string | null,
+    originTurnId: string | null,
+    targetPath: string,
+  ): string {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return "";
+    }
+    const patchProposal =
+      tab.patchBasket.find(
+        (proposal) =>
+          proposal.targetPath === targetPath &&
+          (sourceMessageId ? proposal.sourceMessageId === sourceMessageId : true) &&
+          (originTurnId ? proposal.originTurnId === originTurnId : true),
+      ) ?? null;
+    if (patchProposal?.proposedText?.trim()) {
+      return patchProposal.proposedText;
+    }
+    const assistantMessage = this.findAssistantMessage(tabId, sourceMessageId);
+    if (!assistantMessage) {
+      return "";
+    }
+    return (
+      extractAssistantProposals(assistantMessage.text).patches.find((patch) => patch.targetPath === targetPath)?.proposedText?.trim() ?? ""
+    );
+  }
+
+  private async queueSkillImprovementApprovals(
+    tabId: string,
+    sourceMessageId: string | null,
+    originTurnId: string | null,
+    selectedSkillNames: readonly string[],
+    feedback: SkillFeedbackRecord,
+  ): Promise<void> {
+    if (selectedSkillNames.length === 0) {
+      return;
+    }
+    const userOwnedSkills = new Map(this.getUserOwnedInstalledSkills().map((skill) => [skill.name, skill] as const));
+    for (const skillName of [...new Set(selectedSkillNames)]) {
+      const skill = userOwnedSkills.get(skillName);
+      if (!skill) {
+        continue;
+      }
+      const currentContent = await fs.readFile(skill.path, "utf8");
+      const proposal = buildSkillImprovementProposal({
+        skill,
+        currentContent,
+        feedback: {
+          ...feedback,
+          selectedSkillNames: [skillName],
+          attributionReason:
+            feedback.attributionReason ??
+            `This refinement is attributed to ${skillName} because it was explicitly selected during a successful applied note edit.`,
+        },
+      });
+      if (!proposal) {
+        continue;
+      }
+      const approvalKey = `${tabId}::${proposal.skillPath}::${proposal.baseContentHash}`;
+      const alreadyQueued =
+        this.findTab(tabId)?.pendingApprovals.some(
+          (approval) =>
+            approval.toolName === "skill_update" &&
+            approval.decisionTarget === proposal.skillPath &&
+            approval.originTurnId === originTurnId &&
+            approval.sourceMessageId === sourceMessageId,
+        ) ?? false;
+      if (alreadyQueued || this.queuedSkillUpdateApprovalKeys.has(approvalKey)) {
+        continue;
+      }
+      this.queuedSkillUpdateApprovalKeys.add(approvalKey);
+      this.store.addApproval(tabId, {
+        id: makeId("approval-skill"),
+        tabId,
+        callId: makeId("skill-update-call"),
+        toolName: "skill_update",
+        title: `Update skill: ${proposal.skillName}`,
+        description: proposal.skillPath,
+        details: proposal.feedbackSummary,
+        diffText: buildSkillImprovementDiff(proposal),
+        createdAt: Date.now(),
+        sourceMessageId: sourceMessageId ?? undefined,
+        originTurnId,
+        transport: "plugin_proposal",
+        decisionTarget: proposal.skillPath,
+        scopeEligible: false,
+        scope: "write",
+        toolPayload: proposal,
+      });
+    }
+  }
+
+  private async handleApprovedEditApplied(event: {
+    tabId: string;
+    targetPath: string;
+    sourceMessageId: string | null;
+    originTurnId: string | null;
+    summary: string;
+    kind: "patch" | "vault_op";
+  }): Promise<void> {
+    const tab = this.findTab(event.tabId);
+    if (!tab) {
+      return;
+    }
+    const processedKey = [
+      event.tabId,
+      event.kind,
+      event.targetPath,
+      event.sourceMessageId ?? "",
+      event.originTurnId ?? "",
+      event.summary,
+    ].join("::");
+    if (this.processedApprovedEditKeys.has(processedKey)) {
+      return;
+    }
+    this.processedApprovedEditKeys.add(processedKey);
+
+    const userMessage = this.findUserMessageForApprovedEdit(event.tabId, event.originTurnId, event.sourceMessageId);
+    const assistantMessage = this.findAssistantMessage(event.tabId, event.sourceMessageId);
+    const selectedSkillNames = this.resolveSelectedSkillNamesForApprovedEdit(event.tabId, userMessage);
+    const panelId = this.resolveActivePanelIdForApprovedEdit(event.tabId, userMessage);
+    const assistantSummary = assistantMessage ? this.getVisibleAssistantText(assistantMessage.text) : event.summary.trim();
+    const appliedContent = this.resolveAppliedContentForApprovedEdit(
+      event.tabId,
+      event.sourceMessageId,
+      event.originTurnId,
+      event.targetPath,
+    );
+    const feedback: SkillFeedbackRecord = {
+      prompt: userMessage?.text?.trim() || assistantSummary || event.summary,
+      summary: assistantSummary || event.summary,
+      targetNotePath: event.targetPath,
+      panelId,
+      selectedSkillNames: [...selectedSkillNames],
+      conversationSummary: tab.summary?.text ?? null,
+      appliedChangeSummary: event.summary,
+      attributionReason:
+        selectedSkillNames.length > 0
+          ? "This feedback comes from a successful applied note edit that used explicitly selected user-owned skills."
+          : "This feedback comes from a successful applied note edit.",
+    };
+    const nextMemory = updateUserAdaptationMemory(this.store.getState().userAdaptationMemory ?? null, {
+      prompt: feedback.prompt,
+      assistantSummary: feedback.summary,
+      appliedChangeSummary: event.summary,
+      appliedContent,
+      panelId,
+      targetNotePath: event.targetPath,
+      selectedSkillNames,
+      occurredAt: Date.now(),
+    });
+    this.store.setUserAdaptationMemory(nextMemory);
+    await this.queueSkillImprovementApprovals(event.tabId, event.sourceMessageId, event.originTurnId, selectedSkillNames, feedback);
+    if (!this.activeRuns.has(event.tabId)) {
+      this.approvalCoordinator.reconcileApprovalStatus(event.tabId);
+    }
+  }
+
+  private recordAssistantEditOutcome(
+    tabId: string,
+    messageId: string,
+    outcome: { outcome: EditOutcome; targetPath: string | null; reviewReason?: "approval_mode" | "readability_risk" | "auto_healed" | null } | null,
+    visibility: AssistantOutputVisibility = "visible",
+  ): void {
+    if (!outcome) {
+      return;
+    }
+    const current = this.findAssistantMessage(tabId, messageId);
+    if (!current && visibility === "artifact_only") {
+      return;
+    }
+    this.store.upsertMessage(tabId, messageId, (current) => ({
+      ...(current ?? {
+        id: messageId,
+        kind: "assistant",
+        text: "",
+        createdAt: Date.now(),
+      }),
+      meta: {
+        ...(current?.meta ?? {}),
+        editOutcome: outcome.outcome,
+        editTargetPath: outcome.targetPath,
+        editReviewReason: outcome.reviewReason ?? null,
+      },
+    }));
+  }
+
+  private resolvePatchReviewReason(
+    patchBasket: readonly PatchProposal[],
+    approvals: readonly PendingApproval[],
+  ): "approval_mode" | "readability_risk" | "auto_healed" | null {
+    if (patchBasket.some((proposal) => proposal.qualityState === "review_required")) {
+      return "readability_risk";
+    }
+    if (patchBasket.some((proposal) => proposal.healedByPlugin === true || proposal.qualityState === "auto_healed")) {
+      return "auto_healed";
+    }
+    return approvals.length > 0 || patchBasket.length > 0 ? "approval_mode" : null;
+  }
+
+  private resolveAssistantEditOutcome(
+    tabId: string,
+    text: string,
+    parsed: ParsedAssistantProposalResult,
+    patchBasket: readonly PatchProposal[],
+    approvals: readonly PendingApproval[],
+  ): { outcome: EditOutcome; targetPath: string | null; reviewReason?: "approval_mode" | "readability_risk" | "auto_healed" | null } | null {
+    const targetPath = patchBasket[0]?.targetPath ?? approvals[0]?.decisionTarget ?? null;
+    const hasProposalBlocks = /```obsidian-(?:patch|ops)\b/.test(text);
+    if (patchBasket.length === 0 && approvals.length === 0) {
+      if (parsed.suggestion?.kind === "rewrite_followup") {
+        return { outcome: "explanation_only", targetPath: null };
+      }
+      if (hasProposalBlocks) {
+        return {
+          outcome: "failed",
+          targetPath: this.extractFirstProposalTargetPath(text),
+        };
+      }
+      return null;
+    }
+
+    const tab = this.findTab(tabId);
+    const noteApplyPolicy = tab ? this.getNoteApplyPolicy(tab.composeMode) : "manual";
+    if (noteApplyPolicy === "manual") {
+      return { outcome: "proposal_only", targetPath };
+    }
+
+    if (noteApplyPolicy === "approval") {
+      return {
+        outcome: "review_required",
+        targetPath,
+        reviewReason: this.resolvePatchReviewReason(patchBasket, approvals),
+      };
+    }
+
+    const liveTab = this.findTab(tabId);
+    const pendingPatchReview = patchBasket.some((proposal) => {
+      const currentProposal = liveTab?.patchBasket.find((entry) => entry.id === proposal.id) ?? proposal;
+      return currentProposal.status !== "applied";
+    });
+    const pendingApprovalReview = approvals.some((approval) =>
+      Boolean(liveTab?.pendingApprovals.some((entry) => entry.id === approval.id)),
+    );
+    return {
+      outcome: pendingPatchReview || pendingApprovalReview ? "review_required" : "applied",
+      targetPath,
+      reviewReason:
+        pendingPatchReview || pendingApprovalReview ? this.resolvePatchReviewReason(patchBasket, approvals) : null,
+    };
+  }
+
+  private extractFirstProposalTargetPath(text: string): string | null {
+    const match =
+      text.match(/^path:\s*(.+)$/m) ??
+      text.match(/"path"\s*:\s*"([^"]+)"/) ??
+      text.match(/"targetPath"\s*:\s*"([^"]+)"/) ??
+      text.match(/"destinationPath"\s*:\s*"([^"]+)"/);
+    return match?.[1]?.trim() ?? null;
   }
 
   private async maybeAutoApplyArtifacts(
@@ -3274,7 +4258,9 @@ export class CodexService {
     }
 
     const arrivals = [
-      ...patchBasket.map((proposal) => ({ kind: "patch" as const, id: proposal.id, path: proposal.targetPath })),
+      ...patchBasket
+        .filter((proposal) => !shouldBlockAutomaticPatchApply(proposal))
+        .map((proposal) => ({ kind: "patch" as const, id: proposal.id, path: proposal.targetPath })),
       ...approvals.map((approval) => ({ kind: "approval" as const, id: approval.id, path: approval.decisionTarget ?? approval.title })),
     ];
     if (arrivals.length === 0) {
@@ -3313,6 +4299,15 @@ export class CodexService {
           });
           continue;
         }
+        if (error instanceof PatchReadabilityError) {
+          this.store.addMessage(tabId, {
+            id: makeId("patch-readability-review-needed"),
+            kind: "system",
+            text: error.message,
+            createdAt: Date.now(),
+          });
+          continue;
+        }
         throw error;
       }
     }
@@ -3344,52 +4339,142 @@ export class CodexService {
     });
   }
 
+  private maybeStoreStudyCheckpoint(tabId: string, parsed: ParsedAssistantProposalResult): void {
+    const tab = this.findTab(tabId);
+    if (!tab || !tab.learningMode || !parsed.studyCheckpoint) {
+      return;
+    }
+    this.store.setStudyCoachState(tabId, this.mergeStudyCheckpointIntoCoachState(tab, parsed.studyCheckpoint));
+  }
+
+  private mergeStudyCheckpointIntoCoachState(
+    tab: ConversationTabState,
+    checkpoint: NonNullable<ParsedAssistantProposalResult["studyCheckpoint"]>,
+  ): ConversationTabState["studyCoachState"] {
+    const now = Date.now();
+    const previous = tab.studyCoachState ?? {
+      latestRecap: null,
+      weakPointLedger: [],
+      lastCheckpointAt: null,
+    };
+    const ledger = previous.weakPointLedger.map((entry) => ({ ...entry }));
+    const findWeakPointIndex = (label: string): number =>
+      ledger.findIndex((entry) => entry.conceptLabel.trim().toLowerCase() === label.trim().toLowerCase());
+
+    for (const unclear of checkpoint.unclear) {
+      const conceptLabel = unclear.trim();
+      if (!conceptLabel) {
+        continue;
+      }
+      const nextEntry = {
+        conceptLabel,
+        workflow: checkpoint.workflow,
+        updatedAt: now,
+        explanationSummary: checkpoint.confidenceNote,
+        nextQuestion: checkpoint.nextStep,
+        resolved: false,
+      };
+      const existingIndex = findWeakPointIndex(conceptLabel);
+      if (existingIndex >= 0) {
+        ledger[existingIndex] = nextEntry;
+      } else {
+        ledger.push(nextEntry);
+      }
+    }
+
+    for (const mastered of checkpoint.mastered) {
+      const conceptLabel = mastered.trim();
+      if (!conceptLabel) {
+        continue;
+      }
+      const existingIndex = findWeakPointIndex(conceptLabel);
+      if (existingIndex >= 0) {
+        ledger[existingIndex] = {
+          ...ledger[existingIndex],
+          workflow: checkpoint.workflow,
+          updatedAt: now,
+          explanationSummary: checkpoint.confidenceNote,
+          nextQuestion: checkpoint.nextStep,
+          resolved: true,
+        };
+      }
+    }
+
+    ledger.sort((left, right) => Number(left.resolved) - Number(right.resolved) || right.updatedAt - left.updatedAt);
+
+    return {
+      latestRecap: {
+        workflow: checkpoint.workflow,
+        mastered: [...checkpoint.mastered],
+        unclear: [...checkpoint.unclear],
+        nextStep: checkpoint.nextStep,
+        confidenceNote: checkpoint.confidenceNote,
+      },
+      weakPointLedger: ledger,
+      lastCheckpointAt: now,
+    };
+  }
+
   private maybeStoreRewriteSuggestion(
     tabId: string,
     messageId: string,
     parsed: ParsedAssistantProposalResult,
     patchBasket: readonly PatchProposal[],
     approvals: readonly PendingApproval[],
+    visibility: AssistantOutputVisibility = "visible",
   ): void {
     const tab = this.findTab(tabId);
-    if (!tab || tab.composeMode === "plan") {
+    if (!tab || tab.composeMode === "plan" || visibility === "artifact_only") {
       return;
     }
     if (patchBasket.length > 0 || approvals.length > 0 || parsed.plan || !parsed.suggestion) {
       return;
     }
-    this.store.setChatSuggestion(tabId, {
-      id: makeId("chat-suggestion"),
-      kind: "rewrite_followup",
-      status: "pending",
-      messageId,
-      panelId: null,
-      panelTitle: null,
-      promptSnapshot: "",
-      matchedSkillName: null,
-      canUpdatePanel: false,
-      canSaveCopy: false,
-      planSummary: null,
-      planStatus: null,
-      rewriteSummary: parsed.suggestion.summary,
-      rewriteQuestion: parsed.suggestion.question,
-      createdAt: Date.now(),
-    });
+    this.setRewriteFollowupSuggestion(tabId, messageId, parsed.suggestion.summary, parsed.suggestion.question);
   }
 
-  private queueAssistantArtifactSync(tabId: string, messageId: string, text: string): void {
+  private trackAssistantArtifactMessage(tabId: string, messageId: string): void {
+    const tracked = this.assistantArtifactMessageIds.get(tabId) ?? new Set<string>();
+    tracked.add(messageId);
+    this.assistantArtifactMessageIds.set(tabId, tracked);
+  }
+
+  private clearAssistantArtifactTracking(tabId: string): void {
+    this.assistantArtifactMessageIds.delete(tabId);
+    for (const key of [...this.assistantArtifactSyncs.keys()]) {
+      if (key.startsWith(`${tabId}:`)) {
+        this.assistantArtifactSyncs.delete(key);
+      }
+    }
+  }
+
+  private queueAssistantArtifactSync(
+    tabId: string,
+    messageId: string,
+    text: string,
+    visibility: AssistantOutputVisibility = "visible",
+  ): void {
+    this.trackAssistantArtifactMessage(tabId, messageId);
     const key = `${tabId}:${messageId}`;
     if (this.assistantArtifactSyncs.has(key)) {
       return;
     }
-    const promise = this.syncAssistantArtifacts(tabId, messageId, text)
+    const promise = this.syncAssistantArtifacts(tabId, messageId, text, visibility)
       .catch((error) => {
-        this.store.addMessage(tabId, {
-          id: makeId("proposal-error"),
-          kind: "system",
-          text: this.getLocalizedCopy().service.proposalProcessingFailed(getErrorMessage(error)),
-          createdAt: Date.now(),
-        });
+        if (/```obsidian-(?:patch|ops)\b/.test(text)) {
+          this.recordAssistantEditOutcome(tabId, messageId, {
+            outcome: "failed",
+            targetPath: this.extractFirstProposalTargetPath(text),
+          }, visibility);
+        }
+        if (visibility === "visible") {
+          this.store.addMessage(tabId, {
+            id: makeId("proposal-error"),
+            kind: "system",
+            text: this.getLocalizedCopy().service.proposalProcessingFailed(getErrorMessage(error)),
+            createdAt: Date.now(),
+          });
+        }
       })
       .finally(() => {
         this.assistantArtifactSyncs.delete(key);
@@ -3459,6 +4544,7 @@ export class CodexService {
         return null;
       }
     }
+    const readability = assessPatchReadability(proposedText);
     return {
       anchors,
       id,
@@ -3468,11 +4554,14 @@ export class CodexService {
       targetPath: file?.path ?? targetPath,
       kind,
       baseSnapshot,
-      proposedText,
-      unifiedDiff: buildUnifiedDiff(file?.path ?? targetPath, baseSnapshot, proposedText),
+      proposedText: readability.text,
+      unifiedDiff: buildUnifiedDiff(file?.path ?? targetPath, baseSnapshot, readability.text),
       summary: patch.summary || `${kind === "create" ? "Create" : "Update"} ${basename(targetPath)}`,
       status: existing?.status ?? "pending",
       createdAt: existing?.createdAt ?? Date.now(),
+      qualityState: readability.qualityState,
+      qualityIssues: readability.qualityIssues.map((issue) => ({ ...issue })),
+      healedByPlugin: readability.healedByPlugin,
       evidence: patch.evidence ? patch.evidence.map((entry) => ({ ...entry })) : existing?.evidence,
     };
   }
@@ -4010,6 +5099,7 @@ export class CodexService {
     slashCommand: string | null,
     attachments: readonly ComposerAttachment[],
     mentionContextText: string | null,
+    explicitTargetNotePath: string | null,
     skillNames: readonly string[],
     resolvedSkillDefinitions: readonly InstalledSkillDefinition[],
   ): Promise<TurnContextSnapshot> {
@@ -4018,15 +5108,21 @@ export class CodexService {
     const tab = this.findTab(tabId);
     const selectionContext = slashCommand === "/selection" ? null : tab?.selectionContext ?? null;
     const selection = selectionContext?.text ?? null;
-    const targetNotePath = this.resolveTargetNotePath(tabId);
+    const targetNotePath = resolveEditTarget({
+      explicitTargetPath: explicitTargetNotePath,
+      selectionSourcePath: selectionContext?.sourcePath ?? null,
+      activeFilePath: file?.path ?? null,
+      sessionTargetPath: this.resolveTargetNotePath(tabId),
+    }).path;
     const studyWorkflow = tab?.studyWorkflow ?? null;
+    const activePanelId = tab?.activeStudyRecipeId ?? this.getActivePanelId(tabId);
     const workflowContext = this.buildWorkflowPromptContext(tabId, studyWorkflow, file?.path ?? null);
     const pluginFeatureText = buildPluginFeatureGuideText({
       prompt,
       locale: this.getLocale(),
       copy: this.getLocalizedCopy(),
       panels: this.getHubPanels(),
-      activePanelId: tab?.activeStudyRecipeId ?? this.getActivePanelId(tabId),
+      activePanelId,
       isCollapsed: this.getStudyHubState().isCollapsed,
       targetNotePath,
     });
@@ -4055,6 +5151,7 @@ export class CodexService {
         }
       : undefined);
     const attachmentContentText = attachmentContentPack.text;
+    const studyCoachText = this.buildStudyCoachCarryForwardText(tab);
     const conversationSummaryText =
       tab?.lineage.pendingThreadReset && tab.summary?.text.trim()
         ? ["Conversation carry-forward summary", tab.summary.text.trim()].join("\n\n")
@@ -4086,10 +5183,13 @@ export class CodexService {
       skillNames,
       attachmentKinds: attachments.map((attachment) => attachment.kind),
     });
+    const userAdaptationText = buildUserAdaptationMemoryText(this.store.getState().userAdaptationMemory ?? null, activePanelId);
     return {
       activeFilePath: file?.path ?? null,
       targetNotePath,
       studyWorkflow,
+      studyCoachText,
+      userAdaptationText,
       conversationSummaryText,
       sourceAcquisitionMode,
       sourceAcquisitionContractText,
@@ -4141,21 +5241,24 @@ export class CodexService {
     skillNames: string[];
     workingDirectoryHint: string | null;
     sourcePathHints: string[];
+    explicitTargetNotePath: string | null;
   }> {
     if (mentions.length === 0) {
-      return { contextText: null, skillNames: [], workingDirectoryHint: null, sourcePathHints: [] };
+      return { contextText: null, skillNames: [], workingDirectoryHint: null, sourcePathHints: [], explicitTargetNotePath: null };
     }
 
     const contextBlocks: string[] = [];
     const skillNames = new Set<string>();
     const sourcePathHints: string[] = [];
     const seenSourcePaths = new Set<string>();
+    let explicitTargetNotePath: string | null = null;
     const isLikelyDirectoryPath = (value: string): boolean => !/\.[a-z0-9]{1,8}$/i.test(value.trim());
 
     for (const mention of mentions) {
       if (mention.kind === "note") {
         const abstractFile = this.app.vault.getAbstractFileByPath(mention.value);
         if (abstractFile instanceof TFile) {
+          explicitTargetNotePath ??= abstractFile.path;
           const content = await this.app.vault.cachedRead(abstractFile);
           contextBlocks.push(`Mentioned note: ${abstractFile.path}\n\n\`\`\`md\n${content}\n\`\`\``);
         }
@@ -4211,6 +5314,7 @@ export class CodexService {
           ? sourcePathHints[0] ?? null
           : null,
       sourcePathHints,
+      explicitTargetNotePath,
     };
   }
 
@@ -4306,11 +5410,15 @@ export class CodexService {
   }
 
   private collectAssistantMessageIds(tabId: string): Set<string> {
-    return new Set(
+    const ids = new Set(
       (this.findTab(tabId)?.messages ?? [])
         .filter((message) => message.kind === "assistant")
         .map((message) => message.id),
     );
+    for (const messageId of this.assistantArtifactMessageIds.get(tabId) ?? []) {
+      ids.add(messageId);
+    }
+    return ids;
   }
 
   private async ensureAssistantArtifactsReady(tabId: string, previousAssistantMessageIds: ReadonlySet<string>): Promise<Set<string>> {
@@ -4318,21 +5426,25 @@ export class CodexService {
     if (!tab) {
       return new Set();
     }
-    const newAssistantMessages = tab.messages.filter(
-      (message) => message.kind === "assistant" && !previousAssistantMessageIds.has(message.id),
+    const newAssistantMessageIds = [...this.collectAssistantMessageIds(tabId)].filter(
+      (messageId) => !previousAssistantMessageIds.has(messageId),
     );
     await Promise.all(
-      newAssistantMessages.map((message) => {
-        const key = `${tabId}:${message.id}`;
+      newAssistantMessageIds.map((messageId) => {
+        const key = `${tabId}:${messageId}`;
         const pending = this.assistantArtifactSyncs.get(key);
         if (pending) {
           return pending;
+        }
+        const message = tab.messages.find((entry) => entry.kind === "assistant" && entry.id === messageId) ?? null;
+        if (!message) {
+          return Promise.resolve();
         }
         this.queueAssistantArtifactSync(tabId, message.id, message.text);
         return this.assistantArtifactSyncs.get(key) ?? Promise.resolve();
       }),
     );
-    return new Set(newAssistantMessages.map((message) => message.id));
+    return new Set(newAssistantMessageIds);
   }
 
   private hasSuccessfulArtifactOutcome(tabId: string, assistantMessageIds: ReadonlySet<string>): boolean {
@@ -4509,6 +5621,38 @@ export class CodexService {
     this.store.setWaitingState(tabId, this.createWaitingState(phase, mode));
   }
 
+  private resolveModeDefaults() {
+    const runtimeDefaults =
+      this.store?.getSessionModeDefaults?.() ?? {
+        fastMode: this.settingsProvider().defaultFastMode === true,
+        learningMode: this.settingsProvider().defaultLearningMode === true,
+      };
+    return {
+      fastMode: runtimeDefaults.fastMode === true,
+      learningMode: runtimeDefaults.learningMode === true,
+    };
+  }
+
+  private persistModeDefaults(
+    partial: Partial<Pick<PluginSettings, "defaultFastMode" | "defaultLearningMode">>,
+  ): void {
+    const current = this.settingsProvider();
+    const nextSettings: PluginSettings = {
+      ...current,
+      defaultFastMode: partial.defaultFastMode ?? current.defaultFastMode,
+      defaultLearningMode: partial.defaultLearningMode ?? current.defaultLearningMode,
+    };
+    if (
+      nextSettings.defaultFastMode === current.defaultFastMode &&
+      nextSettings.defaultLearningMode === current.defaultLearningMode
+    ) {
+      return;
+    }
+    void this.updateSettings(nextSettings).catch((error) => {
+      console.error("[obsidian-codex-study] failed to persist sticky mode defaults", error);
+    });
+  }
+
   private resolveTabDefaults(modelOverride?: string | null, effortOverride?: ReasoningEffort | null) {
     const settings = this.settingsProvider();
     const model = coerceModelForPicker(
@@ -4522,6 +5666,7 @@ export class CodexService {
         model,
         effortOverride ?? settings.defaultReasoningEffort,
       ),
+      ...this.resolveModeDefaults(),
     };
   }
 
@@ -4615,7 +5760,11 @@ export class CodexService {
     }
   }
 
-  private async syncTranscriptFromSession(tabId: string, threadId: string): Promise<TranscriptSyncResult> {
+  private async syncTranscriptFromSession(
+    tabId: string,
+    threadId: string,
+    visibility: AssistantOutputVisibility = "visible",
+  ): Promise<TranscriptSyncResult> {
     let sessionFile: string | null;
     try {
       sessionFile = await this.resolveSessionFile(threadId);
@@ -4635,19 +5784,27 @@ export class CodexService {
       return "session_missing";
     }
     try {
-      const lastAssistantMessage = await readLastAssistantMessageFromSessionFile(sessionFile);
+      const lastAssistantMessage = await readLastVisibleAssistantMessageFromSessionFile(sessionFile);
       if (!lastAssistantMessage) {
-        console.warn("[obsidian-codex-study] session file had no assistant reply", {
+        console.warn("[obsidian-codex-study] session file had no visible assistant reply", {
           threadId,
           sessionFile,
         });
-        return "no_reply_found";
+        return "no_visible_reply_found";
       }
-      return this.appendAssistantFallbackMessage(tabId, lastAssistantMessage, `codex-session-final-${threadId}`)
+      if (visibility === "visible" && this.hasDuplicateVisibleAssistantReply(tabId, lastAssistantMessage.visibleText)) {
+        return "duplicate_reply";
+      }
+      return this.appendAssistantFallbackMessageWithVisibility(
+        tabId,
+        lastAssistantMessage.rawText,
+        `codex-session-final-${threadId}`,
+        visibility,
+      )
         ? "appended_reply"
-        : "no_reply_found";
+        : "duplicate_reply";
     } catch (error) {
-      console.warn("[obsidian-codex-study] readLastAssistantMessageFromSessionFile threw", {
+      console.warn("[obsidian-codex-study] readLastVisibleAssistantMessageFromSessionFile threw", {
         threadId,
         sessionFile,
         error,

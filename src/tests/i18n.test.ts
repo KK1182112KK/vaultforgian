@@ -30,6 +30,6 @@ describe("i18n helpers", () => {
     expect(getLocalizedCopy("en").workspace.ingestHubTitle).toBe("Panel Studio");
     expect(getLocalizedCopy("ja").workspace.ingestHubSubtitle).toContain("編集ハブ");
     expect(getLocalizedCopy("ja").workspace.panelPromptPlaceholder).toContain("講義");
-    expect(getLocalizedCopy("en").service.patchApplied("notes/source.md")).toBe("Successfully patched notes/source.md.");
+    expect(getLocalizedCopy("en").service.patchApplied("notes/source.md")).toBe("Applied: notes/source.md.");
   });
 });

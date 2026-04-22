@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const repoRoot = process.cwd();
 const checkPackageScript = join(repoRoot, "scripts", "check-package.mjs");
 const deployScript = join(repoRoot, "scripts", "deploy.mjs");
+const loadBuiltPluginSmokeScript = join(repoRoot, "scripts", "load-built-plugin-smoke.mjs");
 const releaseBundleScript = join(repoRoot, "scripts", "create-release-bundle.mjs");
 
 const tempRoots: string[] = [];
@@ -142,6 +143,37 @@ async function writePackageFixture(root: string, includeAvatarModule = true): Pr
   }
 }
 
+function listZipEntries(buffer: Buffer): string[] {
+  const eocdSignature = 0x06054b50;
+  const centralDirectorySignature = 0x02014b50;
+  let eocdOffset = -1;
+  for (let index = buffer.length - 22; index >= 0; index -= 1) {
+    if (buffer.readUInt32LE(index) === eocdSignature) {
+      eocdOffset = index;
+      break;
+    }
+  }
+  if (eocdOffset < 0) {
+    throw new Error("Missing EOCD record.");
+  }
+  const centralDirectorySize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralDirectoryOffset = buffer.readUInt32LE(eocdOffset + 16);
+  const entries: string[] = [];
+  let cursor = centralDirectoryOffset;
+  const end = centralDirectoryOffset + centralDirectorySize;
+  while (cursor < end) {
+    if (buffer.readUInt32LE(cursor) !== centralDirectorySignature) {
+      throw new Error("Malformed central directory.");
+    }
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    entries.push(buffer.toString("utf8", cursor + 46, cursor + 46 + fileNameLength));
+    cursor += 46 + fileNameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
 describe("release scripts", () => {
   it("verifies the package and avatar assets without regenerating them during build", async () => {
     const root = await makeTempRoot("obsidian-codex-release-check-");
@@ -206,5 +238,32 @@ describe("release scripts", () => {
     expect(zipBuffer.subarray(0, 2).toString("utf8")).toBe("PK");
     expect(zipBuffer.byteLength).toBeGreaterThan(100);
     expect(zipBuffer.toString("utf8")).not.toContain("assets/note.txt");
+    expect(listZipEntries(zipBuffer)).toEqual(
+      expect.arrayContaining([
+        "obsidian-codex-study/main.js",
+        "obsidian-codex-study/manifest.json",
+        "obsidian-codex-study/styles.css",
+      ]),
+    );
+  });
+
+  it("loads the built bundle with an Obsidian stub during smoke verification", async () => {
+    const root = await makeTempRoot("obsidian-codex-release-smoke-");
+    await writePackageFixture(root);
+    await writeFile(
+      join(root, "main.js"),
+      [
+        "const { Plugin } = require('obsidian');",
+        "module.exports = class DemoPlugin extends Plugin {};",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = await runNodeScript(loadBuiltPluginSmokeScript, root);
+
+    expect(result.exitCode).toBeUndefined();
+    expect(result.logs).toContain("Bundle load smoke passed.");
+    expect(result.errors).toBe("");
   });
 });

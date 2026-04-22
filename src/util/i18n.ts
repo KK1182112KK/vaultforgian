@@ -1,4 +1,4 @@
-import type { UiLanguageSetting } from "../model/types";
+import type { PatchQualityIssueCode, UiLanguageSetting } from "../model/types";
 
 export type SupportedLocale = "en" | "ja";
 
@@ -133,6 +133,13 @@ export interface LocalizedCopy {
     executionEditing: string;
     executionAssisted: string;
     executionReadOnly: string;
+    editAppliedStatus: (name: string | null) => string;
+    editReviewRequiredStatus: (name: string | null) => string;
+    editReadabilityReviewStatus: (name: string | null) => string;
+    editAutoHealedReviewStatus: (name: string | null) => string;
+    editProposalStatus: (name: string | null) => string;
+    editExplanationOnlyStatus: string;
+    editFailedStatus: (name: string | null) => string;
     planYoloWarning: string;
     implementNow: string;
     implementNowNotReady: string;
@@ -181,6 +188,10 @@ export interface LocalizedCopy {
     reflectInNoteQuestion: string;
     evidence: string;
     webBackedPatch: string;
+    patchReadabilityReview: string;
+    patchReadabilityAutoHealed: string;
+    patchReadabilityAppliedAfterHeal: (name: string | null) => string;
+    patchQualityIssue: (code: PatchQualityIssueCode, line?: number | null, detail?: string | null) => string;
     openedAt: (text: string) => string;
     note: (name: string) => string;
     studyRecipes: string;
@@ -308,6 +319,58 @@ export interface LocalizedCopy {
   };
 }
 
+function formatPatchIssueLinePrefix(line?: number | null): string {
+  return typeof line === "number" && Number.isFinite(line) ? `Line ${line}: ` : "";
+}
+
+function formatEnglishPatchQualityIssue(code: PatchQualityIssueCode, line?: number | null, detail?: string | null): string {
+  const prefix = formatPatchIssueLinePrefix(line);
+  switch (code) {
+    case "display_math_single_dollar":
+      return `${prefix}replace standalone \`$\` display-math delimiters with \`$$\`.`;
+    case "math_delimiter_marker_collision":
+      return `${prefix}separate the display-math delimiter from the following block marker${detail ? ` (${detail}).` : "."}`;
+    case "unmatched_display_math":
+      return `${prefix}close the display-math block with a matching delimiter.`;
+    case "adjacent_block_spacing":
+      return `${prefix}${
+        detail === "missing_blank_line_before_math_block"
+          ? "add a blank line before the display-math block."
+          : "add a blank line after the display-math block."
+      }`;
+    case "mixed_display_math_context":
+      return `${prefix}open and close the display-math block in the same quote or callout context${detail ? ` (${detail}).` : "."}`;
+    case "display_math_same_line_delimiter":
+      return `${prefix}keep unmatched \`$$\` delimiters off prose lines; use standalone delimiter lines for multi-line display math.`;
+    default:
+      return `${prefix}review the Markdown structure before applying this patch.`;
+  }
+}
+
+function formatJapanesePatchQualityIssue(code: PatchQualityIssueCode, line?: number | null, detail?: string | null): string {
+  const prefix = typeof line === "number" && Number.isFinite(line) ? `${line} 行目: ` : "";
+  switch (code) {
+    case "display_math_single_dollar":
+      return `${prefix}display math の区切りは単独の \`$\` ではなく \`$$\` を使ってください。`;
+    case "math_delimiter_marker_collision":
+      return `${prefix}display math の区切りと直後の block marker を同じ行に連結しないでください${detail ? ` (${detail})。` : "。"}`;
+    case "unmatched_display_math":
+      return `${prefix}display math block の開始と終了の区切りを対応させてください。`;
+    case "adjacent_block_spacing":
+      return `${prefix}${
+        detail === "missing_blank_line_before_math_block"
+          ? "display math block の前に空行を入れてください。"
+          : "display math block の後に空行を入れてください。"
+      }`;
+    case "mixed_display_math_context":
+      return `${prefix}display math block は同じ quote / callout の文脈で開始と終了をそろえてください${detail ? ` (${detail})。` : "。"}`;
+    case "display_math_same_line_delimiter":
+      return `${prefix}不完全な \`$$\` を本文行に置かず、複数行の式は単独行の区切りで囲ってください。`;
+    default:
+      return `${prefix}適用前に Markdown 構造を確認してください。`;
+  }
+}
+
 const EN_COPY: LocalizedCopy = {
   pluginName: "Codex Noteforge",
   pluginDescription: "Study-first Codex workspace for Obsidian",
@@ -346,17 +409,17 @@ const EN_COPY: LocalizedCopy = {
     permissionOnboardingBody: [
       "This plugin lets Codex read your vault through a read-only sandbox.",
       "All note edits flow through Obsidian patch or vault-operation proposals instead of direct file writes.",
-      "By default, note changes stay in review until you approve them. If you switch to Edit automatically, note changes may be applied automatically.",
+      "By default, note changes stay in review until you approve them. Switch to Apply automatically only when you want note edits to go through without stopping first.",
     ],
     permissionOnboardingOpenSettings: "Open settings",
     permissionOnboardingConfirm: "I understand",
     autoApplyConsentTitle: "Keep automatic note edits?",
     autoApplyConsentBody: [
-      "Edit automatically now means this plugin may apply note changes without stopping for approval.",
+      "Apply automatically means this plugin may apply note changes without stopping for review first.",
       "Codex still reads your vault through a read-only sandbox, and all note writes still go through plugin patch or vault-operation proposals.",
     ],
-    autoApplyConsentKeep: "Keep Edit automatically",
-    autoApplyConsentSwitch: "Switch to Edit with approval",
+    autoApplyConsentKeep: "Keep Apply automatically",
+    autoApplyConsentSwitch: "Switch to Review before applying",
     askAboutThisNoteTitle: "Ask About This Note",
     askAboutThisNotePlaceholder: "Summarize this note and suggest the next steps.",
     askAboutThisNoteDescription: "Leave blank to use the default note-review prompt.",
@@ -440,14 +503,21 @@ const EN_COPY: LocalizedCopy = {
     fastModeStreamingTooltip: "Fast mode can be changed after the current turn finishes.",
     toggleYolo: "Toggle auto-apply",
     yolo: "Auto-apply",
-    autoApplyDisabledTooltip: "Auto-apply is disabled in Read only mode. Change Permission mode in Settings.",
+    autoApplyDisabledTooltip: "Auto-apply is disabled in Suggest only mode. Change Permission mode in Settings.",
     effectiveState: "Effective",
     executionPlanning: "Planning",
     executionArmed: "Ready to implement",
-    executionEditing: "Edit automatically",
-    executionAssisted: "Edit with approval",
-    executionReadOnly: "Read only",
-    planYoloWarning: "Plan mode stays read-only. Switch to Edit automatically to run Implement now.",
+    executionEditing: "Apply automatically",
+    executionAssisted: "Review before applying",
+    executionReadOnly: "Suggest only",
+    editAppliedStatus: (name) => `Applied: ${name ?? "note"}.`,
+    editReviewRequiredStatus: (name) => `Review needed: ${name ?? "note"}.`,
+    editReadabilityReviewStatus: (name) => `Readability review needed: ${name ?? "note"}.`,
+    editAutoHealedReviewStatus: (name) => `Auto-healed structure: review ${name ?? "note"} before applying.`,
+    editProposalStatus: (name) => `Proposed changes ready: ${name ?? "note"}.`,
+    editExplanationOnlyStatus: "No note changes yet.",
+    editFailedStatus: (name) => `Couldn't apply changes automatically: ${name ?? "note"}.`,
+    planYoloWarning: "Plan mode stays read-only. Switch to Apply automatically to run Implement now.",
     implementNow: "Implement now",
     implementNowNotReady: "Plan is not yet ready to implement.",
     implementNowConfirm: (summary) =>
@@ -492,10 +562,14 @@ const EN_COPY: LocalizedCopy = {
     updatePanel: "Update panel",
     saveAsNewPanel: "Save as new panel",
     skipSuggestion: "Skip",
-    reflectInNote: "Reflect in note",
-    reflectInNoteQuestion: "Want me to reflect this in the note?",
+    reflectInNote: "Apply to note",
+    reflectInNoteQuestion: "Want me to apply this to the note now?",
     evidence: "Evidence",
     webBackedPatch: "Web-backed",
+    patchReadabilityReview: "Review required: Markdown structure may reduce note readability.",
+    patchReadabilityAutoHealed: "Plugin normalized Markdown structure. Review it before applying.",
+    patchReadabilityAppliedAfterHeal: (name) => `Applied after the plugin normalized Markdown structure: ${name ?? "note"}.`,
+    patchQualityIssue: (code, line, detail) => formatEnglishPatchQualityIssue(code, line, detail),
     openedAt: (text) => `Opened ${text}`,
     note: (name) => `Note ${name}`,
     studyRecipes: "Captured recipes",
@@ -519,7 +593,7 @@ const EN_COPY: LocalizedCopy = {
     addModifier: "Modifier",
     removeInstruction: (label) => `Remove #${label}`,
     clearPanelContext: (label) => `Clear ${label} panel context`,
-    pendingApprovals: "Pending approvals",
+    pendingApprovals: "Changes waiting for review",
     approveAll: "Approve all",
     approveAllConfirm: (count, targets) =>
       [`Approve ${count} pending change${count === 1 ? "" : "s"}?`, targets.trim() ? `Targets: ${targets}` : null]
@@ -529,7 +603,7 @@ const EN_COPY: LocalizedCopy = {
     denyAll: "Deny all",
     selectedText: "Selected text",
     attachedFiles: (count) => (count ? `Attached files (${count})` : "Attached files"),
-    approvalRequired: "Approval required",
+    approvalRequired: "Review required",
     approve: "Approve",
     deny: "Deny",
     abort: "Abort",
@@ -578,7 +652,7 @@ const EN_COPY: LocalizedCopy = {
     backlinks: (count) => `Backlinks: ${count}`,
     topSources: (sources) => `Top sources: ${sources}`,
     unresolvedSources: (sources) => `Unresolved sources: ${sources}`,
-    changesProposedBelow: "Changes proposed below.",
+    changesProposedBelow: "A note change proposal appears below.",
     none: "None",
     never: "never",
   },
@@ -602,18 +676,18 @@ const EN_COPY: LocalizedCopy = {
     panelSkillUpdated: (title, skillName) => `Updated $${skillName} from the ${title} panel.`,
     panelLimitReached: (max) => `Panel Studio supports up to ${max} panels.`,
     planImplementationStarted: "Starting implementation from the agreed plan.",
-    planImplementationRequiresYolo: "Switch Permission mode to Edit automatically before starting implementation from Plan mode.",
+    planImplementationRequiresYolo: "Switch Permission mode to Apply automatically before starting implementation from Plan mode.",
     studyRecipeFallbackPrompt: "Recreate this study workflow as a reusable pattern.",
     studyRecipeWorkflowRequired: "Start a lecture, review, paper, or homework workflow before saving a study recipe.",
     selectTextBeforeAsking: "Select some text before asking Codex about it.",
     approvalAborted: (title) => `Aborted: ${title}`,
     approvalDenied: (title) => `Denied: ${title}`,
-    approvalApplied: (title) => `${title} applied.`,
-    batchApprovalFinished: (applied, denied, failed) => `Batch approval finished. Applied: ${applied}, denied: ${denied}, failed: ${failed}.`,
-    patchCreated: (path) => `Created ${path}`,
-    patchApplied: (path) => `Successfully patched ${path}.`,
-    patchRejected: (path) => `Rejected patch for ${path}`,
-    patchNeedsReview: (path) => `${path} needs manual review before it can be applied automatically.`,
+    approvalApplied: (title) => `Applied: ${title}.`,
+    batchApprovalFinished: (applied, denied, failed) => `Review finished. Applied: ${applied}, denied: ${denied}, failed: ${failed}.`,
+    patchCreated: (path) => `Applied: ${path}.`,
+    patchApplied: (path) => `Applied: ${path}.`,
+    patchRejected: (path) => `Skipped: ${path} was not applied.`,
+    patchNeedsReview: (path) => `Review needed: ${path}.`,
     patchTargetMissing: (path) => `${path} does not exist yet.`,
     unsafeNotePathBlocked: (path) => `Blocked unsafe note path: ${path}.`,
     unsafeVaultOpBlocked: (path) => `Blocked unsafe file operation target: ${path}.`,
@@ -669,17 +743,17 @@ const JA_COPY: LocalizedCopy = {
     permissionOnboardingBody: [
       "この plugin では、Codex は read-only sandbox 経由で vault を読みます。",
       "ノート変更は direct file write ではなく、Obsidian patch / vault operation proposal 経由でのみ行います。",
-      "既定ではノート変更は review / approval に止まります。Edit automatically に切り替えると、ノート変更が自動適用される場合があります。",
+      "既定ではノート変更は review / approval に止まります。Apply automatically に切り替えると、ノート変更が自動適用される場合があります。",
     ],
     permissionOnboardingOpenSettings: "設定を開く",
     permissionOnboardingConfirm: "理解しました",
     autoApplyConsentTitle: "自動ノート編集を維持しますか",
     autoApplyConsentBody: [
-      "Edit automatically は、ノート変更を承認なしで自動適用できる設定になりました。",
+      "Apply automatically は、ノート変更を承認なしで自動適用できる設定になりました。",
       "それでも Codex は read-only sandbox で vault を読み、ノート書き込み自体は plugin の patch / vault operation proposal 経由のみです。",
     ],
-    autoApplyConsentKeep: "Edit automatically を維持",
-    autoApplyConsentSwitch: "Edit with approval に変更",
+    autoApplyConsentKeep: "Apply automatically を維持",
+    autoApplyConsentSwitch: "Review before applying に変更",
     askAboutThisNoteTitle: "このノートについて聞く",
     askAboutThisNotePlaceholder: "このノートを要約して、次のアクションを提案してください。",
     askAboutThisNoteDescription: "空欄なら既定のノートレビュー用プロンプトを使います。",
@@ -763,14 +837,21 @@ const JA_COPY: LocalizedCopy = {
     fastModeStreamingTooltip: "Fast mode は現在の turn 完了後に切り替えできます。",
     toggleYolo: "Auto-apply を切り替え",
     yolo: "Auto-apply",
-    autoApplyDisabledTooltip: "Read only mode では Auto-apply は無効です。Settings の Permission mode から変更してください。",
+    autoApplyDisabledTooltip: "Suggest only mode では Auto-apply は無効です。Settings の Permission mode から変更してください。",
     effectiveState: "実効状態",
     executionPlanning: "Planning",
     executionArmed: "実装可能",
-    executionEditing: "Edit automatically",
-    executionAssisted: "Edit with approval",
-    executionReadOnly: "Read only",
-    planYoloWarning: "Plan mode は read-only のままです。Implement now を使うには Edit automatically に切り替えてください。",
+    executionEditing: "Apply automatically",
+    executionAssisted: "Review before applying",
+    executionReadOnly: "Suggest only",
+    editAppliedStatus: (name) => `反映済み: ${name ?? "ノート"}。`,
+    editReviewRequiredStatus: (name) => `確認待ち: ${name ?? "ノート"}。`,
+    editReadabilityReviewStatus: (name) => `可読性の確認待ち: ${name ?? "ノート"}。`,
+    editAutoHealedReviewStatus: (name) => `構造を自動補正しました。${name ?? "ノート"} を確認してから適用してください。`,
+    editProposalStatus: (name) => `変更案を用意しました: ${name ?? "ノート"}。`,
+    editExplanationOnlyStatus: "今回は説明のみで、ノートは変更していません。",
+    editFailedStatus: (name) => `自動では反映できませんでした: ${name ?? "ノート"}。`,
+    planYoloWarning: "Plan mode は read-only のままです。Implement now を使うには Apply automatically に切り替えてください。",
     implementNow: "Implement now",
     implementNowNotReady: "プランはまだ実行できる状態ではありません。",
     implementNowConfirm: (summary) =>
@@ -815,10 +896,14 @@ const JA_COPY: LocalizedCopy = {
     updatePanel: "Panel を更新",
     saveAsNewPanel: "新しい panel として保存",
     skipSuggestion: "今はしない",
-    reflectInNote: "ノートに反映",
-    reflectInNoteQuestion: "ノートに反映しますか？",
+    reflectInNote: "ノートに適用",
+    reflectInNoteQuestion: "この内容を今のノートに適用しますか？",
     evidence: "根拠",
     webBackedPatch: "Web根拠",
+    patchReadabilityReview: "確認必須: Markdown 構造に可読性リスクがあります。",
+    patchReadabilityAutoHealed: "plugin が Markdown 構造を自動補正しました。適用前に確認してください。",
+    patchReadabilityAppliedAfterHeal: (name) => `plugin が Markdown 構造を補正したうえで反映しました: ${name ?? "ノート"}。`,
+    patchQualityIssue: (code, line, detail) => formatJapanesePatchQualityIssue(code, line, detail),
     openedAt: (text) => `Opened ${text}`,
     note: (name) => `ノート ${name}`,
     studyRecipes: "Captured recipes",
@@ -842,7 +927,7 @@ const JA_COPY: LocalizedCopy = {
     addModifier: "Modifier",
     removeInstruction: (label) => `#${label} を外す`,
     clearPanelContext: (label) => `${label} panel の文脈を外す`,
-    pendingApprovals: "保留中の approval",
+    pendingApprovals: "確認待ちの変更",
     approveAll: "すべて承認",
     approveAllConfirm: (count, targets) =>
       [`${count} 件の保留中の変更を承認しますか？`, targets.trim() ? `対象: ${targets}` : null]
@@ -852,7 +937,7 @@ const JA_COPY: LocalizedCopy = {
     denyAll: "すべて拒否",
     selectedText: "選択テキスト",
     attachedFiles: (count) => (count ? `添付ファイル (${count})` : "添付ファイル"),
-    approvalRequired: "承認が必要",
+    approvalRequired: "確認が必要",
     approve: "承認",
     deny: "拒否",
     abort: "中止",
@@ -901,7 +986,7 @@ const JA_COPY: LocalizedCopy = {
     backlinks: (count) => `Backlinks: ${count}`,
     topSources: (sources) => `主な参照元: ${sources}`,
     unresolvedSources: (sources) => `未解決の参照元: ${sources}`,
-    changesProposedBelow: "下に変更案があります。",
+    changesProposedBelow: "下にノート変更案があります。",
     none: "なし",
     never: "never",
   },
@@ -925,18 +1010,18 @@ const JA_COPY: LocalizedCopy = {
     panelSkillUpdated: (title, skillName) => `${title} panel から $${skillName} を更新しました。`,
     panelLimitReached: (max) => `Panel Studio は最大 ${max} 個までです。`,
     planImplementationStarted: "合意した plan から実装を開始します。",
-    planImplementationRequiresYolo: "Plan mode から実装を始める前に Permission mode を Edit automatically に切り替えてください。",
+    planImplementationRequiresYolo: "Plan mode から実装を始める前に Permission mode を Apply automatically に切り替えてください。",
     studyRecipeFallbackPrompt: "この学習 workflow を再利用できる形にまとめてください。",
     studyRecipeWorkflowRequired: "Study recipe を保存する前に lecture / review / paper / homework workflow を始めてください。",
     selectTextBeforeAsking: "Codex に聞く前にテキストを選択してください。",
     approvalAborted: (title) => `中止: ${title}`,
     approvalDenied: (title) => `拒否: ${title}`,
-    approvalApplied: (title) => `${title} を適用しました。`,
-    batchApprovalFinished: (applied, denied, failed) => `一括 approval が完了しました。適用: ${applied}、拒否: ${denied}、失敗: ${failed}。`,
-    patchCreated: (path) => `${path} を作成しました`,
-    patchApplied: (path) => `${path} にパッチを正常に適用しました。`,
-    patchRejected: (path) => `${path} への patch を却下しました`,
-    patchNeedsReview: (path) => `${path} は自動適用できないため、手動で review してください。`,
+    approvalApplied: (title) => `反映済み: ${title}。`,
+    batchApprovalFinished: (applied, denied, failed) => `確認が完了しました。反映: ${applied}、拒否: ${denied}、失敗: ${failed}。`,
+    patchCreated: (path) => `反映済み: ${path}。`,
+    patchApplied: (path) => `反映済み: ${path}。`,
+    patchRejected: (path) => `今回は適用しませんでした: ${path}。`,
+    patchNeedsReview: (path) => `確認待ち: ${path}。`,
     patchTargetMissing: (path) => `${path} はまだ存在しません。`,
     unsafeNotePathBlocked: (path) => `安全でないノート path を拒否しました: ${path}`,
     unsafeVaultOpBlocked: (path) => `安全でないファイル操作の対象を拒否しました: ${path}`,

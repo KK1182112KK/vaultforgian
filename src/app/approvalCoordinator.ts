@@ -1,8 +1,10 @@
+import { promises as fs } from "node:fs";
 import { basename, dirname, extname } from "node:path";
 import type { App, TFile } from "obsidian";
 import { AgentStore } from "../model/store";
 import type {
   PendingApproval,
+  SkillImprovementProposal,
   ToolActivityKind,
   ToolActivityStatus,
   ToolCallRecord,
@@ -14,6 +16,11 @@ import { makeId } from "../util/id";
 import type { ParsedAssistantOp } from "../util/assistantProposals";
 import { applyAnchorReplacements, normalizeForComparison } from "../util/patchApply";
 import { hashPatchContent, PatchConflictError, type PatchConflictReason } from "../util/patchConflicts";
+import {
+  assessPatchReadability,
+  PatchReadabilityError,
+} from "../util/patchReadability";
+import { buildUnifiedDiff } from "../util/unifiedDiff";
 import { validateManagedFolderPath, validateManagedNotePath } from "../util/vaultPathPolicy";
 
 export type ToolDecision = "approve" | "approve_session" | "deny" | "abort";
@@ -35,6 +42,14 @@ export interface ApprovalCoordinatorDeps {
   hasCodexLogin: () => boolean;
   getMissingLoginMessage: () => string;
   isTabRunning: (tabId: string) => boolean;
+  onApprovedEditApplied?: (event: {
+    tabId: string;
+    targetPath: string;
+    sourceMessageId: string | null;
+    originTurnId: string | null;
+    summary: string;
+    kind: "patch" | "vault_op";
+  }) => Promise<void> | void;
 }
 
 function getErrorMessage(value: unknown): string {
@@ -135,6 +150,26 @@ function getPathStem(path: string): string {
   return extension ? fileName.slice(0, -extension.length) : fileName;
 }
 
+function isVaultOpProposal(payload: PendingApproval["toolPayload"]): payload is VaultOpProposal {
+  return Boolean(
+    payload &&
+      typeof payload === "object" &&
+      "kind" in payload &&
+      typeof (payload as { kind?: unknown }).kind === "string" &&
+      "targetPath" in payload,
+  );
+}
+
+function isSkillImprovementProposal(payload: PendingApproval["toolPayload"]): payload is SkillImprovementProposal {
+  return Boolean(
+    payload &&
+      typeof payload === "object" &&
+      "skillPath" in payload &&
+      "nextContent" in payload &&
+      typeof (payload as { skillPath?: unknown }).skillPath === "string",
+  );
+}
+
 export class ApprovalCoordinator {
   constructor(private readonly deps: ApprovalCoordinatorDeps) {}
 
@@ -169,6 +204,35 @@ export class ApprovalCoordinator {
       text: this.getUnsafeVaultOpMessage(path),
       createdAt: Date.now(),
     });
+  }
+
+  private ensureReadablePatchBeforeWrite(
+    tabId: string,
+    patchId: string,
+    proposal: ConversationTabState["patchBasket"][number],
+    nextText: string,
+  ): string {
+    const normalizedText = normalizeProposalText(nextText);
+    const readability = assessPatchReadability(normalizedText);
+    this.deps.store.updatePatchProposal(tabId, patchId, (current) => ({
+      ...current,
+      proposedText: readability.text,
+      unifiedDiff: buildUnifiedDiff(current.targetPath, current.baseSnapshot, readability.text),
+      qualityState: readability.qualityState,
+      qualityIssues: readability.qualityIssues.map((issue) => ({ ...issue })),
+      healedByPlugin: readability.healedByPlugin,
+    }));
+    if (readability.qualityState === "review_required") {
+      const message = this.deps.getLocalizedCopy().service.patchNeedsReview(proposal.targetPath);
+      this.deps.store.addMessage(tabId, {
+        id: makeId("patch-readability-review-needed"),
+        kind: "system",
+        text: message,
+        createdAt: Date.now(),
+      });
+      throw new PatchReadabilityError(message, proposal.targetPath);
+    }
+    return readability.text;
   }
 
   async buildVaultOpApprovals(
@@ -252,10 +316,16 @@ export class ApprovalCoordinator {
       return "denied";
     }
 
-    if (approval.transport === "plugin_proposal" && approval.toolName === "vault_op" && approval.toolPayload) {
+    if (approval.transport === "plugin_proposal" && approval.toolPayload) {
       this.deps.store.setStatus(tab.id, "waiting_approval");
       try {
-        await this.executeVaultOpApproval(tab.id, approval);
+        if (approval.toolName === "vault_op" && isVaultOpProposal(approval.toolPayload)) {
+          await this.executeVaultOpApproval(tab.id, approval);
+        } else if (approval.toolName === "skill_update" && isSkillImprovementProposal(approval.toolPayload)) {
+          await this.executeSkillUpdateApproval(tab.id, approval);
+        } else {
+          throw new Error("Unsupported approval payload.");
+        }
         this.deps.store.removeApproval(approvalId);
         this.deps.store.addMessage(tab.id, {
           id: makeId("approval-ok"),
@@ -271,7 +341,7 @@ export class ApprovalCoordinator {
           buildActivityRecord(
             current,
             `approval-${approval.id}`,
-            approval.toolName === "vault_op" ? "file" : "tool",
+            approval.toolName === "vault_op" || approval.toolName === "skill_update" ? "file" : "tool",
             approval.toolName,
             approval.title,
             approval.description,
@@ -302,7 +372,9 @@ export class ApprovalCoordinator {
     if (!tab) {
       return;
     }
-    const approvals = tab.pendingApprovals.filter((approval) => approval.toolName === "vault_op");
+    const approvals = tab.pendingApprovals.filter(
+      (approval) => approval.toolName === "vault_op" || approval.toolName === "skill_update",
+    );
     if (approvals.length === 0) {
       return;
     }
@@ -342,15 +414,17 @@ export class ApprovalCoordinator {
     const abstractFile = asFileLike(this.deps.app.vault.getAbstractFileByPath(targetPath));
     const file = abstractFile;
     const currentContent = file ? await this.deps.app.vault.cachedRead(file) : null;
+    let textToWrite = proposal.proposedText;
 
     if (proposal.kind === "create") {
       if (file && currentContent !== proposal.proposedText) {
         this.markPatchConflict(tabId, patchId);
         throw this.buildPatchConflictError(tabId, proposal, "target_exists", currentContent, currentContent);
       }
+      textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, proposal.proposedText);
       if (!file) {
         await this.ensureParentFolder(targetPath);
-        await this.deps.app.vault.create(targetPath, proposal.proposedText);
+        await this.deps.app.vault.create(targetPath, textToWrite);
       }
     } else {
       if (!file) {
@@ -359,7 +433,6 @@ export class ApprovalCoordinator {
       }
       const normalizedCurrent = normalizeForComparison(currentContent);
       const normalizedBase = normalizeForComparison(proposal.baseSnapshot);
-      let textToWrite = proposal.proposedText;
       if (normalizedCurrent !== normalizedBase) {
         if (proposal.anchors && proposal.anchors.length > 0 && currentContent !== null) {
           const rebased = applyAnchorReplacements(currentContent, proposal.anchors);
@@ -387,10 +460,12 @@ export class ApprovalCoordinator {
           throw this.buildPatchConflictError(tabId, proposal, "content_changed", currentContent, currentContent);
         }
       }
+      textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, textToWrite);
       await this.deps.app.vault.modify(file, textToWrite);
     }
 
-    this.finalizeAppliedPatch(tabId, patchId, proposal);
+    const finalizedProposal = this.deps.findTab(tabId)?.patchBasket.find((entry) => entry.id === patchId) ?? proposal;
+    await this.finalizeAppliedPatch(tabId, patchId, finalizedProposal);
   }
 
   async overwritePatchProposal(
@@ -411,23 +486,25 @@ export class ApprovalCoordinator {
     if (!force && expectedCurrentContentHash !== null && expectedCurrentContentHash !== hashPatchContent(currentContent)) {
       return "changed";
     }
+    const textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, proposal.proposedText);
 
     if (proposal.kind === "create") {
       if (!file) {
         await this.ensureParentFolder(targetPath);
-        await this.deps.app.vault.create(targetPath, proposal.proposedText);
+        await this.deps.app.vault.create(targetPath, textToWrite);
       } else {
-        await this.deps.app.vault.modify(file, proposal.proposedText);
+        await this.deps.app.vault.modify(file, textToWrite);
       }
     } else {
       if (!file) {
         this.deps.store.updatePatchProposal(tabId, patchId, (current) => ({ ...current, status: "stale" }));
         throw new Error(`${targetPath} no longer exists.`);
       }
-      await this.deps.app.vault.modify(file, proposal.proposedText);
+      await this.deps.app.vault.modify(file, textToWrite);
     }
 
-    this.finalizeAppliedPatch(tabId, patchId, proposal);
+    const finalizedProposal = this.deps.findTab(tabId)?.patchBasket.find((entry) => entry.id === patchId) ?? proposal;
+    await this.finalizeAppliedPatch(tabId, patchId, finalizedProposal);
     return "applied";
   }
 
@@ -458,7 +535,11 @@ export class ApprovalCoordinator {
     await this.deps.app.workspace.getLeaf(false).openFile(abstractFile);
   }
 
-  private finalizeAppliedPatch(tabId: string, patchId: string, proposal: ConversationTabState["patchBasket"][number]): void {
+  private async finalizeAppliedPatch(
+    tabId: string,
+    patchId: string,
+    proposal: ConversationTabState["patchBasket"][number],
+  ): Promise<void> {
     this.deps.store.updatePatchProposal(tabId, patchId, (current) => ({ ...current, status: "applied" }));
     this.deps.store.upsertToolLog(tabId, `patch-${patchId}`, (current) =>
       buildActivityRecord(
@@ -486,6 +567,22 @@ export class ApprovalCoordinator {
         patchOperation: proposal.kind,
       },
       createdAt: Date.now(),
+    });
+    if (proposal.healedByPlugin) {
+      this.deps.store.addMessage(tabId, {
+        id: makeId("patch-auto-heal-audit"),
+        kind: "system",
+        text: this.deps.getLocalizedCopy().workspace.patchReadabilityAppliedAfterHeal(getPathStem(proposal.targetPath)),
+        createdAt: Date.now(),
+      });
+    }
+    await this.deps.onApprovedEditApplied?.({
+      tabId,
+      targetPath: proposal.targetPath,
+      sourceMessageId: proposal.sourceMessageId,
+      originTurnId: proposal.originTurnId,
+      summary: proposal.summary,
+      kind: "patch",
     });
   }
 
@@ -595,10 +692,11 @@ export class ApprovalCoordinator {
       }
 
       const approvals = tab.pendingApprovals.map((approval) => {
-        if (!approval.toolPayload || approval.toolPayload.kind === "rename" || approval.toolPayload.kind === "move") {
+        const payload = approval.toolPayload;
+        if (!isVaultOpProposal(payload) || payload.kind === "rename" || payload.kind === "move") {
           return approval;
         }
-        if (approval.toolPayload.targetPath !== oldPath) {
+        if (payload.targetPath !== oldPath) {
           return approval;
         }
         return {
@@ -607,12 +705,20 @@ export class ApprovalCoordinator {
           description: approval.description.replace(oldPath, nextPath),
           details: approval.details.replace(oldPath, nextPath),
           toolPayload: {
-            ...approval.toolPayload,
+            ...payload,
             targetPath: nextPath,
           },
         };
       });
-      if (approvals.some((approval, index) => approval.toolPayload?.targetPath !== tab.pendingApprovals[index]?.toolPayload?.targetPath)) {
+      if (
+        approvals.some((approval, index) => {
+          const nextPayload = isVaultOpProposal(approval.toolPayload) ? approval.toolPayload.targetPath : null;
+          const currentPayload = isVaultOpProposal(tab.pendingApprovals[index]?.toolPayload)
+            ? tab.pendingApprovals[index]?.toolPayload.targetPath
+            : null;
+          return nextPayload !== currentPayload;
+        })
+      ) {
         this.deps.store.setApprovals(tab.id, approvals);
       }
     }
@@ -730,7 +836,7 @@ export class ApprovalCoordinator {
 
   private async executeVaultOpApproval(tabId: string, approval: PendingApproval): Promise<void> {
     const op = approval.toolPayload;
-    if (!op) {
+    if (!isVaultOpProposal(op)) {
       throw new Error("Approval payload is missing.");
     }
 
@@ -755,6 +861,39 @@ export class ApprovalCoordinator {
         safeJson(op),
         "completed",
         op.preflightSummary ?? approval.details,
+      ),
+    );
+    await this.deps.onApprovedEditApplied?.({
+      tabId,
+      targetPath: approval.decisionTarget ?? op.targetPath,
+      sourceMessageId: approval.sourceMessageId ?? null,
+      originTurnId: approval.originTurnId ?? null,
+      summary: op.preflightSummary ?? approval.details,
+      kind: "vault_op",
+    });
+  }
+
+  private async executeSkillUpdateApproval(tabId: string, approval: PendingApproval): Promise<void> {
+    const proposal = approval.toolPayload;
+    if (!isSkillImprovementProposal(proposal)) {
+      throw new Error("Skill-update payload is missing.");
+    }
+    const currentContent = await fs.readFile(proposal.skillPath, "utf8");
+    if (hashPatchContent(currentContent) !== proposal.baseContentHash) {
+      throw new Error(`Skill file changed since review started: ${proposal.skillPath}`);
+    }
+    await fs.writeFile(proposal.skillPath, proposal.nextContent, "utf8");
+    this.deps.store.upsertToolLog(tabId, `approval-${approval.id}`, (current) =>
+      buildActivityRecord(
+        current,
+        `approval-${approval.id}`,
+        "file",
+        approval.toolName,
+        approval.title,
+        approval.description,
+        safeJson(proposal),
+        "completed",
+        proposal.skillPath,
       ),
     );
   }

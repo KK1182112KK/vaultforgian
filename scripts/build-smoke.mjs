@@ -19,3 +19,4 @@ function run(command, args) {
 
 await run("npm", ["run", "build:bundle"]);
 await run("node", ["scripts/check-package.mjs"]);
+await run("node", ["scripts/load-built-plugin-smoke.mjs"]);

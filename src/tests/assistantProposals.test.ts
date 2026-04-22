@@ -140,6 +140,37 @@ describe("assistant proposal parsing", () => {
     });
   });
 
+  it("extracts and hides obsidian-study-checkpoint blocks", () => {
+    const parsed = extractAssistantProposals(
+      [
+        "Fourier transforms let you study a signal by frequency content.",
+        "",
+        "Quick check: what changes when you move from time domain to frequency domain?",
+        "",
+        "```obsidian-study-checkpoint",
+        JSON.stringify({
+          workflow: "lecture",
+          mastered: ["Fourier transforms decompose signals into frequencies."],
+          unclear: ["How phase differs from magnitude in the transform output."],
+          next_step: "Contrast one signal in time domain and frequency domain.",
+          confidence_note: "The learner can explain the headline idea but not the interpretation details yet.",
+        }),
+        "```",
+      ].join("\n"),
+    );
+
+    expect(parsed.displayText).toBe(
+      "Fourier transforms let you study a signal by frequency content.\n\nQuick check: what changes when you move from time domain to frequency domain?",
+    );
+    expect(parsed.studyCheckpoint).toEqual({
+      workflow: "lecture",
+      mastered: ["Fourier transforms decompose signals into frequencies."],
+      unclear: ["How phase differs from magnitude in the transform output."],
+      nextStep: "Contrast one signal in time domain and frequency domain.",
+      confidenceNote: "The learner can explain the headline idea but not the interpretation details yet.",
+    });
+  });
+
   it("hides malformed trailing proposal fragments from display text", () => {
     const text = [
       "I cleaned up the formulas and review section.",

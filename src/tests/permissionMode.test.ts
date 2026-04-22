@@ -43,8 +43,8 @@ describe("permission mode helpers", () => {
 
   it("localizes permission mode descriptions", () => {
     expect(getPermissionModeCatalog("ja")[0]?.description).toContain("自動適用はしません");
-    expect(getPermissionModeCatalog("en")[0]?.label).toBe("Read only");
-    expect(getPermissionModeCatalog("en")[1]?.label).toBe("Edit with approval");
-    expect(getPermissionModeCatalog("en")[2]?.label).toBe("Edit automatically");
+    expect(getPermissionModeCatalog("en")[0]?.label).toBe("Suggest only");
+    expect(getPermissionModeCatalog("en")[1]?.label).toBe("Review before applying");
+    expect(getPermissionModeCatalog("en")[2]?.label).toBe("Apply automatically");
   });
 });

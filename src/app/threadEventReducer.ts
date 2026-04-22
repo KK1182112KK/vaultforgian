@@ -12,6 +12,7 @@ import type { AgentStore } from "../model/store";
 import type { AccountUsageSummary, ConversationTabState, RuntimeMode, ToolActivityStatus, WaitingPhase } from "../model/types";
 
 type JsonRecord = Record<string, unknown>;
+export type AssistantOutputVisibility = "visible" | "artifact_only";
 
 function asRecord(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null ? (value as JsonRecord) : null;
@@ -203,7 +204,12 @@ export interface ThreadEventReducerDeps {
     source: AccountUsageSummary["source"],
     updatedAt: number,
   ) => void;
-  queueAssistantArtifactSync: (tabId: string, messageId: string, text: string) => void;
+  queueAssistantArtifactSync: (
+    tabId: string,
+    messageId: string,
+    text: string,
+    visibility?: AssistantOutputVisibility,
+  ) => void;
 }
 
 export class ThreadEventReducer {
@@ -229,7 +235,11 @@ export class ThreadEventReducer {
       : `Codex CLI exited with ${exitDetail}.\nResolved command: ${renderCodexSpawnSpec(spec)}`;
   }
 
-  handleThreadEvent(tabId: string, event: JsonRecord): string | null {
+  handleThreadEvent(
+    tabId: string,
+    event: JsonRecord,
+    assistantOutputVisibility: AssistantOutputVisibility = "visible",
+  ): string | null {
     const usagePatch = extractUsageSummaryPatch(event);
     if (usagePatch) {
       const currentUsage = this.deps.findTab(tabId)?.usageSummary ?? createEmptyUsageSummary();
@@ -271,7 +281,12 @@ export class ThreadEventReducer {
       if (payloadType === "task_complete") {
         const text = sanitizeOperationalAssistantText(extractTaskCompleteMessageText(payload) ?? "");
         if (text) {
-          this.appendAssistantFallbackMessage(tabId, text, buildEventBackedMessageId(event, "final_answer", "codex-message"));
+          this.appendAssistantFallbackMessage(
+            tabId,
+            text,
+            buildEventBackedMessageId(event, "final_answer", "codex-message"),
+            assistantOutputVisibility,
+          );
         }
         return null;
       }
@@ -283,15 +298,7 @@ export class ThreadEventReducer {
         }
         const phase = asString(payload.phase) ?? "final_answer";
         const messageId = buildEventBackedMessageId(event, phase, "codex-message");
-        this.deps.setWaitingPhase(tabId, "finalizing", mode);
-        this.deps.store.upsertMessage(tabId, messageId, (current) => ({
-          id: current?.id ?? messageId,
-          kind: "assistant",
-          text,
-          createdAt: current?.createdAt ?? Date.now(),
-          pending: false,
-        }));
-        this.deps.queueAssistantArtifactSync(tabId, messageId, text);
+        this.recordAssistantOutput(tabId, messageId, text, false, mode, assistantOutputVisibility);
         return null;
       }
     }
@@ -308,15 +315,7 @@ export class ThreadEventReducer {
         }
         const phase = asString(payload.phase) ?? "final_answer";
         const messageId = buildEventBackedMessageId(event, phase, "codex-message");
-        this.deps.setWaitingPhase(tabId, "finalizing", mode);
-        this.deps.store.upsertMessage(tabId, messageId, (current) => ({
-          id: current?.id ?? messageId,
-          kind: "assistant",
-          text,
-          createdAt: current?.createdAt ?? Date.now(),
-          pending: false,
-        }));
-        this.deps.queueAssistantArtifactSync(tabId, messageId, text);
+        this.recordAssistantOutput(tabId, messageId, text, false, mode, assistantOutputVisibility);
         return null;
       }
 
@@ -356,11 +355,16 @@ export class ThreadEventReducer {
       return unwrapApiErrorMessage(asString(item.message) ?? getErrorMessage(asRecord(item.error)));
     }
 
-    this.handleThreadItem(tabId, item, eventType !== "item.completed");
+    this.handleThreadItem(tabId, item, eventType !== "item.completed", assistantOutputVisibility);
     return null;
   }
 
-  private handleThreadItem(tabId: string, item: JsonRecord, pending: boolean): void {
+  private handleThreadItem(
+    tabId: string,
+    item: JsonRecord,
+    pending: boolean,
+    assistantOutputVisibility: AssistantOutputVisibility,
+  ): void {
     const itemType = asString(item.type);
     const itemId = asString(item.id) ?? makeId("codex-item");
     const mode = this.deps.findTab(tabId)?.runtimeMode ?? "normal";
@@ -370,17 +374,7 @@ export class ThreadEventReducer {
       if (!text) {
         return;
       }
-      this.deps.setWaitingPhase(tabId, "finalizing", mode);
-      this.deps.store.upsertMessage(tabId, `codex-assistant-${itemId}`, (current) => ({
-        id: `codex-assistant-${itemId}`,
-        kind: "assistant",
-        text,
-        createdAt: current?.createdAt ?? Date.now(),
-        pending,
-      }));
-      if (!pending) {
-        this.deps.queueAssistantArtifactSync(tabId, `codex-assistant-${itemId}`, text);
-      }
+      this.recordAssistantOutput(tabId, `codex-assistant-${itemId}`, text, pending, mode, assistantOutputVisibility);
       return;
     }
 
@@ -552,9 +546,46 @@ export class ThreadEventReducer {
     }));
   }
 
-  private appendAssistantFallbackMessage(tabId: string, text: string, messageId: string): void {
+  private recordAssistantOutput(
+    tabId: string,
+    messageId: string,
+    text: string,
+    pending: boolean,
+    mode: RuntimeMode,
+    visibility: AssistantOutputVisibility,
+  ): void {
+    this.deps.setWaitingPhase(tabId, "finalizing", mode);
+    if (visibility === "artifact_only") {
+      if (!pending) {
+        this.deps.queueAssistantArtifactSync(tabId, messageId, text, visibility);
+      }
+      return;
+    }
+    this.deps.store.upsertMessage(tabId, messageId, (current) => ({
+      id: current?.id ?? messageId,
+      kind: "assistant",
+      text,
+      createdAt: current?.createdAt ?? Date.now(),
+      pending,
+    }));
+    if (!pending) {
+      this.deps.queueAssistantArtifactSync(tabId, messageId, text, visibility);
+    }
+  }
+
+  private appendAssistantFallbackMessage(
+    tabId: string,
+    text: string,
+    messageId: string,
+    visibility: AssistantOutputVisibility,
+  ): void {
     const normalizedText = sanitizeOperationalAssistantText(text) ?? "";
     if (!normalizedText) {
+      return;
+    }
+
+    if (visibility === "artifact_only") {
+      this.deps.queueAssistantArtifactSync(tabId, messageId, normalizedText, visibility);
       return;
     }
 
@@ -584,6 +615,6 @@ export class ThreadEventReducer {
       createdAt: current?.createdAt ?? Date.now(),
       pending: false,
     }));
-    this.deps.queueAssistantArtifactSync(tabId, messageId, normalizedText);
+    this.deps.queueAssistantArtifactSync(tabId, messageId, normalizedText, visibility);
   }
 }

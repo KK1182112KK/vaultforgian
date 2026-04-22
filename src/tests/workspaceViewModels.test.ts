@@ -101,9 +101,9 @@ const workspaceCopy = {
   },
   executionPlanning: "Planning",
   executionArmed: "Ready to implement",
-  executionEditing: "Edit automatically",
-  executionAssisted: "Edit with approval",
-  executionReadOnly: "Read only",
+  executionEditing: "Apply automatically",
+  executionAssisted: "Review before applying",
+  executionReadOnly: "Suggest only",
 } as const;
 
 describe("workspace view models", () => {
@@ -190,6 +190,71 @@ describe("workspace view models", () => {
     expect(result.showApprovalBatchBar).toBe(true);
   });
 
+  it("counts skill-update approvals toward the transcript batch review bar", () => {
+    const state = createState();
+    state.tabs[0]!.pendingApprovals = [
+      {
+        id: "approval-skill-1",
+        tabId: "tab-1",
+        callId: "call-skill-1",
+        toolName: "skill_update",
+        title: "Update skill: lecture-read",
+        description: "/vault/.codex/skills/lecture-read/SKILL.md",
+        details: "Learned refinement 1",
+        diffText: "@@",
+        createdAt: Date.now(),
+        sourceMessageId: "assistant-1",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "lecture-read",
+          skillPath: "/vault/.codex/skills/lecture-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-1",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 1",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/a.md",
+            panelId: null,
+          },
+        },
+      },
+      {
+        id: "approval-skill-2",
+        tabId: "tab-1",
+        callId: "call-skill-2",
+        toolName: "skill_update",
+        title: "Update skill: deep-read",
+        description: "/vault/.codex/skills/deep-read/SKILL.md",
+        details: "Learned refinement 2",
+        diffText: "@@",
+        createdAt: Date.now() + 1,
+        sourceMessageId: "assistant-2",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath: "/vault/.codex/skills/deep-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-2",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 2",
+          attribution: {
+            prompt: "Clean up this note.",
+            summary: "Applied a note rewrite.",
+            targetNotePath: "notes/b.md",
+            panelId: null,
+          },
+        },
+      },
+    ];
+
+    const result = buildTranscriptRenderState(state.tabs[0]!, 2);
+    expect(result.showApprovalBatchBar).toBe(true);
+  });
+
   it("prefers active panel title over workflow label in composer state", () => {
     const state = createState();
     state.tabs[0]!.activeStudyRecipeId = "panel-1";
@@ -250,11 +315,11 @@ describe("workspace view models", () => {
     expect(result.fastModeActive).toBe(true);
     expect(result.yoloActive).toBe(true);
     expect(result.yoloToggleDisabled).toBe(false);
-    expect(result.effectivePermissionState).toBe("Edit automatically");
+    expect(result.effectivePermissionState).toBe("Apply automatically");
     expect(result.usageSourceLabel).toBe("Live");
   });
 
-  it("disables the auto-apply toggle in Read only mode", () => {
+  it("disables the auto-apply toggle in Suggest only mode", () => {
     const state = createState();
 
     const result = buildStatusBarDisplayState(
@@ -269,7 +334,7 @@ describe("workspace view models", () => {
     expect(result.fastModeActive).toBe(false);
     expect(result.yoloActive).toBe(false);
     expect(result.yoloToggleDisabled).toBe(false);
-    expect(result.effectivePermissionState).toBe("Read only");
+    expect(result.effectivePermissionState).toBe("Suggest only");
   });
 
   it("shows armed state for plan mode with auto-apply enabled", () => {

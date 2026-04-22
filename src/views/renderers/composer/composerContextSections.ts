@@ -226,6 +226,24 @@ export class ComposerContextSections {
           });
         });
       }
+      if (proposal.qualityState === "review_required" || proposal.qualityState === "auto_healed") {
+        cardEl.createDiv({
+          cls: `obsidian-codex__change-card-warning is-${proposal.qualityState}`,
+          text:
+            proposal.qualityState === "review_required"
+              ? context.copy.workspace.patchReadabilityReview
+              : context.copy.workspace.patchReadabilityAutoHealed,
+        });
+      }
+      if ((proposal.qualityIssues?.length ?? 0) > 0) {
+        const issuesEl = cardEl.createDiv({ cls: "obsidian-codex__change-card-issues" });
+        for (const issue of proposal.qualityIssues ?? []) {
+          issuesEl.createDiv({
+            cls: "obsidian-codex__change-card-issue",
+            text: context.copy.workspace.patchQualityIssue(issue.code, issue.line, issue.detail ?? null),
+          });
+        }
+      }
       cardEl.createEl("pre", {
         cls: "obsidian-codex__change-card-diff",
         text: summarizePreviewText(proposal.unifiedDiff, 8, 520),

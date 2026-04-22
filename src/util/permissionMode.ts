@@ -16,8 +16,8 @@ export interface PermissionModeProfile {
 export const PERMISSION_MODE_CATALOG: readonly PermissionModeProfile[] = [
   {
     mode: "suggest",
-    label: "Read only",
-    description: "Codex can suggest note patches, but never auto-apply them.",
+    label: "Suggest only",
+    description: "Codex can prepare note changes, but it will not apply them automatically.",
     approvalPolicy: "untrusted",
     sandboxMode: "read-only",
     noteApplyPolicy: "manual",
@@ -25,8 +25,8 @@ export const PERMISSION_MODE_CATALOG: readonly PermissionModeProfile[] = [
   },
   {
     mode: "auto-edit",
-    label: "Edit with approval",
-    description: "Note changes go through the approval UI before they are applied.",
+    label: "Review before applying",
+    description: "Note changes stay in review until you approve them.",
     approvalPolicy: "on-failure",
     sandboxMode: "read-only",
     noteApplyPolicy: "approval",
@@ -34,8 +34,8 @@ export const PERMISSION_MODE_CATALOG: readonly PermissionModeProfile[] = [
   },
   {
     mode: "full-auto",
-    label: "Edit automatically",
-    description: "Apply note changes automatically unless review is required.",
+    label: "Apply automatically",
+    description: "Apply note changes automatically unless the plugin pauses for readability or safety review first.",
     approvalPolicy: "never",
     sandboxMode: "read-only",
     noteApplyPolicy: "auto",
@@ -64,18 +64,18 @@ export function getPermissionModeCatalog(locale: SupportedLocale = "en"): readon
     return [
       {
         ...PERMISSION_MODE_CATALOG[0],
-        label: "Read only",
+        label: "提案のみ",
         description: "Codex はノート変更を提案できますが、自動適用はしません。",
       },
       {
         ...PERMISSION_MODE_CATALOG[1],
-        label: "Edit with approval",
+        label: "適用前に確認",
         description: "ノート変更は承認 UI を通してから適用します。",
       },
       {
         ...PERMISSION_MODE_CATALOG[2],
-        label: "Edit automatically",
-        description: "レビューが必要な場合を除き、ノート変更を自動で適用します。",
+        label: "自動で適用",
+        description: "可読性や安全性の確認が必要な場合を除き、ノート変更を自動で適用します。",
       },
     ] as const;
   }

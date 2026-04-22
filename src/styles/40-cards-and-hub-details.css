@@ -502,6 +502,39 @@
   color: var(--obsidian-codex-text-soft);
 }
 
+.obsidian-codex__change-card-warning {
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 74%, rgba(var(--obsidian-codex-highlight-rgb), 0.32) 26%);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 95%, rgba(var(--obsidian-codex-highlight-rgb), 0.07) 5%);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-normal);
+}
+
+.obsidian-codex__change-card-warning.is-review_required {
+  border-color: color-mix(in srgb, var(--color-orange) 48%, var(--background-modifier-border) 52%);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 92%, rgba(217, 119, 6, 0.11) 8%);
+}
+
+.obsidian-codex__change-card-warning.is-auto_healed {
+  border-color: color-mix(in srgb, rgba(var(--obsidian-codex-brand-rgb), 0.55) 45%, var(--background-modifier-border) 55%);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 93%, rgba(var(--obsidian-codex-brand-rgb), 0.09) 7%);
+}
+
+.obsidian-codex__change-card-issues {
+  display: grid;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, rgba(var(--obsidian-codex-brand-rgb), 0.2) 44%, var(--background-modifier-border) 56%);
+}
+
+.obsidian-codex__change-card-issue {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--obsidian-codex-text-soft);
+}
+
 .obsidian-codex__change-card-diff {
   margin: 0;
   max-height: 144px;

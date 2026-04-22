@@ -1,7 +1,8 @@
-import type { PatchEvidenceSourceKind, PatchProposalKind, VaultOpKind } from "../model/types";
+import type { PatchEvidenceSourceKind, PatchProposalKind, StudyWorkflowKind, VaultOpKind } from "../model/types";
+import { sanitizeOperationalAssistantText } from "./assistantChatter";
 
-const PROPOSAL_BLOCK_PATTERN = /```(obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest)\s*\n([\s\S]*?)```/gim;
-const PARTIAL_PROPOSAL_FENCE_PATTERN = /```(?:obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest)\b[\s\S]*$/im;
+const PROPOSAL_BLOCK_PATTERN = /```(obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint)\s*\n([\s\S]*?)```/gim;
+const PARTIAL_PROPOSAL_FENCE_PATTERN = /```(?:obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint)\b[\s\S]*$/im;
 const JSON_PROPOSAL_LINE_PATTERN =
   /^\s*"(?:patches|patch|ops|op|path|targetPath|file|kind|summary|content|text|proposedText|anchors|anchorBefore|anchorAfter|replacement|destinationPath|newPath|toPath|propertyKey|propertyValue|taskLine|taskText|checked)"\s*:/m;
 const JSON_PROPOSAL_MARKER_PATTERN =
@@ -43,6 +44,7 @@ export interface ParsedAssistantProposalResult {
   ops: ParsedAssistantOp[];
   plan: ParsedAssistantPlanSignal | null;
   suggestion: ParsedAssistantSuggestionSignal | null;
+  studyCheckpoint: ParsedAssistantStudyCheckpoint | null;
   hasProposalMarkers: boolean;
   hasMalformedProposal: boolean;
 }
@@ -63,6 +65,14 @@ export interface ParsedAssistantSuggestionSignal {
   kind: "rewrite_followup";
   summary: string | null;
   question: string | null;
+}
+
+export interface ParsedAssistantStudyCheckpoint {
+  workflow: StudyWorkflowKind;
+  mastered: string[];
+  unclear: string[];
+  nextStep: string;
+  confidenceNote: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -111,6 +121,12 @@ function toArray(value: unknown): unknown[] {
   return [value];
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  return toArray(value)
+    .map((entry) => normalizeWhitespace(asString(entry) ?? ""))
+    .filter(Boolean);
+}
+
 function normalizeEvidenceKind(value: string | null): PatchEvidenceSourceKind | null {
   const normalized = value?.trim().toLowerCase().replace(/[\s-]+/g, "_") ?? "";
   if (normalized === "vault_note" || normalized === "note" || normalized === "vault") {
@@ -143,6 +159,34 @@ function normalizeEvidenceEntry(
     label: normalizedLabel,
     sourceRef: normalizedSourceRef,
     snippet: normalizedSnippet,
+  };
+}
+
+function normalizeStudyWorkflowKind(value: unknown): StudyWorkflowKind | null {
+  const normalized = normalizeWhitespace(asString(value) ?? "").toLowerCase();
+  if (normalized === "lecture" || normalized === "review" || normalized === "paper" || normalized === "homework") {
+    return normalized;
+  }
+  return null;
+}
+
+function parseStudyCheckpointSignal(value: unknown): ParsedAssistantStudyCheckpoint | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const workflow = normalizeStudyWorkflowKind(record.workflow);
+  const nextStep = normalizeWhitespace(asString(record.next_step) ?? "");
+  const confidenceNote = normalizeWhitespace(asString(record.confidence_note) ?? "");
+  if (!workflow || !nextStep || !confidenceNote) {
+    return null;
+  }
+  return {
+    workflow,
+    mastered: normalizeStringArray(record.mastered),
+    unclear: normalizeStringArray(record.unclear),
+    nextStep,
+    confidenceNote,
   };
 }
 
@@ -510,6 +554,7 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
   const ops: ParsedAssistantOp[] = [];
   let plan: ParsedAssistantPlanSignal | null = null;
   let suggestion: ParsedAssistantSuggestionSignal | null = null;
+  let studyCheckpoint: ParsedAssistantStudyCheckpoint | null = null;
   const visibleParts: string[] = [];
   let hasProposalMarkers = false;
   let hasMalformedProposal = false;
@@ -546,6 +591,8 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
           plan = parsePlanSignal(parsed) ?? plan;
         } else if (blockType === "obsidian-suggest") {
           suggestion = parseSuggestionSignal(parsed) ?? suggestion;
+        } else if (blockType === "obsidian-study-checkpoint") {
+          studyCheckpoint = parseStudyCheckpointSignal(parsed) ?? studyCheckpoint;
         }
       } catch {
         if (blockType === "obsidian-patch") {
@@ -571,11 +618,12 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
 
   return {
     displayText,
-    sanitizedDisplayText: displayText,
+    sanitizedDisplayText: sanitizeOperationalAssistantText(displayText) ?? "",
     patches,
     ops,
     plan,
     suggestion,
+    studyCheckpoint,
     hasProposalMarkers: hasProposalMarkers || malformedTail.hasProposalMarkers,
     hasMalformedProposal: hasMalformedProposal || malformedTail.hasMalformedProposal,
   };

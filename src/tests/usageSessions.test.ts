@@ -7,6 +7,7 @@ import {
   findSessionFileForThread,
   listRecentSessionFiles,
   readLastAssistantMessageFromSessionFile,
+  readLastVisibleAssistantMessageFromSessionFile,
   readSessionUsageSnapshot,
   readUsageSummaryFromSessionFile,
 } from "../util/usageSessions";
@@ -159,6 +160,70 @@ describe("usage session helpers", () => {
     );
 
     await expect(readLastAssistantMessageFromSessionFile(sessionFile)).resolves.toBe("Newest backfilled answer");
+  });
+
+  it("recovers the latest visible assistant reply instead of a later internal rewrite prompt tail", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "rollout-visible-message-thread.jsonl");
+    await writeFile(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ text: "Visible answer from the real reply." }],
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            last_agent_message: [
+              "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+              "Target the current session target note if one is set; otherwise target the active note for this turn.",
+              "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+              "Add concise evidence lines to the patch header when possible using evidence: kind|label|sourceRef|snippet.",
+              "Do not ask whether to apply the change.",
+            ].join("\n"),
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    await expect(readLastVisibleAssistantMessageFromSessionFile(sessionFile)).resolves.toEqual({
+      rawText: "Visible answer from the real reply.",
+      visibleText: "Visible answer from the real reply.",
+      source: "response_item",
+    });
+  });
+
+  it("returns null when the session tail contains only internal rewrite scaffolding", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "rollout-internal-only-thread.jsonl");
+    await writeFile(
+      sessionFile,
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "task_complete",
+          last_agent_message: [
+            "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+            "Target the current session target note if one is set; otherwise target the active note for this turn.",
+            "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+            "Add concise evidence lines to the patch header when possible using evidence: kind|label|sourceRef|snippet.",
+            "Do not ask whether to apply the change.",
+          ].join("\n"),
+        },
+      }),
+      "utf8",
+    );
+
+    await expect(readLastVisibleAssistantMessageFromSessionFile(sessionFile)).resolves.toBeNull();
   });
 
   it("lists recent session files by mtime", async () => {

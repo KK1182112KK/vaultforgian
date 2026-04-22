@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App } from "obsidian";
 import { AgentStore } from "../model/store";
 import type { PatchProposal, PendingApproval } from "../model/types";
@@ -6,6 +9,13 @@ import { getLocalizedCopy } from "../util/i18n";
 import { ApprovalCoordinator, type ApprovalCoordinatorDeps } from "../app/approvalCoordinator";
 import type { ParsedAssistantOp } from "../util/assistantProposals";
 import { PatchConflictError, hashPatchContent } from "../util/patchConflicts";
+import { CALLOUT_MATH_COLLISION_SAMPLE, CALLOUT_MATH_HEALED_SAMPLE, CALLOUT_MATH_SAMPLE } from "./fixtures/calloutMathFixture";
+
+const tempRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
 function createApp(initialFiles: Record<string, string> = {}) {
   const files = new Map(Object.entries(initialFiles));
@@ -130,7 +140,7 @@ describe("ApprovalCoordinator", () => {
     expect(files.get("notes/source.md")).toBe("new");
     expect(tab?.patchBasket[0]?.status).toBe("applied");
     expect(tab?.toolLog.at(-1)?.callId).toBe("patch-patch-1");
-    expect(tab?.messages.at(-1)?.text).toBe("Successfully patched notes/source.md.");
+    expect(tab?.messages.at(-1)?.text).toBe("Applied: notes/source.md.");
     expect(tab?.messages.at(-1)?.meta?.tone).toBe("success");
   });
 
@@ -220,5 +230,173 @@ describe("ApprovalCoordinator", () => {
     expect(forcedAttempt).toBe("applied");
     expect(files.get("notes/source.md")).toBe("replacement");
     expect(store.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
+  });
+
+  it("re-checks rebased anchor patches before write and keeps readability-risk patches pending", async () => {
+    const { store, files, coordinator } = createDeps({}, { "notes/source.md": "Preface\nIntroTail" });
+    const tabId = store.getActiveTab()!.id;
+    store.setPatchBasket(tabId, [
+      {
+        id: "patch-1",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        targetPath: "notes/source.md",
+        kind: "update",
+        baseSnapshot: "IntroTail",
+        proposedText: `Intro\n${CALLOUT_MATH_COLLISION_SAMPLE}\nTail`,
+        unifiedDiff: "@@",
+        summary: "Insert malformed math",
+        status: "pending",
+        createdAt: 1,
+        anchors: [
+          {
+            anchorBefore: "Intro",
+            anchorAfter: "Tail",
+            replacement: `\n${CALLOUT_MATH_COLLISION_SAMPLE}\n`,
+          },
+        ],
+      },
+    ]);
+
+    await expect(coordinator.applyPatchProposal(tabId, "patch-1")).rejects.toThrow("Review needed: notes/source.md.");
+    expect(files.get("notes/source.md")).toBe("Preface\nIntroTail");
+    expect(store.getActiveTab()?.patchBasket[0]).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        qualityState: "review_required",
+      }),
+    );
+  });
+
+  it("adds an audit breadcrumb after applying an auto-healed patch", async () => {
+    const { store, files, coordinator } = createDeps({}, { "notes/source.md": "Intro\nTail" });
+    const tabId = store.getActiveTab()!.id;
+    store.setPatchBasket(tabId, [
+      {
+        id: "patch-2",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-2",
+        targetPath: "notes/source.md",
+        kind: "update",
+        baseSnapshot: "Intro\nTail",
+        proposedText: `Intro\n${CALLOUT_MATH_SAMPLE}\nTail`,
+        unifiedDiff: "@@",
+        summary: "Normalize callout math",
+        status: "pending",
+        createdAt: 2,
+      },
+    ]);
+
+    await coordinator.applyPatchProposal(tabId, "patch-2");
+
+    expect(files.get("notes/source.md")).toBe(`Intro\n${CALLOUT_MATH_HEALED_SAMPLE}\nTail`);
+    expect(store.getActiveTab()?.messages.map((message) => message.text)).toEqual(
+      expect.arrayContaining([
+        "Applied: notes/source.md.",
+        "Applied after the plugin normalized Markdown structure: source.",
+      ]),
+    );
+  });
+
+  it("applies a skill-update approval by writing back to the original SKILL.md", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-skill-update-"));
+    tempRoots.push(tempRoot);
+    const skillPath = join(tempRoot, "skills", "note-refiner", "SKILL.md");
+    await mkdir(join(tempRoot, "skills", "note-refiner"), { recursive: true });
+    await writeFile(skillPath, "# Note Refiner\n\nOriginal body.\n", "utf8");
+
+    const { store, coordinator } = createDeps();
+    const tabId = store.getActiveTab()!.id;
+    const approval: PendingApproval = {
+      id: "approval-skill-1",
+      tabId,
+      callId: "call-skill-1",
+      toolName: "skill_update" as never,
+      title: "Update skill: note-refiner",
+      description: skillPath,
+      details: "Apply a learned refinement to the user-owned skill.",
+      diffText: "@@",
+      createdAt: 1,
+      sourceMessageId: "assistant-1",
+      originTurnId: "turn-1",
+      transport: "plugin_proposal",
+      decisionTarget: skillPath,
+      scopeEligible: false,
+      scope: "write",
+      toolPayload: {
+        skillName: "note-refiner",
+        skillPath,
+        baseContent: "# Note Refiner\n\nOriginal body.\n",
+        baseContentHash: hashPatchContent("# Note Refiner\n\nOriginal body.\n"),
+        nextContent: "# Note Refiner\n\nOriginal body.\n\n## Learned execution refinements\n- Keep structural edits concise.\n",
+        feedbackSummary: "Keep structural edits concise.",
+        attribution: {
+          prompt: "Rewrite the note clearly.",
+          summary: "Applied a cleaned-up note rewrite.",
+          targetNotePath: "notes/source.md",
+          panelId: "panel-1",
+        },
+      } as never,
+    };
+    store.setApprovals(tabId, [approval]);
+
+    const result = await coordinator.respondToApproval("approval-skill-1", "approve");
+    const updated = await readFile(skillPath, "utf8");
+
+    expect(result).toBe("applied");
+    expect(updated).toContain("## Learned execution refinements");
+    expect(updated).toContain("Keep structural edits concise.");
+    expect(store.getActiveTab()?.pendingApprovals).toHaveLength(0);
+  });
+
+  it("includes skill-update approvals in batch approval actions", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-skill-update-batch-"));
+    tempRoots.push(tempRoot);
+    const skillPath = join(tempRoot, "skills", "deep-read", "SKILL.md");
+    await mkdir(join(tempRoot, "skills", "deep-read"), { recursive: true });
+    await writeFile(skillPath, "# Deep Read\n\nOriginal body.\n", "utf8");
+
+    const { store, coordinator } = createDeps();
+    const tabId = store.getActiveTab()!.id;
+    store.setApprovals(tabId, [
+      {
+        id: "approval-skill-1",
+        tabId,
+        callId: "call-skill-1",
+        toolName: "skill_update" as never,
+        title: "Update skill: deep-read",
+        description: skillPath,
+        details: "Learned refinement",
+        diffText: "@@",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        transport: "plugin_proposal",
+        decisionTarget: skillPath,
+        scopeEligible: false,
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath,
+          baseContent: "# Deep Read\n\nOriginal body.\n",
+          baseContentHash: hashPatchContent("# Deep Read\n\nOriginal body.\n"),
+          nextContent: "# Deep Read\n\nOriginal body.\n\n## Learned execution refinements\n- Prefer precise evidence.\n",
+          feedbackSummary: "Prefer precise evidence.",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/source.md",
+            panelId: null,
+          },
+        } as never,
+      },
+    ]);
+
+    await coordinator.respondToAllApprovals(tabId, "approve");
+
+    expect(await readFile(skillPath, "utf8")).toContain("Prefer precise evidence.");
+    expect(store.getActiveTab()?.pendingApprovals).toHaveLength(0);
   });
 });

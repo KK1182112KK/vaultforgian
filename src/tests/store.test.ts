@@ -13,6 +13,7 @@ function createPersistedTab(overrides: Partial<PersistedTabState> = {}): Persist
     activeStudyRecipeId: overrides.activeStudyRecipeId ?? null,
     activeStudySkillNames: overrides.activeStudySkillNames ?? [],
     summary: overrides.summary ?? null,
+    studyCoachState: overrides.studyCoachState ?? null,
     lineage: {
       parentTabId: null,
       forkedFromThreadId: null,
@@ -46,13 +47,108 @@ function createPersistedTab(overrides: Partial<PersistedTabState> = {}): Persist
 
 describe("AgentStore", () => {
   it("creates a fallback tab when no persisted workspace exists", () => {
-    const store = new AgentStore(null, "/vault", false);
+    const store = new AgentStore(null, "/vault", false, { fastMode: true, learningMode: true });
     const state = store.getState();
     expect(state.tabs).toHaveLength(1);
     expect(state.tabs[0]?.cwd).toBe("/vault");
     expect(state.tabs[0]?.targetNotePath).toBeNull();
     expect(state.tabs[0]?.selectionContext).toBeNull();
+    expect(state.tabs[0]?.fastMode).toBe(true);
+    expect(state.tabs[0]?.learningMode).toBe(true);
     expect(state.authState).toBe("missing_login");
+  });
+
+  it("fills in missing restored mode flags from sticky defaults", () => {
+    const persistedTab = {
+      ...createPersistedTab({ learningMode: false, fastMode: false }),
+    } as PersistedTabState & Record<string, unknown>;
+    Reflect.deleteProperty(persistedTab, "fastMode");
+    Reflect.deleteProperty(persistedTab, "learningMode");
+
+    const store = new AgentStore(
+      {
+        tabs: [persistedTab],
+        activeTabId: persistedTab.id,
+        accountUsage: createEmptyAccountUsageSummary(),
+        activeStudyWorkflow: null,
+        recentStudySources: [],
+        studyHubState: { lastOpenedAt: null, isCollapsed: false },
+        studyRecipes: [],
+        activeStudyRecipeId: null,
+      },
+      "/vault",
+      true,
+      { fastMode: true, learningMode: true },
+    );
+
+    const restoredTab = store.getState().tabs[0];
+    expect(restoredTab?.fastMode).toBe(true);
+    expect(restoredTab?.learningMode).toBe(true);
+  });
+
+  it("normalizes mixed restored tab mode flags to the provided global defaults", () => {
+    const store = new AgentStore(
+      {
+        tabs: [
+          createPersistedTab({ id: "tab-a", title: "A", learningMode: false, fastMode: false }),
+          createPersistedTab({ id: "tab-b", title: "B", learningMode: true, fastMode: true }),
+        ],
+        activeTabId: "tab-b",
+        accountUsage: createEmptyAccountUsageSummary(),
+        activeStudyWorkflow: null,
+        recentStudySources: [],
+        studyHubState: { lastOpenedAt: null, isCollapsed: false },
+        studyRecipes: [],
+        activeStudyRecipeId: null,
+      },
+      "/vault",
+      true,
+      { fastMode: false, learningMode: true },
+    );
+
+    expect(store.getState().tabs.every((tab) => tab.fastMode === false)).toBe(true);
+    expect(store.getState().tabs.every((tab) => tab.learningMode === true)).toBe(true);
+  });
+
+  it("restores and serializes hidden user adaptation memory", () => {
+    const persisted = {
+      tabs: [createPersistedTab()],
+      activeTabId: "tab-a",
+      accountUsage: createEmptyAccountUsageSummary(),
+      activeStudyWorkflow: null,
+      recentStudySources: [],
+      studyHubState: { lastOpenedAt: null, isCollapsed: false },
+      studyRecipes: [],
+      activeStudyRecipeId: null,
+      userAdaptationMemory: {
+        globalProfile: {
+          explanationDepth: "step_by_step",
+          preferredFocusTags: ["examples", "pitfalls"],
+          preferredNoteStyleHints: ["bullet_lists"],
+          avoidResponsePatterns: ["too much filler"],
+          updatedAt: 123,
+        },
+        panelOverlays: {
+          "panel-1": {
+            panelId: "panel-1",
+            preferredFocusTags: ["claims_vs_interpretation"],
+            preferredNoteStyleHints: ["separate_claims"],
+            preferredSkillNames: ["deep-read"],
+            lastAppliedTargetPath: "Notes/Paper.md",
+            updatedAt: 456,
+          },
+        },
+      },
+    } as ConstructorParameters<typeof AgentStore>[0] & { userAdaptationMemory?: unknown };
+
+    const store = new AgentStore(persisted, "/vault", true);
+    const state = store.getState() as typeof store.getState extends () => infer T ? T & { userAdaptationMemory?: any } : never;
+    expect(state.userAdaptationMemory?.globalProfile?.preferredFocusTags).toEqual(["examples", "pitfalls"]);
+    expect(state.userAdaptationMemory?.panelOverlays?.["panel-1"]?.preferredSkillNames).toEqual(["deep-read"]);
+
+    const serialized = store.serialize() as ReturnType<AgentStore["serialize"]> & { userAdaptationMemory?: any };
+    expect(serialized.userAdaptationMemory?.globalProfile?.explanationDepth).toBe("step_by_step");
+    expect(serialized.userAdaptationMemory?.panelOverlays?.["panel-1"]?.lastAppliedTargetPath).toBe("Notes/Paper.md");
   });
 
   it("normalizes an invalid persisted active tab id to the first available tab", () => {
@@ -397,6 +493,26 @@ describe("AgentStore", () => {
       text: "Condensed conversation",
       createdAt: 456,
     });
+    store.setStudyCoachState(tab.id, {
+      latestRecap: {
+        workflow: "lecture",
+        mastered: ["Can explain the intuition behind the Fourier transform."],
+        unclear: ["Still mixes up phase and magnitude."],
+        nextStep: "Compare two spectra and say what phase changes.",
+        confidenceNote: "Good headline understanding, weak on interpretation details.",
+      },
+      weakPointLedger: [
+        {
+          conceptLabel: "phase vs magnitude",
+          workflow: "lecture",
+          updatedAt: 500,
+          explanationSummary: "The learner still confuses what each axis feature tells them.",
+          nextQuestion: "What changes if the phase shifts but the magnitude stays the same?",
+          resolved: false,
+        },
+      ],
+      lastCheckpointAt: 500,
+    });
     store.setLineage(tab.id, {
       parentTabId: "tab-origin",
       forkedFromThreadId: "thread-origin",
@@ -457,6 +573,26 @@ describe("AgentStore", () => {
             text: "Condensed conversation",
             createdAt: 456,
           },
+          studyCoachState: {
+            latestRecap: {
+              workflow: "lecture",
+              mastered: ["Can explain the intuition behind the Fourier transform."],
+              unclear: ["Still mixes up phase and magnitude."],
+              nextStep: "Compare two spectra and say what phase changes.",
+              confidenceNote: "Good headline understanding, weak on interpretation details.",
+            },
+            weakPointLedger: [
+              {
+                conceptLabel: "phase vs magnitude",
+                workflow: "lecture",
+                updatedAt: 500,
+                explanationSummary: "The learner still confuses what each axis feature tells them.",
+                nextQuestion: "What changes if the phase shifts but the magnitude stays the same?",
+                resolved: false,
+              },
+            ],
+            lastCheckpointAt: 500,
+          },
           lineage: {
             parentTabId: "tab-origin",
             forkedFromThreadId: "thread-origin",
@@ -477,6 +613,7 @@ describe("AgentStore", () => {
           codexThreadId: "thread_123",
           model: "gpt-5.1-codex",
           reasoningEffort: "high",
+          fastMode: false,
           usageSummary: expect.objectContaining({
             lastTurn: expect.objectContaining({
               totalTokens: 1380,
@@ -506,6 +643,115 @@ describe("AgentStore", () => {
     expect(serialized.studyRecipes).toEqual([]);
     expect(serialized.activeStudyRecipeId).toBeNull();
     expect(store.getState().tabs[1]?.runtimeMode).toBe("skill");
+  });
+
+  it("serializes explicit false fastMode values", () => {
+    const store = new AgentStore(null, "/vault", true, { fastMode: true, learningMode: false });
+    const tab = store.getActiveTab();
+    if (!tab) {
+      throw new Error("Missing active tab");
+    }
+
+    expect(tab.fastMode).toBe(true);
+    store.setTabFastMode(tab.id, false);
+
+    const serialized = store.serialize();
+    expect(serialized.tabs[0]?.fastMode).toBe(false);
+  });
+
+  it("syncs mode changes across all open tabs and future tabs", () => {
+    const store = new AgentStore(null, "/vault", true, { fastMode: false, learningMode: false });
+    const firstTab = store.getActiveTab();
+    if (!firstTab) {
+      throw new Error("Missing active tab");
+    }
+    const secondTab = store.createTab("/vault", "Second");
+
+    store.setAllTabsFastMode(true);
+    store.setAllTabsLearningMode(true);
+
+    expect(store.getState().tabs.every((tab) => tab.fastMode === true)).toBe(true);
+    expect(store.getState().tabs.every((tab) => tab.learningMode === true)).toBe(true);
+
+    const thirdTab = store.createTab("/vault", "Third");
+    const tabs = store.getState().tabs;
+    expect(tabs.find((tab) => tab.id === secondTab.id)?.fastMode).toBe(true);
+    expect(tabs.find((tab) => tab.id === secondTab.id)?.learningMode).toBe(true);
+    expect(tabs.find((tab) => tab.id === thirdTab.id)?.fastMode).toBe(true);
+    expect(tabs.find((tab) => tab.id === thirdTab.id)?.learningMode).toBe(true);
+  });
+
+  it("serializes and restores tab-level study coach state", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tab = store.getActiveTab();
+    if (!tab) {
+      throw new Error("Missing active tab");
+    }
+
+    store.setStudyCoachState(tab.id, {
+      latestRecap: {
+        workflow: "review",
+        mastered: ["Can state the high-level review order for the chapter."],
+        unclear: ["Cannot justify why the final proof step works."],
+        nextStep: "Re-derive the last implication without looking.",
+        confidenceNote: "The learner can summarize but not defend the final step.",
+      },
+      weakPointLedger: [
+        {
+          conceptLabel: "final proof implication",
+          workflow: "review",
+          updatedAt: 777,
+          explanationSummary: "The last implication is being repeated from memory instead of understood.",
+          nextQuestion: "Which assumption unlocks the last implication?",
+          resolved: false,
+        },
+      ],
+      lastCheckpointAt: 777,
+    });
+
+    const serialized = store.serialize();
+    expect(serialized.tabs[0]?.studyCoachState).toEqual({
+      latestRecap: {
+        workflow: "review",
+        mastered: ["Can state the high-level review order for the chapter."],
+        unclear: ["Cannot justify why the final proof step works."],
+        nextStep: "Re-derive the last implication without looking.",
+        confidenceNote: "The learner can summarize but not defend the final step.",
+      },
+      weakPointLedger: [
+        {
+          conceptLabel: "final proof implication",
+          workflow: "review",
+          updatedAt: 777,
+          explanationSummary: "The last implication is being repeated from memory instead of understood.",
+          nextQuestion: "Which assumption unlocks the last implication?",
+          resolved: false,
+        },
+      ],
+      lastCheckpointAt: 777,
+    });
+
+    const restored = new AgentStore(serialized, "/vault", true);
+    expect(restored.getState().tabs[0]?.studyCoachState).toEqual({
+      latestRecap: {
+        workflow: "review",
+        mastered: ["Can state the high-level review order for the chapter."],
+        unclear: ["Cannot justify why the final proof step works."],
+        nextStep: "Re-derive the last implication without looking.",
+        confidenceNote: "The learner can summarize but not defend the final step.",
+      },
+      weakPointLedger: [
+        {
+          conceptLabel: "final proof implication",
+          workflow: "review",
+          updatedAt: 777,
+          explanationSummary: "The last implication is being repeated from memory instead of understood.",
+          nextQuestion: "Which assumption unlocks the last implication?",
+          resolved: false,
+        },
+      ],
+      lastCheckpointAt: 777,
+    });
   });
 
   it("serializes and restores study workflow state", () => {
@@ -884,6 +1130,111 @@ describe("AgentStore", () => {
     expect(nextTab?.activeStudySkillNames).toEqual([]);
     expect(nextTab?.panelSessionOrigin?.selectedSkillNames).toEqual([]);
     expect(nextTab?.chatSuggestion?.matchedSkillName).toBeNull();
+  });
+
+  it("reconciles open tab panel state when a study recipe is updated in place", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tab = store.getActiveTab();
+    if (!tab) {
+      throw new Error("Missing active tab");
+    }
+
+    store.setStudyRecipes([
+      {
+        id: "study-panel-1",
+        title: "Lecture",
+        description: "Lecture panel",
+        commandAlias: "/recipe-lecture",
+        workflow: "lecture",
+        promptTemplate: "Summarize this lecture.",
+        linkedSkillNames: ["lecture-read", "deep-read"],
+        contextContract: {
+          summary: "Prefer lecture context.",
+          requireTargetNote: false,
+          recommendAttachments: true,
+          requireSelection: false,
+          minimumPinnedContextCount: 0,
+        },
+        outputContract: ["Main ideas"],
+        sourceHints: ["current note"],
+        exampleSession: {
+          sourceTabTitle: "Study chat",
+          targetNotePath: null,
+          prompt: "Summarize this lecture.",
+          outcomePreview: null,
+          createdAt: 1,
+        },
+        promotionState: "captured",
+        promotedSkillName: null,
+        useCount: 0,
+        lastUsedAt: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    store.setActiveStudyPanel(tab.id, "study-panel-1", ["lecture-read", "deep-read"]);
+    store.setPanelSessionOrigin(tab.id, {
+      panelId: "study-panel-1",
+      selectedSkillNames: ["lecture-read", "deep-read"],
+      promptSnapshot: "Summarize this lecture.",
+      awaitingCompletionSignal: true,
+      lastAssistantMessageId: null,
+      startedAt: 1,
+    });
+    store.setChatSuggestion(tab.id, {
+      id: "suggestion-1",
+      kind: "panel_completion",
+      status: "pending",
+      messageId: "message-1",
+      panelId: "study-panel-1",
+      panelTitle: "Lecture",
+      promptSnapshot: "Summarize this lecture.",
+      matchedSkillName: "lecture-read",
+      canUpdatePanel: true,
+      canSaveCopy: true,
+      planSummary: null,
+      planStatus: null,
+      createdAt: 1,
+    });
+
+    store.upsertStudyRecipe({
+      id: "study-panel-1",
+      title: "Lecture Revised",
+      description: "Lecture panel",
+      commandAlias: "/recipe-lecture",
+      workflow: "lecture",
+      promptTemplate: "Summarize this lecture.",
+      linkedSkillNames: ["deep-read"],
+      contextContract: {
+        summary: "Prefer lecture context.",
+        requireTargetNote: false,
+        recommendAttachments: true,
+        requireSelection: false,
+        minimumPinnedContextCount: 0,
+      },
+      outputContract: ["Main ideas"],
+      sourceHints: ["current note"],
+      exampleSession: {
+        sourceTabTitle: "Study chat",
+        targetNotePath: null,
+        prompt: "Summarize this lecture.",
+        outcomePreview: null,
+        createdAt: 1,
+      },
+      promotionState: "captured",
+      promotedSkillName: null,
+      useCount: 1,
+      lastUsedAt: 2,
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    const updatedTab = store.getActiveTab();
+    expect(updatedTab?.activeStudyRecipeId).toBe("study-panel-1");
+    expect(updatedTab?.activeStudySkillNames).toEqual(["deep-read"]);
+    expect(updatedTab?.panelSessionOrigin?.selectedSkillNames).toEqual(["deep-read"]);
+    expect(updatedTab?.chatSuggestion?.panelTitle).toBe("Lecture Revised");
+    expect(updatedTab?.chatSuggestion?.matchedSkillName).toBeNull();
   });
 
   it("derives the active workflow from the active tab", () => {
@@ -1265,6 +1616,20 @@ describe("AgentStore", () => {
     expect(store.getState().tabs.every((tab) => tab.usageSummary.limits.fiveHourPercent === null)).toBe(true);
   });
 
+  it("uses sticky defaults when the last open tab is closed", () => {
+    const store = new AgentStore(null, "/vault", true, { fastMode: false, learningMode: false });
+    const activeTab = store.getActiveTab();
+    if (!activeTab) {
+      throw new Error("Missing active tab");
+    }
+
+    store.closeTab(activeTab.id, "/vault", { fastMode: true, learningMode: true });
+
+    const replacementTab = store.getActiveTab();
+    expect(replacementTab?.fastMode).toBe(true);
+    expect(replacementTab?.learningMode).toBe(true);
+  });
+
   it("prefers restored tab usage over stale restored account usage", () => {
     const store = new AgentStore(
       {
@@ -1548,5 +1913,94 @@ describe("AgentStore", () => {
 
     const reserialized = restored.serialize();
     expect(reserialized.tabs[0]?.restartDropNotice).toBeNull();
+  });
+
+  it("deep-clones runtime-owned approval and patch payloads in state snapshots", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tab = store.getActiveTab();
+    if (!tab) {
+      throw new Error("Missing active tab");
+    }
+
+    store.setApprovals(tab.id, [
+      {
+        id: "approval-1",
+        tabId: tab.id,
+        callId: "call-1",
+        toolName: "skill_update",
+        title: "Update skill: lecture-read",
+        description: "/vault/.codex/skills/lecture-read/SKILL.md",
+        details: "Learned refinement",
+        diffText: "@@",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        scope: "write",
+        toolPayload: {
+          skillName: "lecture-read",
+          skillPath: "/vault/.codex/skills/lecture-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-1",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/a.md",
+            panelId: null,
+          },
+        },
+      },
+    ]);
+    store.setPatchBasket(tab.id, [
+      {
+        id: "patch-1",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        targetPath: "notes/a.md",
+        kind: "update",
+        baseSnapshot: "before",
+        proposedText: "after",
+        unifiedDiff: "@@",
+        summary: "Update note",
+        status: "pending",
+        createdAt: 1,
+        anchors: [
+          {
+            anchorBefore: "Before",
+            anchorAfter: "After",
+            replacement: "Replacement",
+          },
+        ],
+        evidence: [
+          {
+            kind: "vault_note",
+            label: "Lecture",
+            sourceRef: "notes/a.md",
+            snippet: "Source snippet",
+          },
+        ],
+      },
+    ]);
+
+    const snapshot = store.getState();
+    const approvalPayload = snapshot.tabs[0]?.pendingApprovals[0]?.toolPayload as
+      | {
+          nextContent: string;
+        }
+      | undefined;
+    const patch = snapshot.tabs[0]?.patchBasket[0];
+    if (!approvalPayload || !patch?.anchors?.[0] || !patch.evidence?.[0]) {
+      throw new Error("Missing runtime-owned data");
+    }
+
+    approvalPayload.nextContent = "# Mutated";
+    patch.anchors[0].replacement = "Changed";
+    patch.evidence[0].snippet = "Changed snippet";
+
+    const refreshed = store.getState().tabs[0];
+    expect((refreshed?.pendingApprovals[0]?.toolPayload as { nextContent?: string } | undefined)?.nextContent).toBe("# Skill\n\nRefined");
+    expect(refreshed?.patchBasket[0]?.anchors?.[0]?.replacement).toBe("Replacement");
+    expect(refreshed?.patchBasket[0]?.evidence?.[0]?.snippet).toBe("Source snippet");
   });
 });

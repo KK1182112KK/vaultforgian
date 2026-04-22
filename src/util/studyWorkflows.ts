@@ -7,6 +7,7 @@ export interface StudyWorkflowDefinition {
   shortLabel: string;
   description: string;
   helperText: string;
+  coachContract?: readonly string[];
   attachRecommended: boolean;
   responseContract: readonly string[];
   sourcePriority: readonly string[];
@@ -42,6 +43,12 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       shortLabel: "Lecture",
       description: "Turn lecture slides, notes, or handouts into a clear study-oriented breakdown.",
       helperText: "Keep the answer study-first: main topics, formulas, confusing points, and follow-up review tasks.",
+      coachContract: [
+        "Lead with the key explanation, not a generic recap.",
+        "Include one short understanding-check question at the end of the visible answer.",
+        "Call out a likely point of confusion or prerequisite the learner may still miss.",
+        "Name the next study step the learner should take immediately after this turn.",
+      ],
       responseContract: ["Main topics", "Key concepts and formulas", "Confusing points or gaps", "Suggested follow-up notes or review tasks"],
       sourcePriority: ["attached lecture files and images", "current or reference note", "pinned context notes"],
       guidance: [
@@ -59,6 +66,12 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       shortLabel: "Review",
       description: "Build a focused review session from the current note or pinned context.",
       helperText: "Prioritize what to review, identify weak spots, propose a short drill list, and point to the next source to reopen.",
+      coachContract: [
+        "Start with what to review first, weighted toward the most recent weak point.",
+        "Include one short understanding-check question tied to the current weak spot.",
+        "Call out the likely forgotten or fragile idea, not just the broad topic.",
+        "Name the next review action or source to reopen.",
+      ],
       responseContract: [
         "What I should review first",
         "Weak spots or likely forgotten areas",
@@ -80,6 +93,12 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       shortLabel: "Paper",
       description: "Read a paper deeply and extract claims, methods, results, and open questions.",
       helperText: "Separate direct paper claims from your inferences, and emphasize method, results, assumptions, and next questions.",
+      coachContract: [
+        "Explain the paper in a way that surfaces the prerequisite ideas needed to follow it.",
+        "Include one short understanding-check question at the end of the visible answer.",
+        "Explicitly name a likely misreading, assumption, or interpretation trap.",
+        "Name the next paper-reading step the learner should take.",
+      ],
       responseContract: [
         "Research question and contribution",
         "Method overview",
@@ -103,6 +122,12 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       shortLabel: "Homework",
       description: "Work through an attached assignment or selected problem with explanation-first support.",
       helperText: "Restate the problem, list givens and unknowns, explain strategy before calculation, then walk through the reasoning.",
+      coachContract: [
+        "State what is known and unknown before you move into the method.",
+        "Include one short understanding-check question at the end of the visible answer.",
+        "Call out the most likely setup or reasoning mistake for this problem.",
+        "Name the next solving step the learner should attempt.",
+      ],
       responseContract: [
         "What the problem is asking",
         "A solution strategy before calculations",
@@ -199,6 +224,21 @@ const STUDY_WORKFLOW_BASE = {
   homework: { attachRecommended: true, safeAutoSkillRefs: [] },
 } as const;
 
+const DEFAULT_COACH_CONTRACT: Record<SupportedLocale, readonly string[]> = {
+  en: [
+    "Lead with the key explanation, not a generic recap.",
+    "Include one short understanding-check question at the end of the visible answer.",
+    "Call out a likely point of confusion or misconception that still needs work.",
+    "Name the next study step the learner should take after this turn.",
+  ],
+  ja: [
+    "要点説明を先頭に置き、単なる要約にしないこと。",
+    "表示本文の最後に理解確認の短い問いを 1 つ入れること。",
+    "まだ曖昧になりやすい誤解やつまずきを明示すること。",
+    "この turn の直後に取るべき次の学習ステップを示すこと。",
+  ],
+};
+
 function buildContextLines(context: StudyWorkflowPromptContext, locale: SupportedLocale): string[] {
   return [
     context.currentFilePath ? (locale === "ja" ? `現在のノート: ${context.currentFilePath}` : `Current note: ${context.currentFilePath}`) : null,
@@ -230,7 +270,10 @@ export function getStudyWorkflowDefinition(kind: StudyWorkflowKind, locale: Supp
   if (!workflow) {
     throw new Error(`Unknown study workflow: ${kind}`);
   }
-  return workflow;
+  return {
+    ...workflow,
+    coachContract: workflow.coachContract ?? DEFAULT_COACH_CONTRACT[locale],
+  };
 }
 
 export function getStudyRecipeWorkflowLabel(workflow: StudyRecipeWorkflowKind, locale: SupportedLocale = "en"): string {

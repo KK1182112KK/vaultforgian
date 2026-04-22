@@ -55,6 +55,11 @@ export interface StatusBarDisplayState {
 }
 
 const USAGE_STALE_AFTER_MS = 120_000;
+const BATCH_APPROVAL_TOOL_NAMES = new Set<PendingApproval["toolName"]>(["vault_op", "skill_update"]);
+
+function countBatchableApprovals(activeTab: WorkspaceState["tabs"][number] | null): number {
+  return activeTab?.pendingApprovals.filter((approval) => BATCH_APPROVAL_TOOL_NAMES.has(approval.toolName)).length ?? 0;
+}
 
 function hasVisibleUsageLimits(accountUsage: AccountUsageSummary | null): boolean {
   if (!accountUsage) {
@@ -148,8 +153,7 @@ export function buildTranscriptRenderState(
   return {
     hasConversationContext,
     showWelcome: transcriptLength === 0 && activeTab?.status !== "busy" && !hasConversationContext,
-    showApprovalBatchBar:
-      (activeTab?.pendingApprovals.filter((approval: PendingApproval) => approval.toolName === "vault_op").length ?? 0) > 1,
+    showApprovalBatchBar: countBatchableApprovals(activeTab) > 1,
     showSummaryWindow: Boolean(activeTab?.summary) && transcriptLength > TRANSCRIPT_SOFT_COLLAPSE_WINDOW,
   };
 }

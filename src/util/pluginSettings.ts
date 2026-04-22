@@ -200,6 +200,8 @@ export function extractVaultSettings(settings: PluginSettings): VaultSettings {
   return {
     defaultModel: settings.defaultModel,
     defaultReasoningEffort: settings.defaultReasoningEffort,
+    defaultFastMode: settings.defaultFastMode,
+    defaultLearningMode: settings.defaultLearningMode,
     permissionMode: settings.permissionMode,
     uiLanguage: settings.uiLanguage,
     onboardingVersionSeen: settings.onboardingVersionSeen,
@@ -319,4 +321,3 @@ export function parseEnvironmentEntries(entries: readonly string[]): Record<stri
   }
   return env;
 }
-

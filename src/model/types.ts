@@ -57,6 +57,8 @@ export interface SecurityPolicySettings {
 export interface VaultSettings {
   defaultModel: string;
   defaultReasoningEffort: ReasoningEffort;
+  defaultFastMode: boolean;
+  defaultLearningMode: boolean;
   permissionMode: PermissionMode;
   uiLanguage: UiLanguageSetting;
   onboardingVersionSeen: number | null;
@@ -95,6 +97,8 @@ export interface PluginSettings extends VaultSettings, LocalSettings {}
 export const DEFAULT_VAULT_SETTINGS: VaultSettings = {
   defaultModel: DEFAULT_PRIMARY_MODEL,
   defaultReasoningEffort: "xhigh",
+  defaultFastMode: false,
+  defaultLearningMode: false,
   permissionMode: "suggest",
   uiLanguage: "app",
   onboardingVersionSeen: null,
@@ -267,19 +271,28 @@ export interface ModelCatalogEntry {
 
 export type ToolActivityKind = "tool" | "shell" | "mcp" | "web" | "file" | "todo";
 export type ToolActivityStatus = "running" | "completed" | "failed";
-export type ApprovalToolName = "write_note" | "run_shell" | "vault_op";
+export type ApprovalToolName = "write_note" | "run_shell" | "vault_op" | "skill_update";
 export type ApprovalSessionScope = "write" | "shell";
 export type ApprovalTransport = "plugin_proposal";
 export type VaultOpKind = "rename" | "move" | "property_set" | "property_remove" | "task_update";
 export type PatchProposalKind = "update" | "create";
 export type PatchProposalStatus = "pending" | "applied" | "rejected" | "stale" | "conflicted";
 export type PatchEvidenceSourceKind = "vault_note" | "attachment" | "web";
+export type PatchQualityState = "clean" | "auto_healed" | "review_required";
+export type PatchQualityIssueCode =
+  | "display_math_single_dollar"
+  | "math_delimiter_marker_collision"
+  | "unmatched_display_math"
+  | "adjacent_block_spacing"
+  | "mixed_display_math_context"
+  | "display_math_same_line_delimiter";
 export type StudyWorkflowKind = "lecture" | "review" | "paper" | "homework";
 export type StudyRecipeWorkflowKind = StudyWorkflowKind | "custom";
 export type RecentStudySourceKind = "note" | "attachment" | "selection";
 export type StudyRecipePromotionState = "captured" | "promoted";
 export type ChatSuggestionKind = "panel_completion" | "plan_execute" | "rewrite_followup";
 export type ChatSuggestionStatus = "pending" | "applied" | "dismissed";
+export type EditOutcome = "applied" | "review_required" | "proposal_only" | "explanation_only" | "failed";
 export type ChatSuggestionAction =
   | "update_panel"
   | "save_panel_copy"
@@ -299,6 +312,51 @@ export interface RecentStudySource {
 export interface StudyHubState {
   lastOpenedAt: number | null;
   isCollapsed: boolean;
+}
+
+export interface StudyCheckpoint {
+  workflow: StudyWorkflowKind;
+  mastered: string[];
+  unclear: string[];
+  nextStep: string;
+  confidenceNote: string;
+}
+
+export interface StudyWeakPoint {
+  conceptLabel: string;
+  workflow: StudyWorkflowKind;
+  updatedAt: number;
+  explanationSummary: string;
+  nextQuestion: string;
+  resolved: boolean;
+}
+
+export interface StudyCoachState {
+  latestRecap: StudyCheckpoint | null;
+  weakPointLedger: StudyWeakPoint[];
+  lastCheckpointAt: number | null;
+}
+
+export interface UserAdaptationProfile {
+  explanationDepth: "balanced" | "concise" | "step_by_step";
+  preferredFocusTags: string[];
+  preferredNoteStyleHints: string[];
+  avoidResponsePatterns: string[];
+  updatedAt: number;
+}
+
+export interface PanelAdaptationOverlay {
+  panelId: string;
+  preferredFocusTags: string[];
+  preferredNoteStyleHints: string[];
+  preferredSkillNames: string[];
+  lastAppliedTargetPath: string | null;
+  updatedAt: number;
+}
+
+export interface UserAdaptationMemory {
+  globalProfile: UserAdaptationProfile | null;
+  panelOverlays: Record<string, PanelAdaptationOverlay>;
 }
 
 export interface StudyRecipeContextContract {
@@ -406,6 +464,12 @@ export interface PatchEvidence {
   snippet: string | null;
 }
 
+export interface PatchQualityIssue {
+  code: PatchQualityIssueCode;
+  line?: number | null;
+  detail?: string | null;
+}
+
 export interface PatchProposal {
   id: string;
   threadId: string | null;
@@ -419,6 +483,9 @@ export interface PatchProposal {
   summary: string;
   status: PatchProposalStatus;
   createdAt: number;
+  qualityState?: PatchQualityState;
+  qualityIssues?: PatchQualityIssue[];
+  healedByPlugin?: boolean;
   anchors?: PatchProposalAnchor[];
   evidence?: PatchEvidence[];
 }
@@ -442,6 +509,29 @@ export interface VaultOpProposal {
   impact?: VaultOpImpact | null;
 }
 
+export interface SkillFeedbackRecord {
+  prompt: string;
+  summary: string;
+  targetNotePath: string | null;
+  panelId: string | null;
+  selectedSkillNames?: string[];
+  conversationSummary?: string | null;
+  appliedChangeSummary?: string | null;
+  attributionReason?: string | null;
+}
+
+export interface SkillImprovementProposal {
+  skillName: string;
+  skillPath: string;
+  baseContent: string;
+  baseContentHash: string;
+  nextContent: string;
+  feedbackSummary: string;
+  attribution: SkillFeedbackRecord;
+}
+
+export type ApprovalToolPayload = VaultOpProposal | SkillImprovementProposal;
+
 export interface PersistedTabState {
   id: string;
   title: string;
@@ -452,6 +542,7 @@ export interface PersistedTabState {
   activeStudyRecipeId: string | null;
   activeStudySkillNames: string[];
   summary: ConversationSummary | null;
+  studyCoachState?: StudyCoachState | null;
   lineage: TabLineage;
   targetNotePath: string | null;
   selectionContext: SelectionContext | null;
@@ -474,6 +565,20 @@ export interface PersistedTabState {
   restartDropNotice?: RestartDropNotice | null;
 }
 
+export interface RuntimeTabState {
+  sessionItems: ComposerAttachment[];
+  patchBasket: PatchProposal[];
+  pendingApprovals: PendingApproval[];
+  status: AgentStatus;
+  runtimeMode: RuntimeMode;
+  lastError: string | null;
+  sessionApprovals: {
+    write: boolean;
+    shell: boolean;
+  };
+  waitingState: WaitingState | null;
+}
+
 export interface PersistedWorkspaceState {
   tabs: PersistedTabState[];
   activeTabId: string | null;
@@ -483,6 +588,7 @@ export interface PersistedWorkspaceState {
   studyHubState: StudyHubState;
   studyRecipes: StudyRecipe[];
   activeStudyRecipeId: string | null;
+  userAdaptationMemory?: UserAdaptationMemory | null;
 }
 
 export interface PendingApproval {
@@ -501,23 +607,14 @@ export interface PendingApproval {
   decisionTarget?: string | null;
   scopeEligible?: boolean;
   scope?: ApprovalSessionScope;
-  toolPayload?: VaultOpProposal | null;
+  toolPayload?: ApprovalToolPayload | null;
 }
 
-export interface ConversationTabState extends PersistedTabState {
+export interface ConversationTabState extends PersistedTabState, RuntimeTabState {
+  studyCoachState?: StudyCoachState | null;
   composerHistory: ComposerHistorySnapshot;
   messages: ChatMessage[];
-  status: AgentStatus;
-  runtimeMode: RuntimeMode;
-  lastError: string | null;
-  pendingApprovals: PendingApproval[];
   toolLog: ToolCallRecord[];
-  patchBasket: PatchProposal[];
-  sessionApprovals: {
-    write: boolean;
-    shell: boolean;
-  };
-  waitingState: WaitingState | null;
 }
 
 export interface WorkspaceState {
@@ -529,6 +626,7 @@ export interface WorkspaceState {
   studyHubState: StudyHubState;
   studyRecipes: StudyRecipe[];
   activeStudyRecipeId: string | null;
+  userAdaptationMemory?: UserAdaptationMemory | null;
   runtimeIssue: string | null;
   authState: "ready" | "missing_login";
   availableModels: ModelCatalogEntry[];
@@ -538,6 +636,8 @@ export interface TurnContextSnapshot {
   activeFilePath: string | null;
   targetNotePath: string | null;
   studyWorkflow: StudyWorkflowKind | null;
+  studyCoachText?: string | null;
+  userAdaptationText?: string | null;
   conversationSummaryText: string | null;
   sourceAcquisitionMode: SourceAcquisitionMode;
   sourceAcquisitionContractText: string | null;

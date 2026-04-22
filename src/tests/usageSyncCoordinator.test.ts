@@ -152,4 +152,50 @@ describe("UsageSyncCoordinator", () => {
       }),
     ]);
   });
+
+  it("forgets remembered threads when the coordinator stops", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-sync-stop-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "thread-123.jsonl");
+    await writeUsageSession(sessionFile, { fiveHourPercent: 12, weekPercent: 34 });
+
+    const applied: Array<{ threadId: string | null; source: string }> = [];
+    const coordinator = new UsageSyncCoordinator({
+      getTabs: () => [],
+      resolveSessionFile: async (threadId) => (threadId === "thread-123" ? sessionFile : null),
+      listRecentSessionFiles: async () => [],
+      applyUsageSnapshot: (snapshot) => {
+        applied.push({ threadId: snapshot.threadId, source: snapshot.source });
+      },
+    });
+
+    coordinator.noteThread("thread-123");
+    coordinator.stop();
+    await coordinator.syncKnownThreadsNow("idle_poll");
+
+    expect(applied).toEqual([]);
+  });
+
+  it("untracks a closed tab thread so it no longer participates in polling", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-sync-untrack-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "thread-123.jsonl");
+    await writeUsageSession(sessionFile, { fiveHourPercent: 12, weekPercent: 34 });
+
+    const applied: Array<{ threadId: string | null; source: string }> = [];
+    const coordinator = new UsageSyncCoordinator({
+      getTabs: () => [],
+      resolveSessionFile: async (threadId) => (threadId === "thread-123" ? sessionFile : null),
+      listRecentSessionFiles: async () => [],
+      applyUsageSnapshot: (snapshot) => {
+        applied.push({ threadId: snapshot.threadId, source: snapshot.source });
+      },
+    });
+
+    coordinator.noteThread("thread-123");
+    coordinator.untrackTab("tab-1", "thread-123");
+    await coordinator.syncKnownThreadsNow("idle_poll");
+
+    expect(applied).toEqual([]);
+  });
 });

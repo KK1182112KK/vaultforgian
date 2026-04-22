@@ -96,8 +96,9 @@ function createState(): WorkspaceState {
 function createContext(
   state: WorkspaceState,
   activeTabIndex = 0,
+  locale: "en" | "ja" = "en",
 ): WorkspaceRenderContext {
-  const copy = getLocalizedCopy("en");
+  const copy = getLocalizedCopy(locale);
   const activeTab = state.tabs[activeTabIndex] ?? null;
   return {
     app: {
@@ -113,7 +114,7 @@ function createContext(
     state,
     activeTab,
     isNarrowLayout: false,
-    locale: "en",
+    locale,
     copy,
   };
 }
@@ -247,6 +248,78 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(avatar?.dataset.hasImage).toBe("true");
   });
 
+  it("shows the batch review controls for skill-update approvals", () => {
+    const state = createState();
+    state.tabs[0]!.pendingApprovals = [
+      {
+        id: "approval-skill-1",
+        tabId: "tab-1",
+        callId: "call-skill-1",
+        toolName: "skill_update",
+        title: "Update skill: lecture-read",
+        description: "/vault/.codex/skills/lecture-read/SKILL.md",
+        details: "Learned refinement 1",
+        diffText: "@@",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "lecture-read",
+          skillPath: "/vault/.codex/skills/lecture-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-1",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 1",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/a.md",
+            panelId: null,
+          },
+        },
+      },
+      {
+        id: "approval-skill-2",
+        tabId: "tab-1",
+        callId: "call-skill-2",
+        toolName: "skill_update",
+        title: "Update skill: deep-read",
+        description: "/vault/.codex/skills/deep-read/SKILL.md",
+        details: "Learned refinement 2",
+        diffText: "@@",
+        createdAt: 2,
+        sourceMessageId: "assistant-2",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath: "/vault/.codex/skills/deep-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-2",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 2",
+          attribution: {
+            prompt: "Clean up this note.",
+            summary: "Applied a note rewrite.",
+            targetNotePath: "notes/b.md",
+            panelId: null,
+          },
+        },
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    const context = createContext(state);
+
+    renderer.render(context);
+
+    expect(root.querySelector(".obsidian-codex__approval-batch-label")?.textContent).toBe(context.copy.workspace.pendingApprovals);
+    expect(root.textContent).toContain(context.copy.workspace.approveAll);
+    expect(root.textContent).toContain(context.copy.workspace.denyAll);
+    expect(root.querySelectorAll(".obsidian-codex__approval-card")).toHaveLength(2);
+  });
+
   it("shows effective skills as compact metadata on a normal user message", () => {
     const state = createState();
     state.tabs[0]!.messages = [
@@ -326,7 +399,7 @@ describe("TranscriptRenderer avatar safety", () => {
           JSON.stringify({
             kind: "rewrite_followup",
             summary: "Turn this into a formatting-focused note patch.",
-            question: "Want me to reflect this in the note?",
+            question: "Want me to apply this to the note now?",
           }),
           "```",
         ].join("\n"),
@@ -347,7 +420,7 @@ describe("TranscriptRenderer avatar safety", () => {
       planSummary: null,
       planStatus: null,
       rewriteSummary: "Turn this into a formatting-focused note patch.",
-      rewriteQuestion: "Want me to reflect this in the note?",
+      rewriteQuestion: "Want me to apply this to the note now?",
       createdAt: 2,
     };
     const callbacks = createCallbacks();
@@ -355,9 +428,211 @@ describe("TranscriptRenderer avatar safety", () => {
     const renderer = new TranscriptRenderer(root, callbacks);
     renderer.render(createContext(state));
 
-    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Want me to reflect this in the note?");
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Want me to apply this to the note now?");
     const actions = Array.from(root.querySelectorAll(".obsidian-codex__chat-suggestion-actions button")).map((element) => element.textContent);
-    expect(actions).toEqual(["Reflect in note", "Skip"]);
+    expect(actions).toEqual(["Apply to note", "Skip"]);
+  });
+
+  it("renders polluted internal rewrite user prompts as the short reflect label", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "user",
+        text: [
+          "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+          "Target resolution order for this rewrite: an explicitly mentioned note or path, then the selection source note, then prefer the active note for this turn, then the current session target note.",
+          "If a selection snapshot is attached, limit the rewrite to that selected section or the nearest matching section instead of rewriting the whole note.",
+          "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+          "Add concise evidence lines to the patch header when possible using `evidence: kind|label|sourceRef|snippet`.",
+          "Prefer vault-note and attachment evidence first. If that is insufficient, you may use web research and mark those evidence lines with `kind` = `web` and a source URL.",
+          "Do not ask whether to apply the change. Emit the patch now and keep any visible chat summary to at most 2 short sentences.",
+          "Assistant answer to convert:",
+          "Summarize Step 1 cleanly.",
+        ].join("\n\n"),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Apply to note");
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).not.toContain(
+      "Turn your immediately previous assistant answer",
+    );
+  });
+
+  it("hides leaked repair scaffolding from assistant transcript rendering", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: [
+          "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+          "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+          "Assistant answer to convert:",
+          "Here is the cleaned-up explanation for Step 1.",
+        ].join("\n\n"),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain(
+      "Here is the cleaned-up explanation for Step 1.",
+    );
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).not.toContain(
+      "Turn your immediately previous assistant answer",
+    );
+  });
+
+  it("hides leaked legacy rewrite scaffolding from assistant transcript rendering", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: [
+          "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+          "Target the current session target note if one is set; otherwise target the active note for this turn.",
+          "If a selection snapshot is attached, limit the rewrite to that selected section or the nearest matching section instead of rewriting the whole note.",
+          "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+          "Add concise evidence lines to the patch header when possible using `evidence: kind|label|sourceRef|snippet`.",
+          "Prefer vault-note and attachment evidence first. If that is insufficient, you may use web research and mark those evidence lines with `kind` = `web` and a source URL.",
+          "Do not ask whether to apply the change. Emit the patch now and keep any visible chat summary to at most 2 short sentences.",
+          "Assistant answer to convert: This -3.95 V is the input-side form of the earlier v_{O,min} = -4.65 V result.",
+        ].join("\n\n"),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain(
+      "This -3.95 V is the input-side form of the earlier v_{O,min} = -4.65 V result.",
+    );
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).not.toContain(
+      "Target the current session target note if one is set",
+    );
+  });
+
+  it("uses the localized fallback rewrite question when an inferred CTA omits one", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "この説明で Step 1 を整理できます。",
+        createdAt: 1,
+        meta: {
+          editOutcome: "explanation_only",
+        },
+      },
+    ];
+    state.tabs[0]!.chatSuggestion = {
+      id: "suggestion-1",
+      kind: "rewrite_followup",
+      status: "pending",
+      messageId: "m1",
+      panelId: null,
+      panelTitle: null,
+      promptSnapshot: "",
+      matchedSkillName: null,
+      canUpdatePanel: false,
+      canSaveCopy: false,
+      planSummary: null,
+      planStatus: null,
+      rewriteSummary: "Step 1 に短い補足を追記する。",
+      rewriteQuestion: null,
+      createdAt: 2,
+    };
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state, 0, "ja"));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("この内容を今のノートに適用しますか？");
+    const actions = Array.from(root.querySelectorAll(".obsidian-codex__chat-suggestion-actions button")).map((element) => element.textContent);
+    expect(actions).toEqual(["ノートに適用", "今はしない"]);
+  });
+
+  it("prepends a review-needed line to assistant edit replies", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "I tightened the section wording and cleaned up the heading hierarchy.",
+        createdAt: 1,
+        meta: {
+          editOutcome: "review_required",
+          editTargetPath: "notes/source.md",
+        },
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Review needed: source.md.");
+  });
+
+  it("shows readability-specific review copy when the patch is held for markdown risk", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "I tightened the section wording and cleaned up the heading hierarchy.",
+        createdAt: 1,
+        meta: {
+          editOutcome: "review_required",
+          editTargetPath: "notes/source.md",
+          editReviewReason: "readability_risk",
+        },
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain(
+      "Readability review needed: source.md.",
+    );
+  });
+
+  it("shows auto-healed review copy when the plugin normalized markdown before holding the patch", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "I normalized the structure and held the patch for review.",
+        createdAt: 1,
+        meta: {
+          editOutcome: "review_required",
+          editTargetPath: "notes/source.md",
+          editReviewReason: "auto_healed",
+        },
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain(
+      "Auto-healed structure: review source.md before applying.",
+    );
   });
 
   it("invalidates the transcript when the active tab suggestion is dismissed", () => {

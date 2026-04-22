@@ -1,8 +1,9 @@
 import { MarkdownRenderer, Notice, setIcon } from "obsidian";
 import { basename } from "node:path";
 import { CHAT_AVATAR_DATA_URL } from "../../generated/chatAvatar";
-import type { ChatMessage, PendingApproval, ToolCallRecord, WorkspaceState } from "../../model/types";
-import { stripAssistantProposalBlocks } from "../../util/assistantProposals";
+import type { ChatMessage, EditOutcome, PendingApproval, ToolCallRecord, WorkspaceState } from "../../model/types";
+import { normalizeVisibleUserPromptText } from "../../util/assistantChatter";
+import { extractAssistantProposals } from "../../util/assistantProposals";
 import { TRANSCRIPT_SOFT_COLLAPSE_WINDOW } from "../../util/conversationCompaction";
 import { clampTranscriptScrollTop, shouldStickTranscriptToBottom } from "../../util/transcriptScroll";
 import { buildTranscriptEntries } from "../../util/transcriptEntries";
@@ -308,7 +309,7 @@ export class TranscriptRenderer {
     wrapEl.createSpan({ cls: "obsidian-codex__approval-batch-label", text: context.copy.workspace.pendingApprovals });
     const actionsEl = wrapEl.createDiv({ cls: "obsidian-codex__approval-batch-actions" });
     const pendingTargets = (context.activeTab?.pendingApprovals ?? [])
-      .filter((approval) => approval.toolName === "vault_op")
+      .filter((approval) => approval.toolName === "vault_op" || approval.toolName === "skill_update")
       .map((approval) => approval.decisionTarget ?? approval.description)
       .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
     this.createApprovalBatchButton(
@@ -571,8 +572,14 @@ export class TranscriptRenderer {
       });
     }
 
-    const impact = approval.toolPayload?.impact;
-    if (impact && (approval.toolPayload?.kind === "rename" || approval.toolPayload?.kind === "move")) {
+    const vaultOpPayload = approval.toolName === "vault_op" ? approval.toolPayload : null;
+    const impact = vaultOpPayload && "impact" in vaultOpPayload ? vaultOpPayload.impact : null;
+    if (
+      impact &&
+      vaultOpPayload &&
+      "kind" in vaultOpPayload &&
+      (vaultOpPayload.kind === "rename" || vaultOpPayload.kind === "move")
+    ) {
       const impactEl = cardEl.createDiv({ cls: "obsidian-codex__approval-impact" });
       impactEl.createDiv({
         cls: "obsidian-codex__approval-impact-item",
@@ -696,28 +703,44 @@ export class TranscriptRenderer {
   }
 
   private getRenderableMessageText(context: WorkspaceRenderContext, message: ChatMessage): string {
-    if (message.kind === "user" || message.kind === "system") {
+    if (message.kind === "user") {
+      return normalizeVisibleUserPromptText(
+        message.text,
+        context.copy.workspace.reflectInNote,
+        typeof message.meta?.internalPromptKind === "string" ? message.meta.internalPromptKind : null,
+      );
+    }
+    if (message.kind === "system") {
       return message.text;
     }
-    const stripped = message.kind === "assistant" ? stripAssistantProposalBlocks(message.text) : message.text;
-    const normalized = stripped.replace(/^(?:[ \t]*\r?\n)+/, "");
+    const parsed = extractAssistantProposals(message.text);
+    const normalized = parsed.sanitizedDisplayText.replace(/^(?:[ \t]*\r?\n)+/, "");
+    const editStatusLine = message.kind === "assistant" ? buildEditStatusLine(context, message.meta) : null;
     const suggestion = message.kind === "assistant" ? activeTabSuggestion(context, message.id) : null;
     const rewriteQuestion =
       suggestion?.kind === "rewrite_followup"
         ? suggestion.rewriteQuestion?.trim() || context.copy.workspace.reflectInNoteQuestion
         : null;
-    if (rewriteQuestion) {
-      if (!normalized.trim()) {
-        return rewriteQuestion;
-      }
-      if (!normalized.includes(rewriteQuestion)) {
-        return `${normalized}\n\n${rewriteQuestion}`;
-      }
+    const hasArtifacts =
+      parsed.patches.length > 0 || parsed.ops.length > 0 || Boolean(parsed.plan || parsed.suggestion || parsed.studyCheckpoint);
+    const body = !normalized.trim() && hasArtifacts ? context.copy.workspace.changesProposedBelow : normalized;
+    const bodyWithQuestion =
+      rewriteQuestion && body.trim() && !body.includes(rewriteQuestion)
+        ? `${body}\n\n${rewriteQuestion}`
+        : rewriteQuestion && !body.trim()
+          ? rewriteQuestion
+          : body;
+
+    if (!editStatusLine) {
+      return bodyWithQuestion;
     }
-    if (message.kind === "assistant" && !normalized.trim() && message.text.trim()) {
-      return context.copy.workspace.changesProposedBelow;
+    if (!bodyWithQuestion.trim()) {
+      return editStatusLine;
     }
-    return normalized;
+    if (bodyWithQuestion.startsWith(editStatusLine)) {
+      return bodyWithQuestion;
+    }
+    return `${editStatusLine}\n\n${bodyWithQuestion}`;
   }
 
   private createApprovalButton(
@@ -787,7 +810,43 @@ function createMessageMetaSignature(meta: ChatMessage["meta"] | null | undefined
     sourcePath: typeof meta.sourcePath === "string" ? meta.sourcePath : null,
     attachmentCount: typeof meta.attachmentCount === "number" ? meta.attachmentCount : null,
     effectiveSkillsCsv: typeof meta.effectiveSkillsCsv === "string" ? meta.effectiveSkillsCsv : null,
+    editOutcome: typeof meta.editOutcome === "string" ? meta.editOutcome : null,
+    editTargetPath: typeof meta.editTargetPath === "string" ? meta.editTargetPath : null,
+    editReviewReason: typeof meta.editReviewReason === "string" ? meta.editReviewReason : null,
   });
+}
+
+function buildEditStatusLine(
+  context: WorkspaceRenderContext,
+  meta: ChatMessage["meta"] | null | undefined,
+): string | null {
+  const outcome = typeof meta?.editOutcome === "string" ? (meta.editOutcome as EditOutcome) : null;
+  const reviewReason = typeof meta?.editReviewReason === "string" ? meta.editReviewReason : null;
+  if (!outcome) {
+    return null;
+  }
+  const targetPath = typeof meta?.editTargetPath === "string" ? meta.editTargetPath.trim() : "";
+  const targetName = targetPath ? basename(targetPath) : null;
+  switch (outcome) {
+    case "applied":
+      return context.copy.workspace.editAppliedStatus(targetName);
+    case "review_required":
+      if (reviewReason === "readability_risk") {
+        return context.copy.workspace.editReadabilityReviewStatus(targetName);
+      }
+      if (reviewReason === "auto_healed") {
+        return context.copy.workspace.editAutoHealedReviewStatus(targetName);
+      }
+      return context.copy.workspace.editReviewRequiredStatus(targetName);
+    case "proposal_only":
+      return context.copy.workspace.editProposalStatus(targetName);
+    case "explanation_only":
+      return context.copy.workspace.editExplanationOnlyStatus;
+    case "failed":
+      return context.copy.workspace.editFailedStatus(targetName);
+    default:
+      return null;
+  }
 }
 
 function createChatSuggestionSignature(suggestion: WorkspaceState["tabs"][number]["chatSuggestion"] | null): string {

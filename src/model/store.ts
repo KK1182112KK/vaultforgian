@@ -14,7 +14,9 @@ import type {
   ComposerHistorySnapshot,
   RestartDropNotice,
   RecentStudySource,
+  StudyCoachState,
   StudyHubState,
+  StudyWeakPoint,
   StudyWorkflowKind,
   ConversationTabState,
   ModelCatalogEntry,
@@ -23,12 +25,19 @@ import type {
   PersistedWorkspaceState,
   StudyRecipe,
   ToolCallRecord,
+  UserAdaptationMemory,
+  UserAdaptationProfile,
   UsageSummary,
   WaitingState,
   WorkspaceState,
 } from "./types";
 
 type Listener = (state: WorkspaceState) => void;
+type SessionModeDefaults = {
+  fastMode: boolean;
+  learningMode: boolean;
+};
+
 const MAX_PERSISTED_COMPOSER_HISTORY_ENTRIES = 50;
 const LEGACY_TRANSIENT_RUNTIME_SYSTEM_MESSAGE_PATTERNS = [
   /^Codex stopped emitting events for 120 seconds, so this turn was aborted\.$/i,
@@ -50,6 +59,184 @@ function normalizeLineage(lineage: ConversationTabState["lineage"] | null | unde
     pendingThreadReset: false,
     compactedFromThreadId: null,
     ...lineage,
+  };
+}
+
+function normalizeStudyWeakPoint(point: StudyWeakPoint | null | undefined): StudyWeakPoint | null {
+  if (!point) {
+    return null;
+  }
+  const conceptLabel = typeof point.conceptLabel === "string" ? point.conceptLabel.trim() : "";
+  const workflow = point.workflow;
+  const explanationSummary = typeof point.explanationSummary === "string" ? point.explanationSummary.trim() : "";
+  const nextQuestion = typeof point.nextQuestion === "string" ? point.nextQuestion.trim() : "";
+  const updatedAt = typeof point.updatedAt === "number" && Number.isFinite(point.updatedAt) ? point.updatedAt : Date.now();
+  if (!conceptLabel || !workflow || !explanationSummary || !nextQuestion) {
+    return null;
+  }
+  return {
+    conceptLabel,
+    workflow,
+    updatedAt,
+    explanationSummary,
+    nextQuestion,
+    resolved: Boolean(point.resolved),
+  };
+}
+
+function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | undefined): StudyCoachState | null {
+  if (!studyCoachState) {
+    return null;
+  }
+  const latestRecap = studyCoachState.latestRecap
+    ? {
+        workflow: studyCoachState.latestRecap.workflow,
+        mastered: Array.isArray(studyCoachState.latestRecap.mastered)
+          ? studyCoachState.latestRecap.mastered.map((entry) => entry.trim()).filter(Boolean)
+          : [],
+        unclear: Array.isArray(studyCoachState.latestRecap.unclear)
+          ? studyCoachState.latestRecap.unclear.map((entry) => entry.trim()).filter(Boolean)
+          : [],
+        nextStep: typeof studyCoachState.latestRecap.nextStep === "string" ? studyCoachState.latestRecap.nextStep.trim() : "",
+        confidenceNote:
+          typeof studyCoachState.latestRecap.confidenceNote === "string" ? studyCoachState.latestRecap.confidenceNote.trim() : "",
+      }
+    : null;
+  const weakPointLedger = Array.isArray(studyCoachState.weakPointLedger)
+    ? studyCoachState.weakPointLedger
+        .map((entry) => normalizeStudyWeakPoint(entry))
+        .filter((entry): entry is StudyWeakPoint => Boolean(entry))
+    : [];
+  const lastCheckpointAt =
+    typeof studyCoachState.lastCheckpointAt === "number" && Number.isFinite(studyCoachState.lastCheckpointAt)
+      ? studyCoachState.lastCheckpointAt
+      : latestRecap
+        ? Date.now()
+        : null;
+  if (!latestRecap && weakPointLedger.length === 0 && lastCheckpointAt === null) {
+    return null;
+  }
+  return {
+    latestRecap:
+      latestRecap && latestRecap.nextStep && latestRecap.confidenceNote
+        ? latestRecap
+        : null,
+    weakPointLedger,
+    lastCheckpointAt,
+  };
+}
+
+function cloneStudyCoachState(studyCoachState: StudyCoachState | null | undefined): StudyCoachState | null {
+  const normalized = normalizeStudyCoachState(studyCoachState);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    latestRecap: normalized.latestRecap
+      ? {
+          workflow: normalized.latestRecap.workflow,
+          mastered: [...normalized.latestRecap.mastered],
+          unclear: [...normalized.latestRecap.unclear],
+          nextStep: normalized.latestRecap.nextStep,
+          confidenceNote: normalized.latestRecap.confidenceNote,
+        }
+      : null,
+    weakPointLedger: normalized.weakPointLedger.map((entry) => ({ ...entry })),
+    lastCheckpointAt: normalized.lastCheckpointAt,
+  };
+}
+
+function normalizeUserAdaptationMemory(memory: UserAdaptationMemory | null | undefined): UserAdaptationMemory | null {
+  if (!memory) {
+    return null;
+  }
+  const globalProfile: UserAdaptationProfile | null = memory.globalProfile
+    ? {
+        explanationDepth:
+          memory.globalProfile.explanationDepth === "concise" || memory.globalProfile.explanationDepth === "step_by_step"
+            ? memory.globalProfile.explanationDepth
+            : "balanced",
+        preferredFocusTags: Array.isArray(memory.globalProfile.preferredFocusTags)
+          ? [...new Set(memory.globalProfile.preferredFocusTags.map((entry) => entry.trim()).filter(Boolean))]
+          : [],
+        preferredNoteStyleHints: Array.isArray(memory.globalProfile.preferredNoteStyleHints)
+          ? [...new Set(memory.globalProfile.preferredNoteStyleHints.map((entry) => entry.trim()).filter(Boolean))]
+          : [],
+        avoidResponsePatterns: Array.isArray(memory.globalProfile.avoidResponsePatterns)
+          ? [...new Set(memory.globalProfile.avoidResponsePatterns.map((entry) => entry.trim()).filter(Boolean))]
+          : [],
+        updatedAt:
+          typeof memory.globalProfile.updatedAt === "number" && Number.isFinite(memory.globalProfile.updatedAt)
+            ? memory.globalProfile.updatedAt
+            : Date.now(),
+      }
+    : null;
+  const panelEntries = Object.entries(memory.panelOverlays ?? {}).flatMap(([panelId, overlay]) => {
+    const normalizedPanelId = panelId.trim();
+    if (!normalizedPanelId || !overlay) {
+      return [];
+    }
+    return [
+      [
+        normalizedPanelId,
+        {
+          panelId: typeof overlay.panelId === "string" && overlay.panelId.trim() ? overlay.panelId.trim() : normalizedPanelId,
+          preferredFocusTags: Array.isArray(overlay.preferredFocusTags)
+            ? [...new Set(overlay.preferredFocusTags.map((entry) => entry.trim()).filter(Boolean))]
+            : [],
+          preferredNoteStyleHints: Array.isArray(overlay.preferredNoteStyleHints)
+            ? [...new Set(overlay.preferredNoteStyleHints.map((entry) => entry.trim()).filter(Boolean))]
+            : [],
+          preferredSkillNames: Array.isArray(overlay.preferredSkillNames)
+            ? [...new Set(overlay.preferredSkillNames.map((entry) => entry.trim()).filter(Boolean))]
+            : [],
+          lastAppliedTargetPath:
+            typeof overlay.lastAppliedTargetPath === "string" && overlay.lastAppliedTargetPath.trim()
+              ? overlay.lastAppliedTargetPath.trim()
+              : null,
+          updatedAt:
+            typeof overlay.updatedAt === "number" && Number.isFinite(overlay.updatedAt) ? overlay.updatedAt : Date.now(),
+        },
+      ] as const,
+    ];
+  });
+  if (!globalProfile && panelEntries.length === 0) {
+    return null;
+  }
+  return {
+    globalProfile,
+    panelOverlays: Object.fromEntries(panelEntries),
+  };
+}
+
+function cloneUserAdaptationMemory(memory: UserAdaptationMemory | null | undefined): UserAdaptationMemory | null {
+  const normalized = normalizeUserAdaptationMemory(memory);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    globalProfile: normalized.globalProfile
+      ? {
+          explanationDepth: normalized.globalProfile.explanationDepth,
+          preferredFocusTags: [...normalized.globalProfile.preferredFocusTags],
+          preferredNoteStyleHints: [...normalized.globalProfile.preferredNoteStyleHints],
+          avoidResponsePatterns: [...normalized.globalProfile.avoidResponsePatterns],
+          updatedAt: normalized.globalProfile.updatedAt,
+        }
+      : null,
+    panelOverlays: Object.fromEntries(
+      Object.entries(normalized.panelOverlays).map(([panelId, overlay]) => [
+        panelId,
+        {
+          panelId: overlay.panelId,
+          preferredFocusTags: [...overlay.preferredFocusTags],
+          preferredNoteStyleHints: [...overlay.preferredNoteStyleHints],
+          preferredSkillNames: [...overlay.preferredSkillNames],
+          lastAppliedTargetPath: overlay.lastAppliedTargetPath,
+          updatedAt: overlay.updatedAt,
+        },
+      ]),
+    ),
   };
 }
 
@@ -277,6 +464,13 @@ function normalizeTabStudyState(tab: ConversationTabState, recipes: StudyRecipe[
   tab.chatSuggestion = normalizeChatSuggestion(tab.chatSuggestion, recipes);
 }
 
+function reconcileStudyRecipeState(state: WorkspaceState): void {
+  for (const tab of state.tabs) {
+    normalizeTabStudyState(tab, state.studyRecipes);
+  }
+  state.activeStudyRecipeId = deriveActiveStudyRecipeId(state.tabs, state.activeTabId);
+}
+
 function ensureUniqueTabIds(
   tabs: ConversationTabState[],
 ): { tabs: ConversationTabState[]; remappedIds: Map<string, string> } {
@@ -310,6 +504,18 @@ function cloneUsageSummary(usageSummary: ConversationTabState["usageSummary"]) {
     total: usageSummary.total ? { ...usageSummary.total } : null,
     limits: { ...usageSummary.limits },
   };
+}
+
+function cloneChatMessage(message: ChatMessage): ChatMessage {
+  return structuredClone(message);
+}
+
+function clonePendingApproval(approval: PendingApproval): PendingApproval {
+  return structuredClone(approval);
+}
+
+function clonePatchProposal(proposal: PatchProposal): PatchProposal {
+  return structuredClone(proposal);
 }
 
 function cloneAccountUsage(accountUsage: AccountUsageSummary): AccountUsageSummary {
@@ -369,6 +575,7 @@ function cloneState(state: WorkspaceState): WorkspaceState {
     studyHubState: { ...state.studyHubState },
     studyRecipes: state.studyRecipes.map((recipe) => structuredClone(recipe)),
     activeStudyRecipeId: state.activeStudyRecipeId,
+    userAdaptationMemory: cloneUserAdaptationMemory(state.userAdaptationMemory),
     availableModels: state.availableModels.map((model) => ({
       ...model,
       supportedReasoningLevels: [...model.supportedReasoningLevels],
@@ -378,6 +585,7 @@ function cloneState(state: WorkspaceState): WorkspaceState {
       activeStudyRecipeId: tab.activeStudyRecipeId,
       activeStudySkillNames: [...tab.activeStudySkillNames],
       summary: tab.summary ? { ...tab.summary } : null,
+      studyCoachState: cloneStudyCoachState(tab.studyCoachState),
       lineage: normalizeLineage(tab.lineage),
       targetNotePath: tab.targetNotePath,
       selectionContext: tab.selectionContext ? { ...tab.selectionContext } : null,
@@ -386,10 +594,10 @@ function cloneState(state: WorkspaceState): WorkspaceState {
       composerHistory: cloneComposerHistory(tab.composerHistory),
       contextPaths: [...tab.contextPaths],
       sessionItems: tab.sessionItems.map((item) => structuredClone(item)),
-      messages: tab.messages.map((message) => ({ ...message })),
-      pendingApprovals: tab.pendingApprovals.map((approval) => ({ ...approval })),
+      messages: tab.messages.map((message) => cloneChatMessage(message)),
+      pendingApprovals: tab.pendingApprovals.map((approval) => clonePendingApproval(approval)),
       toolLog: tab.toolLog.map((entry) => ({ ...entry })),
-      patchBasket: tab.patchBasket.map((proposal) => ({ ...proposal })),
+      patchBasket: tab.patchBasket.map((proposal) => clonePatchProposal(proposal)),
       sessionApprovals: { ...tab.sessionApprovals },
       usageSummary: cloneUsageSummary(tab.usageSummary),
       waitingState: tab.waitingState ? { ...tab.waitingState } : null,
@@ -407,6 +615,7 @@ function createTab(cwd: string, partial?: Partial<ConversationTabState>): Conver
     activeStudyRecipeId: partial?.activeStudyRecipeId ?? null,
     activeStudySkillNames: partial?.activeStudySkillNames ? [...partial.activeStudySkillNames] : [],
     summary: partial?.summary ?? null,
+    studyCoachState: cloneStudyCoachState(partial?.studyCoachState),
     lineage: normalizeLineage(partial?.lineage),
     targetNotePath: partial?.targetNotePath ?? null,
     selectionContext: partial?.selectionContext ? { ...partial.selectionContext } : null,
@@ -417,7 +626,7 @@ function createTab(cwd: string, partial?: Partial<ConversationTabState>): Conver
     learningMode: partial?.learningMode ?? false,
     contextPaths: partial?.contextPaths ?? [],
     lastResponseId: partial?.lastResponseId ?? null,
-    sessionItems: partial?.sessionItems ?? [],
+    sessionItems: partial?.sessionItems?.map((item) => structuredClone(item)) ?? [],
     codexThreadId: partial?.codexThreadId ?? null,
     model: partial?.model ?? DEFAULT_PRIMARY_MODEL,
     reasoningEffort: partial?.reasoningEffort ?? "xhigh",
@@ -425,35 +634,63 @@ function createTab(cwd: string, partial?: Partial<ConversationTabState>): Conver
     usageSummary: partial?.usageSummary ?? createEmptyUsageSummary(),
     messages: normalizeRestoredMessages(partial?.messages),
     diffText: partial?.diffText ?? "",
-    toolLog: partial?.toolLog ?? [],
-    patchBasket: partial?.patchBasket ?? [],
+    toolLog: partial?.toolLog?.map((entry) => ({ ...entry })) ?? [],
+    patchBasket: partial?.patchBasket?.map((proposal) => clonePatchProposal(proposal)) ?? [],
     status: partial?.status ?? "ready",
     runtimeMode: partial?.runtimeMode ?? "normal",
     lastError: partial?.lastError ?? null,
-    pendingApprovals: partial?.pendingApprovals ?? [],
+    pendingApprovals: partial?.pendingApprovals?.map((approval) => clonePendingApproval(approval)) ?? [],
     sessionApprovals: partial?.sessionApprovals ?? { write: false, shell: false },
     waitingState: partial?.waitingState ?? null,
   };
 }
 
+function normalizeSessionModeDefaults(defaults?: Partial<SessionModeDefaults> | null): SessionModeDefaults {
+  return {
+    fastMode: defaults?.fastMode === true,
+    learningMode: defaults?.learningMode === true,
+  };
+}
+
+function deriveWorkspaceSessionModeDefaults(initial: PersistedWorkspaceState | null): SessionModeDefaults {
+  const activeTab =
+    initial?.activeTabId && initial.tabs.some((tab) => tab.id === initial.activeTabId)
+      ? initial.tabs.find((tab) => tab.id === initial.activeTabId) ?? null
+      : initial?.tabs[0] ?? null;
+  return normalizeSessionModeDefaults(activeTab ?? null);
+}
+
 export class AgentStore {
   private state: WorkspaceState;
   private listeners = new Set<Listener>();
+  private sessionModeDefaults: SessionModeDefaults;
 
-  constructor(initial: PersistedWorkspaceState | null, fallbackCwd: string, hasLogin: boolean) {
+  constructor(initial: PersistedWorkspaceState | null, fallbackCwd: string, hasLogin: boolean, defaults?: Partial<SessionModeDefaults> | null) {
+    this.sessionModeDefaults =
+      defaults === undefined
+        ? deriveWorkspaceSessionModeDefaults(initial)
+        : normalizeSessionModeDefaults(defaults);
     const tabs =
       initial?.tabs.length && initial.tabs.length > 0
         ? initial.tabs.map((tab) => {
             const restartDropNotice = normalizeRestartDropNotice(tab.restartDropNotice);
             return createTab(tab.cwd || fallbackCwd, {
               ...tab,
+              learningMode: this.sessionModeDefaults.learningMode,
+              fastMode: this.sessionModeDefaults.fastMode,
               messages: appendRestartDropMessage(tab.messages, restartDropNotice),
               status: hasLogin ? "ready" : "missing_login",
               pendingApprovals: [],
               sessionApprovals: { write: false, shell: false },
             });
           })
-        : [createTab(fallbackCwd, { title: "Study chat", status: hasLogin ? "ready" : "missing_login" })];
+        : [
+            createTab(fallbackCwd, {
+              title: "Study chat",
+              status: hasLogin ? "ready" : "missing_login",
+              ...this.sessionModeDefaults,
+            }),
+          ];
     const { tabs: normalizedTabs, remappedIds } = ensureUniqueTabIds(tabs);
     const requestedActiveTabId = initial?.activeTabId ?? null;
     const remappedActiveTabId =
@@ -477,6 +714,7 @@ export class AgentStore {
       isCollapsed: initial?.studyHubState?.isCollapsed ?? false,
     };
     const studyRecipes = initial?.studyRecipes?.map((recipe) => structuredClone(recipe)) ?? [];
+    const userAdaptationMemory = normalizeUserAdaptationMemory(initial?.userAdaptationMemory);
 
     const tabsWithPanelSelection = normalizedTabs.map((tab) => {
       const nextTab: ConversationTabState = {
@@ -504,6 +742,7 @@ export class AgentStore {
       studyHubState,
       studyRecipes,
       activeStudyRecipeId: deriveActiveStudyRecipeId(tabsWithPanelSelection, activeTabId),
+      userAdaptationMemory,
       runtimeIssue: null,
       authState: hasLogin ? "ready" : "missing_login",
       availableModels: getFallbackModelCatalog(),
@@ -526,6 +765,10 @@ export class AgentStore {
     return this.state.tabs.find((tab) => tab.id === this.state.activeTabId) ?? null;
   }
 
+  getSessionModeDefaults(): { fastMode: boolean; learningMode: boolean } {
+    return { ...this.sessionModeDefaults };
+  }
+
   serialize(): PersistedWorkspaceState {
     return {
       tabs: this.state.tabs.map((tab) => ({
@@ -537,6 +780,7 @@ export class AgentStore {
         activeStudyRecipeId: tab.activeStudyRecipeId,
         activeStudySkillNames: [...tab.activeStudySkillNames],
         summary: tab.summary ? { ...tab.summary } : null,
+        studyCoachState: cloneStudyCoachState(tab.studyCoachState),
         lineage: normalizeLineage(tab.lineage),
         targetNotePath: tab.targetNotePath,
         selectionContext: tab.selectionContext ? { ...tab.selectionContext } : null,
@@ -555,7 +799,7 @@ export class AgentStore {
         codexThreadId: tab.codexThreadId,
         model: tab.model,
         reasoningEffort: tab.reasoningEffort,
-        fastMode: tab.fastMode ? true : undefined,
+        fastMode: tab.fastMode,
         usageSummary: cloneUsageSummary(tab.usageSummary),
         messages: tab.messages.map((message) => ({
           id: message.id,
@@ -576,12 +820,19 @@ export class AgentStore {
       studyHubState: { ...this.state.studyHubState },
       studyRecipes: this.state.studyRecipes.map((recipe) => structuredClone(recipe)),
       activeStudyRecipeId: this.state.activeStudyRecipeId,
+      userAdaptationMemory: cloneUserAdaptationMemory(this.state.userAdaptationMemory),
     };
   }
 
   createTab(cwd: string, title = "New study chat", partial?: Partial<ConversationTabState>): ConversationTabState {
     const status = this.state.authState === "ready" ? "ready" : "missing_login";
-    const tab = createTab(cwd, { ...partial, title, status });
+    const tab = createTab(cwd, {
+      learningMode: this.sessionModeDefaults.learningMode,
+      fastMode: this.sessionModeDefaults.fastMode,
+      ...partial,
+      title,
+      status,
+    });
     this.mutate((state) => {
       state.tabs.push(tab);
       state.activeTabId = tab.id;
@@ -589,7 +840,8 @@ export class AgentStore {
     return tab;
   }
 
-  closeTab(tabId: string, fallbackCwd: string): void {
+  closeTab(tabId: string, fallbackCwd: string, defaults?: Partial<SessionModeDefaults> | null): void {
+    const fallbackModes = normalizeSessionModeDefaults(defaults ?? this.sessionModeDefaults);
     this.mutate((state) => {
       state.tabs = state.tabs.filter((tab) => tab.id !== tabId);
       if (state.tabs.length === 0) {
@@ -597,6 +849,7 @@ export class AgentStore {
           createTab(fallbackCwd, {
             title: "Study chat",
             status: state.authState === "ready" ? "ready" : "missing_login",
+            ...fallbackModes,
           }),
         ];
       }
@@ -658,10 +911,13 @@ export class AgentStore {
   setStudyRecipes(studyRecipes: StudyRecipe[]): void {
     this.mutate((state) => {
       state.studyRecipes = studyRecipes.map((recipe) => structuredClone(recipe));
-      for (const tab of state.tabs) {
-        normalizeTabStudyState(tab, state.studyRecipes);
-      }
-      state.activeStudyRecipeId = deriveActiveStudyRecipeId(state.tabs, state.activeTabId);
+      reconcileStudyRecipeState(state);
+    });
+  }
+
+  setUserAdaptationMemory(userAdaptationMemory: UserAdaptationMemory | null): void {
+    this.mutate((state) => {
+      state.userAdaptationMemory = cloneUserAdaptationMemory(userAdaptationMemory);
     });
   }
 
@@ -684,6 +940,7 @@ export class AgentStore {
       } else {
         state.studyRecipes.push(structuredClone(recipe));
       }
+      reconcileStudyRecipeState(state);
     });
   }
 
@@ -754,6 +1011,18 @@ export class AgentStore {
     });
   }
 
+  setAllTabsLearningMode(learningMode: boolean): void {
+    this.sessionModeDefaults = {
+      ...this.sessionModeDefaults,
+      learningMode,
+    };
+    this.mutate((state) => {
+      for (const tab of state.tabs) {
+        tab.learningMode = learningMode;
+      }
+    });
+  }
+
   setActiveStudyPanel(tabId: string, recipeId: string | null, skillNames: string[] = []): void {
     this.mutate((state) => {
       const tab = state.tabs.find((entry) => entry.id === tabId);
@@ -799,6 +1068,12 @@ export class AgentStore {
   setSummary(tabId: string, summary: ConversationTabState["summary"]): void {
     this.updateTab(tabId, (tab) => {
       tab.summary = summary ? { ...summary } : null;
+    });
+  }
+
+  setStudyCoachState(tabId: string, studyCoachState: ConversationTabState["studyCoachState"]): void {
+    this.updateTab(tabId, (tab) => {
+      tab.studyCoachState = cloneStudyCoachState(studyCoachState);
     });
   }
 
@@ -875,6 +1150,25 @@ export class AgentStore {
     });
   }
 
+  setAllTabsFastMode(fastMode: boolean): void {
+    this.sessionModeDefaults = {
+      ...this.sessionModeDefaults,
+      fastMode,
+    };
+    this.mutate((state) => {
+      for (const tab of state.tabs) {
+        tab.fastMode = fastMode;
+      }
+    });
+  }
+
+  setSessionModeDefaults(defaults: Partial<SessionModeDefaults> | null | undefined): void {
+    this.sessionModeDefaults = normalizeSessionModeDefaults({
+      ...this.sessionModeDefaults,
+      ...(defaults ?? {}),
+    });
+  }
+
   setUsageSummary(tabId: string, usageSummary: UsageSummary): void {
     this.updateTab(tabId, (tab) => {
       tab.usageSummary = cloneUsageSummary(usageSummary);
@@ -930,13 +1224,13 @@ export class AgentStore {
 
   setPatchBasket(tabId: string, patchBasket: PatchProposal[]): void {
     this.updateTab(tabId, (tab) => {
-      tab.patchBasket = patchBasket.map((proposal) => ({ ...proposal }));
+      tab.patchBasket = patchBasket.map((proposal) => clonePatchProposal(proposal));
     });
   }
 
   addMessage(tabId: string, message: ChatMessage): void {
     this.updateTab(tabId, (tab) => {
-      tab.messages.push({ ...message });
+      tab.messages.push(cloneChatMessage(message));
     });
   }
 
@@ -955,13 +1249,13 @@ export class AgentStore {
 
   addApproval(tabId: string, approval: PendingApproval): void {
     this.updateTab(tabId, (tab) => {
-      tab.pendingApprovals.push({ ...approval });
+      tab.pendingApprovals.push(clonePendingApproval(approval));
     });
   }
 
   setApprovals(tabId: string, approvals: PendingApproval[]): void {
     this.updateTab(tabId, (tab) => {
-      tab.pendingApprovals = approvals.map((approval) => ({ ...approval }));
+      tab.pendingApprovals = approvals.map((approval) => clonePendingApproval(approval));
     });
   }
 
@@ -984,7 +1278,10 @@ export class AgentStore {
       const retained = tab.pendingApprovals.filter(
         (approval) => !(approval.transport === "plugin_proposal" && approval.sourceMessageId === sourceMessageId),
       );
-      tab.pendingApprovals = [...retained, ...approvals.map((approval) => ({ ...approval }))];
+      tab.pendingApprovals = [
+        ...retained,
+        ...approvals.map((approval) => clonePendingApproval(approval)),
+      ];
     });
   }
 
@@ -1028,7 +1325,7 @@ export class AgentStore {
   replacePatchProposals(tabId: string, sourceMessageId: string, proposals: PatchProposal[]): void {
     this.updateTab(tabId, (tab) => {
       const retained = tab.patchBasket.filter((proposal) => proposal.sourceMessageId !== sourceMessageId);
-      tab.patchBasket = [...retained, ...proposals.map((proposal) => ({ ...proposal }))].sort(
+      tab.patchBasket = [...retained, ...proposals.map((proposal) => clonePatchProposal(proposal))].sort(
         (left, right) => left.createdAt - right.createdAt,
       );
     });

@@ -9,6 +9,10 @@ import {
   type StudyRecipe,
   type TurnContextSnapshot,
 } from "../model/types";
+import {
+  CALLOUT_MATH_COLLISION_SAMPLE,
+  CALLOUT_MATH_SAMPLE,
+} from "./fixtures/calloutMathFixture";
 import { createEmptyAccountUsageSummary, createEmptyUsageSummary } from "../util/usage";
 
 const tempRoots: string[] = [];
@@ -28,6 +32,57 @@ function createApp(basePath: string) {
       getMostRecentLeaf: () => null,
     },
   } as never;
+}
+
+function createWritableApp(basePath: string, initialFiles: Record<string, string> = {}) {
+  const files = new Map(Object.entries(initialFiles));
+  const folders = new Set<string>();
+  return {
+    app: {
+      vault: {
+        adapter: { basePath },
+        getAbstractFileByPath(path: string) {
+          if (files.has(path) || folders.has(path)) {
+            return { path };
+          }
+          return null;
+        },
+        cachedRead: vi.fn(async (file: { path: string }) => files.get(file.path) ?? ""),
+        create: vi.fn(async (path: string, content: string) => {
+          files.set(path, content);
+          return { path };
+        }),
+        modify: vi.fn(async (file: { path: string }, content: string) => {
+          files.set(file.path, content);
+        }),
+        createFolder: vi.fn(async (path: string) => {
+          folders.add(path);
+        }),
+      },
+      fileManager: {
+        renameFile: vi.fn(async (file: { path: string }, nextPath: string) => {
+          const content = files.get(file.path);
+          files.delete(file.path);
+          files.set(nextPath, content ?? "");
+        }),
+        processFrontMatter: vi.fn(async (_file: { path: string }, updater: (frontmatter: Record<string, unknown>) => void) => {
+          updater({});
+        }),
+      },
+      workspace: {
+        getActiveFile: () => null,
+        getMostRecentLeaf: () => null,
+        getLeaf: vi.fn(() => ({
+          openFile: vi.fn(async () => {}),
+        })),
+      },
+      metadataCache: {
+        resolvedLinks: {},
+        unresolvedLinks: {},
+      },
+    } as never,
+    files,
+  };
 }
 
 function createPanel(id: string, linkedSkillNames: string[]): StudyRecipe {
@@ -117,7 +172,66 @@ type PrivateRunTurn = (
   userMessageId?: string | null,
 ) => Promise<void>;
 
+function createNoteTurnContext(vaultRoot: string, overrides: Partial<TurnContextSnapshot> = {}): TurnContextSnapshot {
+  return {
+    activeFilePath: "notes/current.md",
+    targetNotePath: "notes/current.md",
+    studyWorkflow: null,
+    conversationSummaryText: null,
+    sourceAcquisitionMode: "vault_note",
+    sourceAcquisitionContractText: "Source acquisition is already complete.",
+    workflowText: null,
+    pluginFeatureText: null,
+    paperStudyRuntimeOverlayText: null,
+    skillGuideText: null,
+    paperStudyGuideText: null,
+    mentionContextText: null,
+    selection: null,
+    selectionSourcePath: "notes/current.md",
+    vaultRoot,
+    dailyNotePath: null,
+    contextPackText: null,
+    attachmentManifestText: null,
+    attachmentContentText: null,
+    noteSourcePackText: "Target note source pack",
+    attachmentMissingPdfTextNames: [],
+    attachmentMissingSourceNames: [],
+    ...overrides,
+  };
+}
+
 describe("CodexService sendPrompt skill context", () => {
+  it.each([
+    "Improve this note.",
+    "Translate this note into Japanese.",
+    "Clean up this note.",
+  ])("treats common edit phrasing as vault-write intent: %s", async (promptText) => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-edit-intent-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    await service.sendPrompt(tabId, promptText);
+
+    expect(runTurnSpy).toHaveBeenCalledTimes(1);
+    expect(runTurnSpy.mock.calls[0]?.[11]).toBe(true);
+  });
+
   it("hydrates panel-selected skills before building the turn context", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-sendprompt-"));
     tempRoots.push(vaultRoot);
@@ -174,7 +288,7 @@ describe("CodexService sendPrompt skill context", () => {
     expect(userMessage?.meta?.effectiveSkillCount).toBe(1);
   });
 
-  it("tracks learning mode per tab", async () => {
+  it("syncs learning mode across open tabs", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-modifiers-"));
     tempRoots.push(vaultRoot);
 
@@ -194,13 +308,130 @@ describe("CodexService sendPrompt skill context", () => {
     if (!tabId) {
       throw new Error("Missing tab");
     }
+    const secondTab = service.createTab();
+    if (!secondTab) {
+      throw new Error("Missing second tab");
+    }
 
     expect(service.getActiveTab()?.learningMode).toBe(false);
     expect(service.toggleTabLearningMode(tabId)).toBe(true);
+    expect(service.store.getState().tabs.every((tab) => tab.learningMode === true)).toBe(true);
+    service.activateTab(secondTab.id);
     expect(service.getActiveTab()?.learningMode).toBe(true);
     expect(service.setTabLearningMode(tabId, false)).toBe(false);
-    expect(service.getActiveTab()?.learningMode).toBe(false);
+    expect(service.store.getState().tabs.every((tab) => tab.learningMode === false)).toBe(true);
     expect(runTurnSpy).not.toHaveBeenCalled();
+  });
+
+  it("syncs fast and learning modes across sessions and reuses them for new tabs and sessions", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-sticky-modes-"));
+    tempRoots.push(vaultRoot);
+
+    let settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      defaultFastMode: false,
+      defaultLearningMode: false,
+    };
+    const updateSettings = vi.fn(async (next: PluginSettings) => {
+      settings = next;
+    });
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => settings,
+      () => "en",
+      null,
+      async () => {},
+      updateSettings,
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const existingTab = service.createTab();
+    if (!existingTab) {
+      throw new Error("Missing existing tab");
+    }
+
+    service.setTabFastMode(tabId, true);
+    expect(service.setTabLearningMode(tabId, true)).toBe(true);
+    await Promise.resolve();
+
+    expect(updateSettings).toHaveBeenCalled();
+    expect(settings.defaultFastMode).toBe(true);
+    expect(settings.defaultLearningMode).toBe(true);
+    expect(service.getActiveTab()?.fastMode).toBe(true);
+    expect(service.getActiveTab()?.learningMode).toBe(true);
+    expect(service.store.getState().tabs.every((tab) => tab.fastMode === true)).toBe(true);
+    expect(service.store.getState().tabs.every((tab) => tab.learningMode === true)).toBe(true);
+
+    service.activateTab(existingTab.id);
+    expect(service.getActiveTab()?.fastMode).toBe(true);
+    expect(service.getActiveTab()?.learningMode).toBe(true);
+
+    const createdTab = service.createTab();
+    expect(createdTab?.fastMode).toBe(true);
+    expect(createdTab?.learningMode).toBe(true);
+
+    service.setTabFastMode(existingTab.id, false);
+    expect(service.setTabLearningMode(existingTab.id, false)).toBe(false);
+    await Promise.resolve();
+    expect(settings.defaultFastMode).toBe(false);
+    expect(settings.defaultLearningMode).toBe(false);
+    expect(service.store.getState().tabs.every((tab) => tab.fastMode === false)).toBe(true);
+    expect(service.store.getState().tabs.every((tab) => tab.learningMode === false)).toBe(true);
+
+    expect(service.startNewSession(tabId)).toBe(true);
+    expect(service.store.getState().tabs.find((tab) => tab.id === tabId)?.fastMode).toBe(false);
+    expect(service.store.getState().tabs.find((tab) => tab.id === tabId)?.learningMode).toBe(false);
+  });
+
+  it("reuses in-memory global modes for new sessions before settings persistence resolves", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-sticky-modes-race-"));
+    tempRoots.push(vaultRoot);
+
+    let settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      defaultFastMode: false,
+      defaultLearningMode: false,
+    };
+    let releasePersist!: () => void;
+    const persistGate = new Promise<void>((resolve) => {
+      releasePersist = () => resolve();
+    });
+    const updateSettings = vi.fn(async (next: PluginSettings) => {
+      await persistGate;
+      settings = next;
+    });
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => settings,
+      () => "en",
+      null,
+      async () => {},
+      updateSettings,
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.setTabFastMode(tabId, true);
+    expect(service.setTabLearningMode(tabId, true)).toBe(true);
+
+    const createdTab = service.createTab();
+    expect(createdTab?.fastMode).toBe(true);
+    expect(createdTab?.learningMode).toBe(true);
+
+    expect(service.startNewSession(tabId)).toBe(true);
+    expect(service.store.getState().tabs.find((tab) => tab.id === tabId)?.fastMode).toBe(true);
+    expect(service.store.getState().tabs.find((tab) => tab.id === tabId)?.learningMode).toBe(true);
+
+    releasePersist();
+    await Promise.resolve();
   });
 
   it("stores rewrite-followup suggestions and turns them into a formatting rewrite prompt", async () => {
@@ -224,13 +455,13 @@ describe("CodexService sendPrompt skill context", () => {
     const assistantText = [
       "Here is the cleaned-up explanation.",
       "",
-      "Want me to reflect this in the note?",
+      "Want me to apply this to the note now?",
       "",
       "```obsidian-suggest",
       JSON.stringify({
         kind: "rewrite_followup",
         summary: "Turn this answer into a formatting-focused note patch.",
-        question: "Want me to reflect this in the note?",
+        question: "Want me to apply this to the note now?",
       }),
       "```",
     ].join("\n");
@@ -256,7 +487,719 @@ describe("CodexService sendPrompt skill context", () => {
     const prompt = sendPromptSpy.mock.calls[0]?.[1];
     expect(prompt).toContain("Formatting bundle");
     expect(prompt).toContain("evidence: kind|label|sourceRef|snippet");
+    expect(prompt).toContain("prefer the active note for this turn");
     expect(prompt).toContain("Here is the cleaned-up explanation.");
+  });
+
+  it("stores a short visible rewrite label while sending the full rewrite execution prompt", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-rewrite-followup-visible-label-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const assistantText = [
+      "Here is the cleaned-up explanation.",
+      "",
+      "Want me to apply this to the note now?",
+      "",
+      "```obsidian-suggest",
+      JSON.stringify({
+        kind: "rewrite_followup",
+        summary: "Turn this answer into a formatting-focused note patch.",
+        question: "Want me to apply this to the note now?",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-1",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-1", assistantText);
+
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    await service.respondToChatSuggestion(tabId, "rewrite_note", { file: null, editor: null });
+
+    const userMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "user") ?? [];
+    expect(userMessages.at(-1)?.text).toBe("Apply to note");
+    expect(userMessages.at(-1)?.meta?.internalPromptKind).toBe("rewrite_followup");
+    expect(userMessages.at(-1)?.text.includes("Turn your immediately previous assistant answer")).toBe(false);
+
+    const prompt = runTurnSpy.mock.calls[0]?.[1];
+    expect(prompt).toContain("Turn your immediately previous assistant answer in this same thread");
+    expect(prompt).toContain("Here is the cleaned-up explanation.");
+  });
+
+  it("marks suggestion-only note edit replies as proposal_only with the resolved target path", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-edit-outcome-proposal-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const assistantText = [
+      "Applied the requested cleanup.",
+      "",
+      "```obsidian-patch",
+      "path: notes/source.md",
+      "kind: create",
+      "summary: Create a cleaned-up note",
+      "",
+      "---content",
+      "# Source",
+      "",
+      "Cleaned note.",
+      "---end",
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-proposal",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-proposal", assistantText);
+
+    const assistantMessage = service.getActiveTab()?.messages.find((message) => message.id === "assistant-proposal");
+    expect(assistantMessage?.meta?.editOutcome).toBe("proposal_only");
+    expect(assistantMessage?.meta?.editTargetPath).toBe("notes/source.md");
+  });
+
+  it("marks explanation-only replies while keeping the rewrite CTA", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-edit-outcome-explanation-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const assistantText = [
+      "This explanation clarifies the note.",
+      "",
+      "Want me to apply this to the note now?",
+      "",
+      "```obsidian-suggest",
+      JSON.stringify({
+        kind: "rewrite_followup",
+        summary: "Apply the explanation to the note.",
+        question: "Want me to apply this to the note now?",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-explanation",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-explanation", assistantText);
+
+    const assistantMessage = service.getActiveTab()?.messages.find((message) => message.id === "assistant-explanation");
+    expect(assistantMessage?.meta?.editOutcome).toBe("explanation_only");
+    expect(service.getActiveTab()?.chatSuggestion?.kind).toBe("rewrite_followup");
+  });
+
+  it("rescues the reported missing-note-reflection shape with a hidden repair on non-edit prompts", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-reflection-rescue-"));
+    tempRoots.push(vaultRoot);
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      permissionMode: "auto-edit",
+    };
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => settings,
+      () => "ja",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "ここで決めているのは n=11 ではなく、まず総ダブラ数の指数 N=11 です。",
+              "",
+              "この説明を Step 1 の直後に短く追記しますか？",
+              "",
+              "Changes proposed below.",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-reflection-repair-1" };
+      })
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "```obsidian-patch",
+              "path: notes/current.md",
+              "kind: update",
+              "summary: Add the N=11 justification after Step 1",
+              "",
+              "---content",
+              "Step 1 updated content.",
+              "---end",
+              "```",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-reflection-repair-1" };
+      });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "なぜ N=11 が唯一の成立値なのか説明して。",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    expect(service.getActiveTab()?.patchBasket).toEqual([
+      expect.objectContaining({
+        targetPath: "notes/current.md",
+        status: "pending",
+      }),
+    ]);
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.meta?.editOutcome).toBe("review_required");
+    expect(assistantMessages[0]?.meta?.editTargetPath).toBe("notes/current.md");
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+    expect(assistantMessages.some((message) => message.text.includes("Turn your immediately previous assistant answer"))).toBe(false);
+  }, 20000);
+
+  it("falls back to an inferred rewrite CTA when hidden reflection repair still fails", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-reflection-fallback-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "ja",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "ここで決めているのは n=11 ではなく、まず総ダブラ数の指数 N=11 です。",
+              "",
+              "この説明を Step 1 の直後に短く追記しますか？",
+              "",
+              "Changes proposed below.",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-reflection-fallback-1" };
+      })
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: "ここではまだ説明だけに留めます。",
+          },
+        });
+        return { threadId: "thread-reflection-fallback-1" };
+      });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "なぜ N=11 が唯一の成立値なのか説明して。",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    expect(service.getActiveTab()?.status).not.toBe("error");
+    expect(service.getActiveTab()?.patchBasket).toEqual([]);
+    expect(service.getActiveTab()?.chatSuggestion).toMatchObject({
+      kind: "rewrite_followup",
+      messageId: expect.any(String),
+      rewriteQuestion: "この説明を Step 1 の直後に短く追記しますか？",
+    });
+    const assistantMessage = service.getActiveTab()?.messages.find((message) => message.kind === "assistant");
+    expect(assistantMessage?.meta?.editOutcome).toBe("explanation_only");
+  }, 20000);
+
+  it("infers a conservative rewrite CTA for note-ready explanations without strong repair markers", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-reflection-cta-only-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: "This explanation clarifies the note and tightens Step 1.",
+          },
+        });
+        return { threadId: "thread-reflection-cta-only-1" };
+      });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Explain why Step 1 uses N=11.",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(1);
+    expect(service.getActiveTab()?.chatSuggestion).toMatchObject({
+      kind: "rewrite_followup",
+      rewriteQuestion: "Want me to apply this to the note now?",
+    });
+    const assistantMessage = service.getActiveTab()?.messages.find((message) => message.kind === "assistant");
+    expect(assistantMessage?.meta?.editOutcome).toBe("explanation_only");
+  });
+
+  it("does not infer note reflection rescue when no note target is resolvable", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-reflection-no-target-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onEvent: (event: unknown) => void }).onEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "This explanation clarifies the note and tightens Step 1.",
+        },
+      });
+      return { threadId: "thread-reflection-no-target-1" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Explain why Step 1 uses N=11.",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot, {
+        activeFilePath: null,
+        targetNotePath: null,
+        selectionSourcePath: null,
+        sourceAcquisitionMode: "workspace_generic",
+        noteSourcePackText: null,
+      }),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "draft",
+    );
+
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+    const assistantMessage = service.getActiveTab()?.messages.find((message) => message.kind === "assistant");
+    expect(assistantMessage?.meta?.editOutcome).toBeUndefined();
+  });
+
+  it("does not infer note reflection rescue when the user explicitly asked not to edit", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-reflection-opt-out-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.addMessage(tabId, {
+      id: "user-opt-out",
+      kind: "user",
+      text: "Don't edit the note. Just explain why Step 1 uses N=11.",
+      createdAt: Date.now(),
+    });
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onEvent: (event: unknown) => void }).onEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "This explanation clarifies the note and tightens Step 1.",
+        },
+      });
+      return { threadId: "thread-reflection-opt-out-1" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Don't edit the note. Just explain why Step 1 uses N=11.",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(1);
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+    const assistantMessage = service.getActiveTab()?.messages.find((message) => message.kind === "assistant");
+    expect(assistantMessage?.meta?.editOutcome).toBeUndefined();
+  });
+
+  it("updates hidden adaptation memory and queues a skill-update approval after a successful applied note edit", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-growth-"));
+    tempRoots.push(vaultRoot);
+    const extraSkillRoot = join(vaultRoot, "extra-skills");
+    const skillDir = join(extraSkillRoot, "note-refiner");
+    const skillPath = join(skillDir, "SKILL.md");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(skillPath, "# Note Refiner\n\nUse concise structural rewrites.\n", "utf8");
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      extraSkillRoots: [extraSkillRoot],
+    };
+    const writable = createWritableApp(vaultRoot);
+    const service = new CodexService(
+      writable.app,
+      () => settings,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const panel = createPanel("panel-1", ["note-refiner"]);
+    service.store.setStudyRecipes([panel]);
+    service.store.setActiveStudyPanel(tabId, panel.id, ["note-refiner"]);
+    (service as unknown as { allInstalledSkillCatalog: Array<{ name: string; description: string; path: string }> }).allInstalledSkillCatalog = [
+      { name: "note-refiner", description: "User-owned note rewrite skill.", path: skillPath },
+    ];
+    (service as unknown as { installedSkillCatalog: Array<{ name: string; description: string; path: string }> }).installedSkillCatalog = [
+      { name: "note-refiner", description: "User-owned note rewrite skill.", path: skillPath },
+    ];
+
+    service.store.addMessage(tabId, {
+      id: "user-1",
+      kind: "user",
+      text: "Rewrite the active note so the explanation is step-by-step with clear bullets and one pitfall.",
+      createdAt: Date.now(),
+      meta: {
+        turnId: "turn-1",
+        turnStatus: "submitted",
+        effectiveSkillsCsv: "note-refiner",
+        effectiveSkillCount: 1,
+        activePanelId: "panel-1",
+      },
+    });
+
+    const assistantText = [
+      "Applied the requested rewrite.",
+      "",
+      "```obsidian-patch",
+      "path: Notes/Active.md",
+      "kind: create",
+      "summary: Create a cleaner study note",
+      "",
+      "---content",
+      "# Active",
+      "",
+      "- Step 1: Define the key concept.",
+      "- Step 2: Walk through the example.",
+      "",
+      "## Pitfall",
+      "- Do not confuse the two symbols.",
+      "---end",
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-1",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-1", assistantText);
+
+    const patchId = service.getActiveTab()?.patchBasket[0]?.id;
+    expect(patchId).toBeTruthy();
+    await service.applyPatchProposal(tabId, patchId ?? "");
+
+    const state = service.store.getState() as ReturnType<typeof service.store.getState> & { userAdaptationMemory?: any };
+    expect(state.userAdaptationMemory?.globalProfile?.preferredFocusTags).toContain("pitfalls");
+    expect(state.userAdaptationMemory?.panelOverlays?.["panel-1"]?.preferredSkillNames).toContain("note-refiner");
+    const skillApprovals = service.getActiveTab()?.pendingApprovals.filter((approval) => approval.toolName === ("skill_update" as never)) ?? [];
+    expect(skillApprovals).toHaveLength(1);
+    expect(skillApprovals[0]?.title).toContain("note-refiner");
+    expect(skillApprovals[0]?.description).toContain(skillPath);
+  });
+
+  it("stores study checkpoints and carries weak-point context into the next turn", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-checkpoint-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.setTabLearningMode(tabId, true);
+    service.store.setTabStudyWorkflow(tabId, "review");
+
+    const assistantText = [
+      "Convolution becomes multiplication in frequency space because the transform turns the sliding integral into algebraic multiplication.",
+      "",
+      "Quick check: why is that conversion useful when you analyze a system?",
+      "",
+      "```obsidian-study-checkpoint",
+      JSON.stringify({
+        workflow: "review",
+        mastered: ["Can explain the headline reason convolution becomes multiplication."],
+        unclear: ["Still unclear on why the transform changes a sliding integral into multiplication."],
+        next_step: "Explain the bridge between convolution and multiplication in one sentence.",
+        confidence_note: "The learner understands the headline result but cannot justify the bridge yet.",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-study-1",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-study-1", assistantText);
+
+    expect(service.getActiveTab()?.studyCoachState).toEqual({
+      latestRecap: {
+        workflow: "review",
+        mastered: ["Can explain the headline reason convolution becomes multiplication."],
+        unclear: ["Still unclear on why the transform changes a sliding integral into multiplication."],
+        nextStep: "Explain the bridge between convolution and multiplication in one sentence.",
+        confidenceNote: "The learner understands the headline result but cannot justify the bridge yet.",
+      },
+      weakPointLedger: [
+        expect.objectContaining({
+          conceptLabel: "Still unclear on why the transform changes a sliding integral into multiplication.",
+          workflow: "review",
+          explanationSummary: "The learner understands the headline result but cannot justify the bridge yet.",
+          nextQuestion: "Explain the bridge between convolution and multiplication in one sentence.",
+          resolved: false,
+        }),
+      ],
+      lastCheckpointAt: expect.any(Number),
+    });
+
+    const captureTurnContext = (
+      service as unknown as Record<
+        string,
+        (
+          tabId: string,
+          file: null,
+          editor: null,
+          prompt: string,
+          slashCommand: string | null,
+          attachments: [],
+          mentionContextText: string | null,
+          explicitTargetNotePath: string | null,
+          skillNames: string[],
+          resolvedSkillDefinitions: [],
+        ) => Promise<TurnContextSnapshot>
+      >
+    )["captureTurnContext"];
+    const context = await captureTurnContext.call(service, tabId, null, null, "Continue helping me review this topic.", null, [], null, null, [], []);
+
+    expect(context.studyCoachText).toContain("Study coach carry-forward:");
+    expect(context.studyCoachText).toContain("Workflow-specific coach guidance:");
+    expect(context.studyCoachText).toContain("Weak point: The learner understands the headline result but cannot justify the bridge yet.");
+    expect(context.studyCoachText).toContain("Next check: Explain the bridge between convolution and multiplication in one sentence.");
   });
 
   it("does not auto-inject grill-me in plan mode", async () => {
@@ -370,6 +1313,50 @@ describe("CodexService sendPrompt skill context", () => {
     expect(turnContext.conversationSummaryText).toContain("Conversation carry-forward summary");
   });
 
+  it("replaces leaked internal rewrite prompts inside compaction summaries", () => {
+    const service = new CodexService(
+      createApp("/vault"),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.addMessage(tabId, {
+      id: "rewrite-user",
+      kind: "user",
+      text: [
+        "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+        "Target the current session target note if one is set; otherwise target the active note for this turn.",
+        "If a selection snapshot is attached, limit the rewrite to that selected section or the nearest matching section instead of rewriting the whole note.",
+        "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+        "Add concise evidence lines to the patch header when possible using `evidence: kind|label|sourceRef|snippet`.",
+        "Prefer vault-note and attachment evidence first. If that is insufficient, you may use web research and mark those evidence lines with `kind` = `web` and a source URL.",
+        "Do not ask whether to apply the change. Emit the patch now and keep any visible chat summary to at most 2 short sentences.",
+        "Assistant answer to convert:",
+        "Summarize Step 1 cleanly.",
+      ].join("\n\n"),
+      createdAt: 1,
+    });
+    service.store.addMessage(tabId, {
+      id: "assistant-1",
+      kind: "assistant",
+      text: "Here is the concise Step 1 explanation.",
+      createdAt: 2,
+    });
+
+    service.compactTab(tabId);
+
+    expect(service.getActiveTab()?.summary?.text).toContain("- Apply to note");
+    expect(service.getActiveTab()?.summary?.text).not.toContain("Turn your immediately previous assistant answer");
+  });
+
   it("retries once on a fresh thread when the first run finishes without a visible reply", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-empty-reply-"));
     tempRoots.push(vaultRoot);
@@ -456,6 +1443,152 @@ describe("CodexService sendPrompt skill context", () => {
     expect(service.getActiveTab()?.messages.some((message) => message.kind === "assistant" && message.text === "Recovered reply")).toBe(true);
     expect(service.getActiveTab()?.codexThreadId).toBe("thread-fresh");
     expect(service.getActiveTab()?.lineage.pendingThreadReset).toBe(false);
+  });
+
+  it("backfills the last visible assistant reply instead of a later internal rewrite prompt tail", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-session-visible-backfill-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.addMessage(tabId, {
+      id: "user-1",
+      kind: "user",
+      text: "Explain this note.",
+      createdAt: Date.now(),
+    });
+
+    const sessionFile = join(vaultRoot, "rollout-session-visible-thread.jsonl");
+    await writeFile(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ text: "Recovered visible answer." }],
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            last_agent_message: [
+              "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+              "Target the current session target note if one is set; otherwise target the active note for this turn.",
+              "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+              "Add concise evidence lines to the patch header when possible using evidence: kind|label|sourceRef|snippet.",
+              "Do not ask whether to apply the change.",
+            ].join("\n"),
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.spyOn(service as never, "resolveSessionFile").mockResolvedValue(sessionFile);
+
+    await expect(
+      (
+        service as unknown as {
+          syncTranscriptFromSession: (tabId: string, threadId: string, visibility: "visible" | "artifact_only") => Promise<string>;
+        }
+      ).syncTranscriptFromSession(tabId, "thread-visible", "visible"),
+    ).resolves.toBe("appended_reply");
+
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.text).toBe("Recovered visible answer.");
+    expect(assistantMessages[0]?.text.includes("Turn your immediately previous assistant answer")).toBe(false);
+  });
+
+  it("suppresses duplicate assistant backfill when the visible answer is already in the transcript", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-session-duplicate-backfill-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.addMessage(tabId, {
+      id: "user-1",
+      kind: "user",
+      text: "Explain this note.",
+      createdAt: Date.now(),
+    });
+    service.store.addMessage(tabId, {
+      id: "assistant-live",
+      kind: "assistant",
+      text: "Already visible answer.",
+      createdAt: Date.now(),
+    });
+
+    const sessionFile = join(vaultRoot, "rollout-session-duplicate-thread.jsonl");
+    await writeFile(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ text: "Already visible answer." }],
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            last_agent_message: [
+              "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+              "Target the current session target note if one is set; otherwise target the active note for this turn.",
+              "Apply the Formatting bundle: normalize LaTeX, clean up headings, clean up bullet structure, and make wording consistent.",
+              "Add concise evidence lines to the patch header when possible using evidence: kind|label|sourceRef|snippet.",
+              "Do not ask whether to apply the change.",
+              "Assistant answer to convert: Already visible answer.",
+            ].join("\n"),
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.spyOn(service as never, "resolveSessionFile").mockResolvedValue(sessionFile);
+
+    await expect(
+      (
+        service as unknown as {
+          syncTranscriptFromSession: (tabId: string, threadId: string, visibility: "visible" | "artifact_only") => Promise<string>;
+        }
+      ).syncTranscriptFromSession(tabId, "thread-duplicate", "visible"),
+    ).resolves.toBe("duplicate_reply");
+
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.text).toBe("Already visible answer.");
   });
 
   it("waits for a late session reply before compact retrying", async () => {
@@ -1066,6 +2199,10 @@ describe("CodexService sendPrompt skill context", () => {
             role: "assistant",
             phase: "final_answer",
             text: [
+              "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+              "Assistant answer to convert:",
+              "I cleaned up the math formatting.",
+              "",
               "```obsidian-patch",
               JSON.stringify({
                 path: "notes/generated.md",
@@ -1128,12 +2265,320 @@ describe("CodexService sendPrompt skill context", () => {
         status: "pending",
       }),
     ]);
-    expect(
-      service.getActiveTab()?.messages.some(
-        (message) => message.kind === "system" && message.text.includes("requesting a repaired proposal"),
-      ),
-    ).toBe(true);
-  });
+    const messages = service.getActiveTab()?.messages ?? [];
+    expect(messages.some((message) => message.kind === "system" && message.text.includes("requesting a repaired proposal"))).toBe(
+      false,
+    );
+    expect(messages.some((message) => message.text.includes("Assistant answer to convert:"))).toBe(false);
+    expect(messages.some((message) => message.text.includes("Turn your immediately previous assistant answer"))).toBe(false);
+    expect(messages.filter((message) => message.kind === "assistant")).toHaveLength(1);
+  }, 10000);
+
+  it("retries parseable but low-quality patches with a hidden readability repair", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-patch-readability-repair-"));
+    tempRoots.push(vaultRoot);
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      permissionMode: "auto-edit",
+    };
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => settings,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Applied the requested cleanup.",
+              "",
+              "```obsidian-patch",
+              "path: notes/current.md",
+              "kind: update",
+              "summary: Add the maximum-dissipation explanation",
+              "",
+              "---content",
+              CALLOUT_MATH_COLLISION_SAMPLE,
+              "---end",
+              "```",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-readability-repair-1" };
+      })
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "```obsidian-patch",
+              "path: notes/current.md",
+              "kind: update",
+              "summary: Add the maximum-dissipation explanation",
+              "",
+              "---content",
+              [
+                "[!example]- Collision",
+                ">",
+                "> $$",
+                "> x = y",
+                "> $$",
+                ">",
+                "> keep this quoted explanation",
+              ].join("\n"),
+              "---end",
+              "```",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-readability-repair-1" };
+      });
+
+    const context = createNoteTurnContext(vaultRoot);
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Improve this note.",
+      "normal",
+      "chat",
+      [],
+      context,
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      true,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    expect(service.getActiveTab()?.patchBasket).toEqual([
+      expect.objectContaining({
+        targetPath: "notes/current.md",
+        qualityState: "clean",
+        status: "pending",
+      }),
+    ]);
+    const messages = service.getActiveTab()?.messages ?? [];
+    expect(messages.some((message) => message.text.includes("Detected issues:"))).toBe(false);
+    expect(messages.some((message) => message.text.includes("Turn your immediately previous assistant answer"))).toBe(false);
+    expect(messages.filter((message) => message.kind === "assistant")).toHaveLength(1);
+  }, 10000);
+
+  it("keeps auto-healed callout-math patches pending and skips auto-apply in full-auto mode", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-patch-readability-review-"));
+    tempRoots.push(vaultRoot);
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      permissionMode: "full-auto",
+    };
+    const writable = createWritableApp(vaultRoot, { "notes/current.md": "# Current\n\nOriginal" });
+    const service = new CodexService(
+      writable.app,
+      () => settings,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onEvent: (event: unknown) => void }).onEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: [
+            "Applied the requested cleanup.",
+            "",
+            "```obsidian-patch",
+            "path: notes/current.md",
+            "kind: update",
+            "summary: Rewrite the note body",
+            "",
+            "---content",
+            CALLOUT_MATH_SAMPLE,
+            "---end",
+            "```",
+          ].join("\n"),
+        },
+      });
+      return { threadId: "thread-readability-review-1" };
+    });
+
+    const context = createNoteTurnContext(vaultRoot);
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Improve this note.",
+      "normal",
+      "chat",
+      [],
+      context,
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      true,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(1);
+    expect(writable.files.get("notes/current.md")).toBe("# Current\n\nOriginal");
+    expect(service.getActiveTab()?.patchBasket).toEqual([
+      expect.objectContaining({
+        targetPath: "notes/current.md",
+        qualityState: "auto_healed",
+        healedByPlugin: true,
+        status: "pending",
+      }),
+    ]);
+    const assistantMessage = service.getActiveTab()?.messages.find((message) => message.kind === "assistant");
+    expect(assistantMessage?.meta?.editOutcome).toBe("review_required");
+    expect(assistantMessage?.meta?.editReviewReason).toBe("auto_healed");
+  }, 10000);
+
+  it("keeps proposal-repair scaffolding hidden when the retry still fails", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-patch-repair-hidden-fail-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: "I will return a patch in the next reply.",
+          },
+        });
+        return { threadId: "thread-repair-fail-1" };
+      })
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",
+              "Output exactly one fenced `obsidian-patch` block and nothing else.",
+              "Assistant answer to convert:",
+              "I will return a patch in the next reply.",
+            ].join("\n\n"),
+          },
+        });
+        return { threadId: "thread-repair-fail-1" };
+      });
+
+    const context: TurnContextSnapshot = {
+      activeFilePath: "notes/current.md",
+      targetNotePath: "notes/current.md",
+      studyWorkflow: null,
+      conversationSummaryText: null,
+      sourceAcquisitionMode: "vault_note",
+      sourceAcquisitionContractText: "Source acquisition is already complete.",
+      workflowText: null,
+      pluginFeatureText: null,
+      paperStudyRuntimeOverlayText: null,
+      skillGuideText: null,
+      paperStudyGuideText: null,
+      mentionContextText: null,
+      selection: null,
+      selectionSourcePath: "notes/current.md",
+      vaultRoot,
+      dailyNotePath: null,
+      contextPackText: null,
+      attachmentManifestText: null,
+      attachmentContentText: null,
+      noteSourcePackText: "Target note source pack",
+      attachmentMissingPdfTextNames: [],
+      attachmentMissingSourceNames: [],
+    };
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Improve this note.",
+      "normal",
+      "chat",
+      [],
+      context,
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      true,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    expect(service.getActiveTab()?.patchBasket).toEqual([]);
+    expect(service.getActiveTab()?.status).toBe("error");
+    const messages = service.getActiveTab()?.messages ?? [];
+    expect(messages.some((message) => message.kind === "system" && message.text.includes("requesting a repaired proposal"))).toBe(
+      false,
+    );
+    expect(messages.some((message) => message.text.includes("Assistant answer to convert:"))).toBe(false);
+    expect(messages.some((message) => message.text.includes("Turn your immediately previous assistant answer"))).toBe(false);
+    expect(messages.filter((message) => message.kind === "assistant")).toHaveLength(1);
+    expect(messages.filter((message) => message.kind === "system")).toEqual([
+      expect.objectContaining({
+        text: "Codex did not return a valid note patch. Nothing was applied.",
+      }),
+    ]);
+  }, 10000);
 
   it("marks submitted user turns as errored instead of leaving them orphaned when the run throws", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-orphan-prevent-"));

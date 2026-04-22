@@ -48,6 +48,7 @@ export class UsageSyncCoordinator {
       this.idleTimer = null;
     }
     this.activeRunThreads.clear();
+    this.knownThreadIds.clear();
   }
 
   noteLiveUsage(threadId: string | null): void {
@@ -87,6 +88,14 @@ export class UsageSyncCoordinator {
     if (this.activeRunThreads.size === 0 && this.activeTimer) {
       clearInterval(this.activeTimer);
       this.activeTimer = null;
+    }
+  }
+
+  untrackTab(tabId: string, threadId: string | null): void {
+    this.disarmActiveRun(tabId);
+    const normalizedThreadId = threadId?.trim() ?? "";
+    if (normalizedThreadId) {
+      this.knownThreadIds.delete(normalizedThreadId);
     }
   }
 

@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import type { Dir, Stats } from "node:fs";
 import { join } from "node:path";
 import type { UsageSummary } from "../model/types";
+import { sanitizeOperationalAssistantText } from "./assistantChatter";
 import { createEmptyUsageSummary, extractUsageSummaryPatch, mergeUsageSummary } from "./usage";
 
 const DEFAULT_SESSION_TRAVERSAL_MAX_DEPTH = 12;
@@ -37,6 +38,12 @@ export interface SessionUsageSnapshot {
   summary: UsageSummary | null;
   lastObservedAt: number;
   lastCheckedAt: number;
+}
+
+export interface SessionAssistantMessageCandidate {
+  rawText: string;
+  visibleText: string;
+  source: "response_item" | "agent_message" | "task_complete";
 }
 
 interface SessionTreeEntry {
@@ -132,6 +139,25 @@ function parseUsageSummaryFromText(text: string): UsageSummary | null {
   return sawUsage ? summary : null;
 }
 
+function toSessionAssistantCandidate(
+  rawText: string | null,
+  source: SessionAssistantMessageCandidate["source"],
+): SessionAssistantMessageCandidate | null {
+  const trimmed = rawText?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const visibleText = sanitizeOperationalAssistantText(trimmed)?.trim() ?? "";
+  if (!visibleText) {
+    return null;
+  }
+  return {
+    rawText: trimmed,
+    visibleText,
+    source,
+  };
+}
+
 function parseLastAssistantMessageFromText(text: string): string | null {
   let latestMessage: string | null = null;
 
@@ -176,6 +202,48 @@ function parseLastAssistantMessageFromText(text: string): string | null {
       if (text) {
         latestMessage = text;
       }
+    }
+
+    return false;
+  });
+
+  return latestMessage;
+}
+
+function parseLastVisibleAssistantMessageFromText(text: string): SessionAssistantMessageCandidate | null {
+  let latestMessage: SessionAssistantMessageCandidate | null = null;
+
+  parseSessionJsonl(text, (event) => {
+    const root = asRecord(event);
+    const eventType = asString(root?.type);
+    const payload = asRecord(root?.payload);
+    const item = asRecord(root?.item);
+
+    if (eventType === "event_msg" && payload) {
+      const payloadType = asString(payload.type);
+      if (payloadType === "agent_message") {
+        latestMessage = toSessionAssistantCandidate(asString(payload.message), "agent_message") ?? latestMessage;
+        return false;
+      }
+
+      if (payloadType === "task_complete") {
+        latestMessage =
+          toSessionAssistantCandidate(asString(payload.last_agent_message) ?? asString(payload.lastAgentMessage), "task_complete") ??
+          latestMessage;
+        return false;
+      }
+    }
+
+    if (eventType === "response_item" && payload) {
+      const payloadType = asString(payload.type);
+      if (payloadType === "message" && asString(payload.role) === "assistant") {
+        latestMessage = toSessionAssistantCandidate(extractResponseMessageText(payload), "response_item") ?? latestMessage;
+        return false;
+      }
+    }
+
+    if (item && asString(item.type) === "agent_message") {
+      latestMessage = toSessionAssistantCandidate(asString(item.text), "agent_message") ?? latestMessage;
     }
 
     return false;
@@ -448,4 +516,15 @@ export async function readLastAssistantMessageFromSessionFile(
     return null;
   }
   return parseLastAssistantMessageFromText(slice.text);
+}
+
+export async function readLastVisibleAssistantMessageFromSessionFile(
+  sessionFilePath: string,
+  bounds: SessionJsonlReadBounds = {},
+): Promise<SessionAssistantMessageCandidate | null> {
+  const slice = await readBoundedSessionText(sessionFilePath, bounds);
+  if (!slice || slice.text === null) {
+    return null;
+  }
+  return parseLastVisibleAssistantMessageFromText(slice.text);
 }
