@@ -17,13 +17,11 @@ describe("studyWorkflows", () => {
   it("builds a lecture draft with study context", () => {
     const draft = buildStudyWorkflowDraft("lecture", {
       currentFilePath: "Courses/Signals/Lecture 05.md",
-      activeSmartSetTitle: "Signals lectures",
       hasAttachments: true,
       hasSelection: true,
     });
 
     expect(draft).toContain("Current note: Courses/Signals/Lecture 05.md");
-    expect(draft).toContain("Active Smart Set: Signals lectures");
     expect(draft).toContain("A selection is already attached in this conversation.");
     expect(draft).toContain("Attached files are available in this conversation.");
     expect(draft).toContain("Help me study this lecture material.");
@@ -32,7 +30,6 @@ describe("studyWorkflows", () => {
 
   it("exposes workflow profile details for paper mode", () => {
     const workflow = getStudyWorkflowDefinition("paper");
-    expect(workflow.instructionLabels).toEqual(["research", "strict"]);
     expect(workflow.safeAutoSkillRefs).toEqual([]);
     expect(getStudyWorkflowQuickAction("paper")).toBe("Read the attached paper deeply");
     expect(getStudyWorkflowComposerPlaceholder("paper")).toContain("paper");
@@ -40,7 +37,6 @@ describe("studyWorkflows", () => {
 
   it("builds a review draft", () => {
     const draft = buildStudyWorkflowDraft("review", {
-      activeSmartSetTitle: "Exam prep",
     });
 
     expect(draft).toContain("Help me run a review session over the current study context.");
@@ -86,7 +82,6 @@ describe("studyWorkflows", () => {
   it("suppresses review missing-context hints when the workflow already has a grounded scope", () => {
     expect(
       getStudyWorkflowMissingContextHint("review", {
-        activeSmartSetTitle: "Signals exam prep",
         pinnedContextCount: 2,
       }),
     ).toBeNull();

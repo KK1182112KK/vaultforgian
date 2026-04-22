@@ -1,0 +1,611 @@
+.obsidian-codex__recipe-card {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  align-self: start;
+  overflow: visible;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-reading-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.04), transparent 48%),
+    var(--obsidian-codex-reading-bg);
+  box-shadow: 0 10px 18px rgba(7, 10, 18, 0.07);
+  transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease;
+}
+
+.obsidian-codex__hub-panel.is-editing,
+.obsidian-codex__recipe-list--study > .obsidian-codex__hub-empty {
+  grid-column: 1 / -1;
+}
+
+.obsidian-codex__hub-panel.is-skills-open {
+  z-index: 16;
+}
+
+.obsidian-codex__recipe-card:hover {
+  border-color: var(--obsidian-codex-panel-border);
+  transform: translateY(-1px);
+}
+
+.obsidian-codex__recipe-card.is-active {
+  border-color: rgba(var(--obsidian-codex-brand-rgb), 0.36);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.08), transparent 30%),
+    color-mix(in srgb, var(--obsidian-codex-reading-bg) 94%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 6%);
+}
+
+.obsidian-codex__hub-panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 6px;
+  min-width: 0;
+}
+
+.obsidian-codex__hub-panel-title-wrap {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+  justify-self: start;
+  padding: 0 1px 0 2px;
+}
+
+.obsidian-codex__hub-panel-title-wrap.is-editing {
+  width: 100%;
+  justify-self: stretch;
+  padding-right: 2px;
+}
+
+.obsidian-codex__hub-panel-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-top: 1px;
+  padding-right: 1px;
+}
+
+.obsidian-codex__hub-panel-edit-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.obsidian-codex__hub-panel:not(.is-editing) .obsidian-codex__hub-panel-head-actions button[aria-label="Delete panel"],
+.obsidian-codex__hub-panel:not(.is-editing) .obsidian-codex__hub-panel-head-actions button[aria-label="Panel を削除"] {
+  display: none !important;
+}
+
+.obsidian-codex__panel-edit-input,
+.obsidian-codex__panel-edit-textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font: inherit;
+}
+
+.obsidian-codex__panel-edit-input {
+  padding: 6px 8px;
+}
+
+.obsidian-codex__panel-edit-textarea {
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.obsidian-codex__panel-edit-input-title {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.obsidian-codex__panel-edit-prompt {
+  min-height: 88px;
+}
+
+.obsidian-codex__panel-skill-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.obsidian-codex__panel-skill-picker-section {
+  display: grid;
+  gap: 6px;
+}
+
+.obsidian-codex__panel-skill-picker-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--obsidian-codex-text-soft);
+}
+
+.obsidian-codex__panel-skill-picker-list {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.obsidian-codex__panel-skill-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-normal);
+}
+
+.obsidian-codex__hub-panel-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.obsidian-codex__hub-panel-card-actions {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 8px;
+}
+
+.obsidian-codex__hub-panel-card-actions > .obsidian-codex__change-card-btn {
+  width: auto;
+  max-width: 100%;
+}
+
+.obsidian-codex__hub-panel-skill-control {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.obsidian-codex__hub-panel-skill-drawer {
+  display: grid;
+  gap: 8px;
+  position: absolute;
+  z-index: 28;
+  min-width: 0;
+  padding: 10px 11px 11px;
+  border: 1px solid color-mix(in srgb, var(--obsidian-codex-reading-border) 80%, rgba(var(--obsidian-codex-highlight-rgb), 0.18) 20%);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.06), transparent 46%),
+    color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 96%, rgba(var(--obsidian-codex-highlight-rgb), 0.04) 4%);
+  border-radius: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  backdrop-filter: blur(8px);
+  box-shadow:
+    0 18px 36px rgba(6, 8, 16, 0.2),
+    0 0 0 1px rgba(var(--obsidian-codex-highlight-rgb), 0.06);
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-open-up {
+  bottom: calc(100% + 8px);
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-open-down {
+  top: calc(100% + 8px);
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-align-start {
+  left: 0;
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-align-end {
+  right: 0;
+}
+
+.obsidian-codex__hub-panel-skill-drawer::before {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 96%, rgba(var(--obsidian-codex-highlight-rgb), 0.04) 4%);
+  transform: rotate(45deg);
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-open-up::before {
+  bottom: -7px;
+  border-right: 1px solid color-mix(in srgb, var(--obsidian-codex-reading-border) 80%, rgba(var(--obsidian-codex-highlight-rgb), 0.18) 20%);
+  border-bottom: 1px solid color-mix(in srgb, var(--obsidian-codex-reading-border) 80%, rgba(var(--obsidian-codex-highlight-rgb), 0.18) 20%);
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-open-down::before {
+  top: -7px;
+  border-top: 1px solid color-mix(in srgb, var(--obsidian-codex-reading-border) 80%, rgba(var(--obsidian-codex-highlight-rgb), 0.18) 20%);
+  border-left: 1px solid color-mix(in srgb, var(--obsidian-codex-reading-border) 80%, rgba(var(--obsidian-codex-highlight-rgb), 0.18) 20%);
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-align-start::before {
+  left: 18px;
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-align-end::before {
+  right: 18px;
+}
+
+.obsidian-codex__hub-panel-skill-drawer > * {
+  position: relative;
+  z-index: 1;
+}
+
+.obsidian-codex__hub-panel-skill-drawer.is-empty {
+  display: grid;
+  gap: 4px;
+  padding: 10px 11px;
+  border: 1px dashed color-mix(in srgb, var(--obsidian-codex-reading-border) 78%, rgba(var(--obsidian-codex-highlight-rgb), 0.22) 22%);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 95%, rgba(var(--obsidian-codex-highlight-rgb), 0.05) 5%);
+}
+
+.obsidian-codex__hub-panel-skill-empty-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.obsidian-codex__hub-panel-skill-empty-note {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--obsidian-codex-text-soft);
+}
+
+.obsidian-codex__hub-panel-skill-toggle {
+  width: auto;
+  max-width: 100%;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.obsidian-codex__hub-panel-skill-toggle.is-active {
+  border-color: color-mix(in srgb, var(--obsidian-codex-highlight) 58%, var(--obsidian-codex-reading-border) 42%);
+  background:
+    linear-gradient(135deg, rgba(var(--obsidian-codex-highlight-rgb), 0.16), transparent 58%),
+    color-mix(in srgb, var(--obsidian-codex-reading-bg) 88%, rgba(var(--obsidian-codex-highlight-rgb), 0.08) 12%);
+  color: var(--text-normal);
+}
+
+.obsidian-codex__hub-panel-skill-toggle.is-empty:not(.is-active) {
+  border-style: dashed;
+}
+
+.obsidian-codex__hub-panel-skill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obsidian-codex__hub-panel-skill-checkbox {
+  margin: 0;
+}
+
+.obsidian-codex__hub-panel-skill-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+  border-top: 1px solid rgba(var(--obsidian-codex-edge-rgb), 0.08);
+}
+
+.obsidian-codex__hub-panel-skill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--obsidian-codex-reading-border) 82%, rgba(var(--obsidian-codex-highlight-rgb), 0.2) 18%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg) 92%, rgba(var(--obsidian-codex-highlight-rgb), 0.08) 8%);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text-normal);
+}
+
+.obsidian-codex__chat-suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+@media (max-width: 720px) {
+  .obsidian-codex__recipe-list.obsidian-codex__recipe-list--study {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.obsidian-codex__hub-panel-title-text {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 8px 2px 7px;
+  color: var(--text-normal);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+  justify-self: start;
+  overflow-wrap: anywhere;
+}
+
+.obsidian-codex__hub-panel-title-wrap .obsidian-codex__panel-edit-input-title {
+  width: 100%;
+  max-width: 100%;
+  padding: 5px 8px 5px 8px;
+}
+
+.obsidian-codex__changes-tray {
+  display: none;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--obsidian-codex-reading-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.04), transparent 48%),
+    var(--obsidian-codex-reading-bg-soft);
+  box-shadow: 0 10px 18px rgba(7, 10, 18, 0.08);
+}
+
+.obsidian-codex__changes-tray.is-visible {
+  display: grid;
+}
+
+.obsidian-codex__changes-tray-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obsidian-codex__changes-tray-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--obsidian-codex-text-soft);
+  text-transform: uppercase;
+}
+
+.obsidian-codex__changes-tray-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--obsidian-codex-brand-rgb), 0.18);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg) 94%, rgba(var(--obsidian-codex-brand-rgb), 0.06) 6%);
+  color: var(--text-normal);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.obsidian-codex__change-card {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--obsidian-codex-reading-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.04), transparent 48%),
+    var(--obsidian-codex-reading-bg);
+  box-shadow: 0 10px 18px rgba(7, 10, 18, 0.07);
+}
+
+.obsidian-codex__change-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(var(--obsidian-codex-brand-rgb), 0.42);
+}
+
+.obsidian-codex__change-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obsidian-codex__change-card-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 92%, rgba(37, 99, 235, 0.08) 8%);
+  color: color-mix(in srgb, rgb(37, 99, 235) 74%, var(--text-normal) 26%);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.obsidian-codex__change-card-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.obsidian-codex__change-card-status {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--obsidian-codex-text-soft);
+}
+
+.obsidian-codex__change-card-status.is-conflicted,
+.obsidian-codex__change-card-status.is-stale {
+  color: color-mix(in srgb, var(--text-warning, #d97706) 82%, var(--text-normal) 18%);
+}
+
+.obsidian-codex__change-card-summary {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-normal);
+}
+
+.obsidian-codex__change-card-evidence-ref {
+  margin-left: 2px;
+  color: var(--obsidian-codex-text-soft);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.obsidian-codex__change-card-evidence {
+  display: grid;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--obsidian-codex-text-soft);
+}
+
+.obsidian-codex__change-card-evidence-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.obsidian-codex__change-card-evidence-index {
+  min-width: 18px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.obsidian-codex__change-card-evidence-text {
+  color: var(--obsidian-codex-text-soft);
+}
+
+.obsidian-codex__change-card-warning {
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 74%, rgba(var(--obsidian-codex-highlight-rgb), 0.32) 26%);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 95%, rgba(var(--obsidian-codex-highlight-rgb), 0.07) 5%);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-normal);
+}
+
+.obsidian-codex__change-card-warning.is-review_required {
+  border-color: color-mix(in srgb, var(--color-orange) 48%, var(--background-modifier-border) 52%);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 92%, rgba(217, 119, 6, 0.11) 8%);
+}
+
+.obsidian-codex__change-card-warning.is-auto_healed {
+  border-color: color-mix(in srgb, rgba(var(--obsidian-codex-brand-rgb), 0.55) 45%, var(--background-modifier-border) 55%);
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 93%, rgba(var(--obsidian-codex-brand-rgb), 0.09) 7%);
+}
+
+.obsidian-codex__change-card-issues {
+  display: grid;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, rgba(var(--obsidian-codex-brand-rgb), 0.2) 44%, var(--background-modifier-border) 56%);
+}
+
+.obsidian-codex__change-card-issue {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--obsidian-codex-text-soft);
+}
+
+.obsidian-codex__change-card-diff {
+  margin: 0;
+  max-height: 144px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 98%, transparent);
+  color: var(--obsidian-codex-text-soft);
+  font-family: var(--font-monospace);
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.obsidian-codex__change-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.obsidian-codex__change-card-btn {
+  appearance: none;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid var(--obsidian-codex-panel-border);
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.08), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 82%, rgba(var(--obsidian-codex-brand-rgb), 0.14) 18%);
+  color: var(--text-normal);
+  border-radius: 7px;
+  padding: 6px 11px;
+  font-size: 10.75px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.08),
+    0 8px 16px rgba(5, 8, 16, 0.08);
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.1s ease,
+    box-shadow 0.1s ease,
+    color 0.1s ease;
+}
+
+.obsidian-codex__change-card-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: rgba(var(--obsidian-codex-brand-rgb), 0.68);
+}
+
+.obsidian-codex__change-card-btn:hover {
+  background:
+    linear-gradient(180deg, rgba(var(--obsidian-codex-edge-rgb), 0.1), transparent 42%),
+    color-mix(in srgb, var(--obsidian-codex-panel-bg) 76%, rgba(var(--obsidian-codex-brand-rgb), 0.18) 24%);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--obsidian-codex-edge-rgb), 0.1),
+    0 12px 20px rgba(5, 8, 16, 0.12);
+}
+
+.obsidian-codex__change-card-btn.is-muted {
+  color: var(--text-muted);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 86%, rgba(var(--obsidian-codex-edge-rgb), 0.12) 14%);
+}
+
+.obsidian-codex__change-card-btn.is-muted::before {

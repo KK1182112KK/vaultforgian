@@ -2,7 +2,7 @@ import type { SlashCommandDefinition } from "./slashCommandCatalog";
 import type { InstalledSkillDefinition } from "./skillCatalog";
 
 export interface ComposerSuggestion {
-  kind: "slash" | "skill" | "mention" | "instruction";
+  kind: "slash" | "skill" | "mention";
   token: string;
   label: string;
   description: string;
@@ -48,20 +48,6 @@ function findMentionFragment(input: string, cursor: number): TokenMatch | null {
   };
 }
 
-function findInstructionFragment(input: string, cursor: number): TokenMatch | null {
-  const beforeCursor = input.slice(0, cursor);
-  const match = /(^|[\s(])#([A-Za-z0-9:_-]*)$/u.exec(beforeCursor);
-  if (!match) {
-    return null;
-  }
-  const fragment = match[2] ?? "";
-  return {
-    start: beforeCursor.length - fragment.length - 1,
-    end: beforeCursor.length,
-    fragment,
-  };
-}
-
 function findSlashFragment(input: string, cursor: number): string | null {
   const beforeCursor = input.slice(0, cursor);
   const trimmedStart = beforeCursor.trimStart();
@@ -85,7 +71,6 @@ export function matchComposerSuggestions(
   slashCommands: readonly SlashCommandDefinition[],
   skills: readonly InstalledSkillDefinition[],
   mentions: readonly ComposerSuggestion[] = [],
-  instructions: readonly ComposerSuggestion[] = [],
 ): ComposerSuggestion[] {
   const skillMatch = findSkillFragment(input, cursor);
   if (skillMatch) {
@@ -105,15 +90,6 @@ export function matchComposerSuggestions(
       (entry) =>
         entry.token.toLowerCase().startsWith(`@${mentionMatch.fragment.toLowerCase()}`) ||
         entry.label.toLowerCase().startsWith(mentionMatch.fragment.toLowerCase()),
-    );
-  }
-
-  const instructionMatch = findInstructionFragment(input, cursor);
-  if (instructionMatch) {
-    return instructions.filter(
-      (entry) =>
-        entry.token.toLowerCase().startsWith(`#${instructionMatch.fragment.toLowerCase()}`) ||
-        entry.label.toLowerCase().startsWith(instructionMatch.fragment.toLowerCase()),
     );
   }
 
@@ -150,9 +126,8 @@ export function applyComposerSuggestion(
     return { value, cursor: value.length };
   }
 
-  if (suggestion.kind === "mention" || suggestion.kind === "instruction") {
-    const matcher = suggestion.kind === "mention" ? findMentionFragment : findInstructionFragment;
-    const tokenMatch = matcher(input, cursor);
+  if (suggestion.kind === "mention") {
+    const tokenMatch = findMentionFragment(input, cursor);
     if (!tokenMatch) {
       const value = `${input}${suggestion.token} `;
       return { value, cursor: value.length };

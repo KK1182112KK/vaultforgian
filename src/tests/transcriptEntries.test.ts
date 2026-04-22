@@ -63,6 +63,10 @@ describe("transcript entry helpers", () => {
     expect(shouldRenderWaitingEntry("busy", waitingState, [], [])).toBe(true);
   });
 
+  it("keeps tool waiting rows visible when only hidden shell activity is running", () => {
+    expect(shouldRenderWaitingEntry("busy", waitingState, toolLog, [], ["shell"])).toBe(true);
+  });
+
   it("keeps non-tool waiting rows visible", () => {
     expect(
       shouldRenderWaitingEntry(
@@ -83,6 +87,11 @@ describe("transcript entry helpers", () => {
     expect(entries[0]?.type === "message" ? entries[0].message.id : null).toBe("user-1");
     expect(entries[1]?.type === "approval" ? entries[1].approval.id : null).toBe("approval-1");
     expect(entries[2]?.type === "activity" ? entries[2].activity.callId : null).toBe("call-1");
+  });
+
+  it("can hide selected activity kinds without changing message ordering", () => {
+    const entries = buildTranscriptEntries(messages, true, toolLog, approvals, waitingState, "busy", ["shell"]);
+    expect(entries.map((entry) => entry.type)).toEqual(["message", "approval", "message"]);
   });
 
   it("appends a waiting row when no activity is available", () => {

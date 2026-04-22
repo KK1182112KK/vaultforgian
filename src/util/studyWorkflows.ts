@@ -1,4 +1,4 @@
-import type { StudyWorkflowKind } from "../model/types";
+import type { StudyRecipeWorkflowKind, StudyWorkflowKind } from "../model/types";
 import type { SupportedLocale } from "./i18n";
 
 export interface StudyWorkflowDefinition {
@@ -7,8 +7,8 @@ export interface StudyWorkflowDefinition {
   shortLabel: string;
   description: string;
   helperText: string;
+  coachContract?: readonly string[];
   attachRecommended: boolean;
-  instructionLabels: readonly string[];
   responseContract: readonly string[];
   sourcePriority: readonly string[];
   guidance: readonly string[];
@@ -22,10 +22,13 @@ export interface StudyWorkflowDefinition {
 export interface StudyWorkflowPromptContext {
   currentFilePath?: string | null;
   targetNotePath?: string | null;
-  activeSmartSetTitle?: string | null;
   hasAttachments?: boolean;
   hasSelection?: boolean;
   pinnedContextCount?: number;
+}
+
+export function isStudyWorkflowKind(value: unknown): value is StudyWorkflowKind {
+  return value === "lecture" || value === "review" || value === "paper" || value === "homework";
 }
 
 const DEFAULT_COMPOSER_PLACEHOLDER: Record<SupportedLocale, string> = {
@@ -33,15 +36,21 @@ const DEFAULT_COMPOSER_PLACEHOLDER: Record<SupportedLocale, string> = {
   ja: "講義、論文、宿題、ノートについて質問してください...",
 };
 
-const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omit<StudyWorkflowDefinition, "kind" | "attachRecommended" | "instructionLabels" | "safeAutoSkillRefs">>> = {
+const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omit<StudyWorkflowDefinition, "kind" | "attachRecommended" | "safeAutoSkillRefs">>> = {
   en: {
     lecture: {
       label: "Lecture",
       shortLabel: "Lecture",
       description: "Turn lecture slides, notes, or handouts into a clear study-oriented breakdown.",
       helperText: "Keep the answer study-first: main topics, formulas, confusing points, and follow-up review tasks.",
+      coachContract: [
+        "Lead with the key explanation, not a generic recap.",
+        "Include one short understanding-check question at the end of the visible answer.",
+        "Call out a likely point of confusion or prerequisite the learner may still miss.",
+        "Name the next study step the learner should take immediately after this turn.",
+      ],
       responseContract: ["Main topics", "Key concepts and formulas", "Confusing points or gaps", "Suggested follow-up notes or review tasks"],
-      sourcePriority: ["attached lecture files and images", "current or reference note", "pinned context notes", "active Smart Set"],
+      sourcePriority: ["attached lecture files and images", "current or reference note", "pinned context notes"],
       guidance: [
         "Teach from the material instead of giving a generic summary.",
         "Surface formulas, definitions, and prerequisite concepts when they materially affect understanding.",
@@ -55,20 +64,26 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
     review: {
       label: "Review",
       shortLabel: "Review",
-      description: "Build a focused review session from the current note, Smart Set, or pinned context.",
+      description: "Build a focused review session from the current note or pinned context.",
       helperText: "Prioritize what to review, identify weak spots, propose a short drill list, and point to the next source to reopen.",
+      coachContract: [
+        "Start with what to review first, weighted toward the most recent weak point.",
+        "Include one short understanding-check question tied to the current weak spot.",
+        "Call out the likely forgotten or fragile idea, not just the broad topic.",
+        "Name the next review action or source to reopen.",
+      ],
       responseContract: [
         "What I should review first",
         "Weak spots or likely forgotten areas",
         "A short review checklist or drill list",
         "Next note set or source to reopen",
       ],
-      sourcePriority: ["active Smart Set", "pinned context notes", "current or reference note"],
+      sourcePriority: ["pinned context notes", "current or reference note"],
       guidance: [
         "Optimize for review sequencing and weak-spot detection, not broad explanation.",
         "Prefer concrete review drills and reopen targets over abstract advice.",
       ],
-      missingContextHint: "Activate a Smart Set or pin the note set you want reviewed to make the review order and weak-spot scan more reliable.",
+      missingContextHint: "Pin the note set you want reviewed to make the review order and weak-spot scan more reliable.",
       composerPlaceholder: "Plan a focused review from these notes...",
       quickAction: "Plan a focused review session from this note set",
       promptLead: "Help me run a review session over the current study context.",
@@ -78,6 +93,12 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       shortLabel: "Paper",
       description: "Read a paper deeply and extract claims, methods, results, and open questions.",
       helperText: "Separate direct paper claims from your inferences, and emphasize method, results, assumptions, and next questions.",
+      coachContract: [
+        "Explain the paper in a way that surfaces the prerequisite ideas needed to follow it.",
+        "Include one short understanding-check question at the end of the visible answer.",
+        "Explicitly name a likely misreading, assumption, or interpretation trap.",
+        "Name the next paper-reading step the learner should take.",
+      ],
       responseContract: [
         "Research question and contribution",
         "Method overview",
@@ -85,7 +106,7 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
         "Important assumptions or limitations",
         "Questions worth investigating next",
       ],
-      sourcePriority: ["attached paper PDF or figures", "current or reference note", "pinned context notes", "active Smart Set"],
+      sourcePriority: ["attached paper PDF or figures", "current or reference note", "pinned context notes"],
       guidance: [
         "Keep direct source claims and your interpretation clearly separated.",
         "Call out assumptions, limitations, and open questions even when the user asks for a summary.",
@@ -101,6 +122,12 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       shortLabel: "Homework",
       description: "Work through an attached assignment or selected problem with explanation-first support.",
       helperText: "Restate the problem, list givens and unknowns, explain strategy before calculation, then walk through the reasoning.",
+      coachContract: [
+        "State what is known and unknown before you move into the method.",
+        "Include one short understanding-check question at the end of the visible answer.",
+        "Call out the most likely setup or reasoning mistake for this problem.",
+        "Name the next solving step the learner should attempt.",
+      ],
       responseContract: [
         "What the problem is asking",
         "A solution strategy before calculations",
@@ -126,7 +153,7 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       description: "講義スライド、ノート、配布資料を学習向けに整理して読み解きます。",
       helperText: "主要トピック、公式、分かりにくい点、次の復習タスクを学習向けにまとめます。",
       responseContract: ["主要トピック", "重要な概念と公式", "分かりにくい点や抜け", "次に取るべきノート化や復習タスク"],
-      sourcePriority: ["添付された講義ファイルや画像", "現在または参照ノート", "固定した context ノート", "アクティブな Smart Set"],
+      sourcePriority: ["添付された講義ファイルや画像", "現在または参照ノート", "固定した context ノート"],
       guidance: [
         "単なる要約ではなく、資料から学べる形で教えること。",
         "理解に効く公式、定義、前提概念は明示すること。",
@@ -140,15 +167,15 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
     review: {
       label: "Review",
       shortLabel: "Review",
-      description: "現在のノート、Smart Set、固定 context から集中した復習セッションを組み立てます。",
+      description: "現在のノートや固定 context から集中した復習セッションを組み立てます。",
       helperText: "何を先に復習すべきか、弱点、短い drill list、次に開くべき資料を優先して返します。",
       responseContract: ["最初に復習すべきこと", "弱点や忘れていそうな箇所", "短い復習チェックリストや drill list", "次に開くべきノートや資料"],
-      sourcePriority: ["アクティブな Smart Set", "固定した context ノート", "現在または参照ノート"],
+      sourcePriority: ["固定した context ノート", "現在または参照ノート"],
       guidance: [
         "広い説明より、復習順と弱点検出を優先すること。",
         "抽象的な助言ではなく、具体的な drill と reopen target を優先すること。",
       ],
-      missingContextHint: "復習順と弱点検出の精度を上げるには、Smart Set を有効化するか、復習したいノート群を pin してください。",
+      missingContextHint: "復習順と弱点検出の精度を上げるには、復習したいノート群を pin してください。",
       composerPlaceholder: "このノート群から復習を計画する...",
       quickAction: "このノート集合から復習セッションを計画して",
       promptLead: "現在の学習 context をもとに復習セッションを組み立ててください。",
@@ -159,7 +186,7 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
       description: "論文を深く読み、claim、method、result、open question を抽出します。",
       helperText: "論文の直接 claim と推論を分け、method、result、assumption、next question を重視します。",
       responseContract: ["研究課題と貢献", "手法の概要", "主要結果", "重要な仮定や limitation", "次に掘るべき質問"],
-      sourcePriority: ["添付した論文 PDF や figure", "現在または参照ノート", "固定した context ノート", "アクティブな Smart Set"],
+      sourcePriority: ["添付した論文 PDF や figure", "現在または参照ノート", "固定した context ノート"],
       guidance: [
         "論文の直接 claim とあなたの解釈を明確に分けること。",
         "要約依頼でも assumption、limitation、open question を必ず拾うこと。",
@@ -191,11 +218,26 @@ const STUDY_WORKFLOW_TEXT: Record<SupportedLocale, Record<StudyWorkflowKind, Omi
 };
 
 const STUDY_WORKFLOW_BASE = {
-  lecture: { attachRecommended: true, instructionLabels: ["focus", "steps"], safeAutoSkillRefs: [] },
-  review: { attachRecommended: false, instructionLabels: ["focus", "concise"], safeAutoSkillRefs: [] },
-  paper: { attachRecommended: true, instructionLabels: ["research", "strict"], safeAutoSkillRefs: [] },
-  homework: { attachRecommended: true, instructionLabels: ["steps", "safe"], safeAutoSkillRefs: [] },
+  lecture: { attachRecommended: true, safeAutoSkillRefs: [] },
+  review: { attachRecommended: false, safeAutoSkillRefs: [] },
+  paper: { attachRecommended: true, safeAutoSkillRefs: [] },
+  homework: { attachRecommended: true, safeAutoSkillRefs: [] },
 } as const;
+
+const DEFAULT_COACH_CONTRACT: Record<SupportedLocale, readonly string[]> = {
+  en: [
+    "Lead with the key explanation, not a generic recap.",
+    "Include one short understanding-check question at the end of the visible answer.",
+    "Call out a likely point of confusion or misconception that still needs work.",
+    "Name the next study step the learner should take after this turn.",
+  ],
+  ja: [
+    "要点説明を先頭に置き、単なる要約にしないこと。",
+    "表示本文の最後に理解確認の短い問いを 1 つ入れること。",
+    "まだ曖昧になりやすい誤解やつまずきを明示すること。",
+    "この turn の直後に取るべき次の学習ステップを示すこと。",
+  ],
+};
 
 function buildContextLines(context: StudyWorkflowPromptContext, locale: SupportedLocale): string[] {
   return [
@@ -205,7 +247,6 @@ function buildContextLines(context: StudyWorkflowPromptContext, locale: Supporte
         ? `参照ノート: ${context.targetNotePath}`
         : `Reference note: ${context.targetNotePath}`
       : null,
-    context.activeSmartSetTitle ? (locale === "ja" ? `アクティブな Smart Set: ${context.activeSmartSetTitle}` : `Active Smart Set: ${context.activeSmartSetTitle}`) : null,
     context.hasSelection ? (locale === "ja" ? "この conversation には選択範囲がすでに添付されています。" : "A selection is already attached in this conversation.") : null,
     context.hasAttachments ? (locale === "ja" ? "この conversation には添付ファイルがあります。" : "Attached files are available in this conversation.") : null,
     typeof context.pinnedContextCount === "number" && context.pinnedContextCount > 0
@@ -229,7 +270,14 @@ export function getStudyWorkflowDefinition(kind: StudyWorkflowKind, locale: Supp
   if (!workflow) {
     throw new Error(`Unknown study workflow: ${kind}`);
   }
-  return workflow;
+  return {
+    ...workflow,
+    coachContract: workflow.coachContract ?? DEFAULT_COACH_CONTRACT[locale],
+  };
+}
+
+export function getStudyRecipeWorkflowLabel(workflow: StudyRecipeWorkflowKind, locale: SupportedLocale = "en"): string {
+  return workflow === "custom" ? (locale === "ja" ? "カスタム" : "Custom") : getStudyWorkflowDefinition(workflow, locale).label;
 }
 
 export function getStudyWorkflowComposerPlaceholder(kind: StudyWorkflowKind | null | undefined, locale: SupportedLocale = "en"): string {
@@ -254,7 +302,7 @@ export function getStudyWorkflowMissingContextHint(
   }
 
   if (kind === "review") {
-    return context.activeSmartSetTitle || hasPinnedContext || hasCurrentContext ? null : definition.missingContextHint;
+    return hasPinnedContext || hasCurrentContext ? null : definition.missingContextHint;
   }
 
   if (kind === "paper") {

@@ -1,4 +1,4 @@
-import type { ChatMessage, PendingApproval, ToolCallRecord, WaitingState, WorkspaceState } from "../model/types";
+import type { ChatMessage, PendingApproval, ToolActivityKind, ToolCallRecord, WaitingState, WorkspaceState } from "../model/types";
 
 export type TranscriptEntry =
   | { type: "message"; createdAt: number; message: ChatMessage }
@@ -27,6 +27,7 @@ export function shouldRenderWaitingEntry(
   waitingState: WaitingState | null | undefined,
   toolLog: readonly ToolCallRecord[],
   pendingApprovals: readonly PendingApproval[],
+  hiddenActivityKinds: readonly ToolActivityKind[] = [],
 ): boolean {
   if (status !== "busy" || !waitingState) {
     return false;
@@ -34,7 +35,8 @@ export function shouldRenderWaitingEntry(
   if (waitingState.phase !== "tools") {
     return true;
   }
-  return !hasRunningTranscriptActivity(toolLog, pendingApprovals);
+  const visibleToolLog = toolLog.filter((entry) => !hiddenActivityKinds.includes(entry.kind));
+  return !hasRunningTranscriptActivity(visibleToolLog, pendingApprovals);
 }
 
 export function buildTranscriptEntries(
@@ -44,6 +46,7 @@ export function buildTranscriptEntries(
   pendingApprovals: readonly PendingApproval[],
   waitingState: WaitingState | null | undefined,
   status: WorkspaceState["tabs"][number]["status"],
+  hiddenActivityKinds: readonly ToolActivityKind[] = [],
 ): TranscriptEntry[] {
   const entries: SortableTranscriptEntry[] = [];
 
@@ -59,6 +62,9 @@ export function buildTranscriptEntries(
   }
 
   for (const activity of toolLog) {
+    if (hiddenActivityKinds.includes(activity.kind)) {
+      continue;
+    }
     entries.push({
       type: "activity",
       createdAt: activity.createdAt,
@@ -83,7 +89,7 @@ export function buildTranscriptEntries(
 
   const mergedEntries: TranscriptEntry[] = [...entries];
 
-  if (shouldRenderWaitingEntry(status, waitingState, toolLog, pendingApprovals) && waitingState) {
+  if (shouldRenderWaitingEntry(status, waitingState, toolLog, pendingApprovals, hiddenActivityKinds) && waitingState) {
     mergedEntries.push({
       type: "waiting",
       waitingState,
