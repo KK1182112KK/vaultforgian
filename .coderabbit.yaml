@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+  path_filters:
+    - "!node_modules/**"
+    - "!release/**"
+    - "!site/dist/**"
+    - "!main.js"
+    - "!styles.css"
+    - "!src/generated/**"
+  path_instructions:
+    - path: "src/**/*.{ts,tsx}"
+      instructions: |
+        Focus on user-visible regressions and safety issues in the Obsidian desktop plugin.
+        Check:
+        - plugin lifecycle cleanup, listener/process disposal, and desktop-only assumptions
+        - Codex CLI launch/runtime fallback behavior across macOS, Windows, Linux, and WSL
+        - thread state integrity, permission-mode correctness, patch-approval safety, and vault-edit safety
+        - whether behavior changes are covered by focused Vitest tests under src/tests/
+    - path: "src/tests/**/*.test.ts"
+      instructions: |
+        Check that tests describe behavior clearly, cover failure paths and edge cases, and avoid brittle timing or fixture coupling.
+    - path: "scripts/**/*.{mjs,py}"
+      instructions: |
+        Focus on reproducible builds and releases, robust path handling, quoting, and cross-platform shell behavior.
+    - path: ".github/workflows/**/*.yml"
+      instructions: |
+        Check for least-privilege permissions, deterministic installs/builds, and cross-platform CI correctness.
+    - path: "**/*.md"
+      instructions: |
+        Check that commands, file paths, and product behavior match the current repository state.
+
+chat:
+  auto_reply: true
