@@ -6,6 +6,7 @@ export interface ManagedVaultPathPolicyResult {
   normalizedPath: string;
   reason:
     | "empty"
+    | "missing_base_path"
     | "absolute"
     | "invalid_segment"
     | "hidden_segment"
@@ -57,6 +58,10 @@ export function validateManagedNotePath(app: App, input: string): ManagedVaultPa
   }
 
   const normalizedPath = normalizeCandidatePath(trimmed);
+  const basePath = getVaultBasePath(app);
+  if (!basePath) {
+    return { ok: false, normalizedPath, reason: "missing_base_path" };
+  }
   const segments = normalizedPath.split("/").filter(Boolean);
   if (segments.length === 0) {
     return { ok: false, normalizedPath, reason: "empty" };
@@ -72,7 +77,7 @@ export function validateManagedNotePath(app: App, input: string): ManagedVaultPa
     return { ok: false, normalizedPath, reason: "unsupported_extension" };
   }
 
-  if (isOutsideVault(getVaultBasePath(app), segments)) {
+  if (isOutsideVault(basePath, segments)) {
     return { ok: false, normalizedPath, reason: "outside_vault" };
   }
 
@@ -81,13 +86,19 @@ export function validateManagedNotePath(app: App, input: string): ManagedVaultPa
 
 export function validateManagedFolderPath(app: App, input: string): ManagedVaultPathPolicyResult {
   const trimmed = input.trim();
+  const normalizedPath = normalizeCandidatePath(trimmed);
+  const basePath = getVaultBasePath(app);
   if (!trimmed || trimmed === ".") {
-    return { ok: true, normalizedPath: "", reason: "empty" };
+    return !basePath
+      ? { ok: false, normalizedPath: "", reason: "missing_base_path" }
+      : { ok: true, normalizedPath: "", reason: "empty" };
   }
   if (hasAbsolutePrefix(trimmed)) {
-    return { ok: false, normalizedPath: normalizeCandidatePath(trimmed), reason: "absolute" };
+    return { ok: false, normalizedPath, reason: "absolute" };
   }
-  const normalizedPath = normalizeCandidatePath(trimmed);
+  if (!basePath) {
+    return { ok: false, normalizedPath, reason: "missing_base_path" };
+  }
   const segments = normalizedPath.split("/").filter(Boolean);
   if (segments.length === 0) {
     return { ok: true, normalizedPath: "", reason: "empty" };
@@ -98,7 +109,7 @@ export function validateManagedFolderPath(app: App, input: string): ManagedVault
     return { ok: false, normalizedPath, reason: segmentIssue };
   }
 
-  if (isOutsideVault(getVaultBasePath(app), segments)) {
+  if (isOutsideVault(basePath, segments)) {
     return { ok: false, normalizedPath, reason: "outside_vault" };
   }
 

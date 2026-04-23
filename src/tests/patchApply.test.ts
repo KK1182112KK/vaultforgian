@@ -63,6 +63,54 @@ describe("applyAnchorReplacements", () => {
       expect(result.text).toBe("line1\nINSERTED\nline2\nline3\n");
     }
   });
+
+  it("preserves literal dollar sequences when appending after a before anchor", () => {
+    const base = "# Math\n\n";
+    const result = applyAnchorReplacements(base, [
+      {
+        anchorBefore: "# Math\n",
+        anchorAfter: "",
+        replacement: "\n$$\nx = y + 1\n$$\n",
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.text).toBe("# Math\n\n$$\nx = y + 1\n$$\n\n");
+    }
+  });
+
+  it("preserves literal $1 text when prepending before an after anchor", () => {
+    const base = "Tail\n";
+    const result = applyAnchorReplacements(base, [
+      {
+        anchorBefore: "",
+        anchorAfter: "Tail",
+        replacement: "$1 literal stays intact\n",
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.text).toBe("$1 literal stays intact\nTail\n");
+    }
+  });
+
+  it("preserves literal $$ replacements when using the fallback before/after range", () => {
+    const base = "Intro\nBody paragraph\nTail\n";
+    const result = applyAnchorReplacements(base, [
+      {
+        anchorBefore: "Intro\n",
+        anchorAfter: "Tail",
+        replacement: "$$\nE = mc^2\n$$\n\n",
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.text).toBe("Intro\n$$\nE = mc^2\n$$\n\nTail\n");
+    }
+  });
 });
 
 describe("normalizeForComparison", () => {

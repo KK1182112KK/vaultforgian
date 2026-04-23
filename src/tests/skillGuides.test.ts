@@ -120,10 +120,10 @@ describe("skill guides", () => {
 
     expect(guide).toContain("Skill guide: $deep-read");
     expect(guide).toContain("Runtime-resolved contract for this turn:");
+    expect(guide).toContain("# Deep Read\nOriginal ingest steps.");
     expect(guide).toContain("Do not normalize paths, copy the PDF, call shell tools");
+    expect(guide).toContain("# Study Material Builder\nInspect the source bundle.");
     expect(guide).toContain("Replace Workflow 1 source-bundle inspection");
-    expect(guide).not.toContain("Original ingest steps.");
-    expect(guide).not.toContain("Inspect the source bundle.");
   });
 
   it("emits runtime fallback contracts for known paper-study skills when the catalog is unavailable", async () => {

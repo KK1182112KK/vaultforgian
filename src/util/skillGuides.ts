@@ -116,22 +116,14 @@ export async function buildRequestedSkillGuideText(
       continue;
     }
 
-    if (options.paperStudyAttachmentTurn && runtimeResolvedGuide) {
-      blocks.push(
-        [
-          `Skill guide: $${definition.name}`,
-          `Path: ${definition.path}`,
-          `Description: ${definition.description}`,
-          "",
-          runtimeResolvedGuide,
-        ].join("\n"),
-      );
-      continue;
-    }
-
     try {
       const body = (await fs.readFile(definition.path, "utf8")).trim();
-      if (!body) {
+      const bodySections = [body];
+      if (options.paperStudyAttachmentTurn && runtimeResolvedGuide) {
+        bodySections.push(runtimeResolvedGuide);
+      }
+      const mergedBody = bodySections.filter((section) => section.trim().length > 0).join("\n\n");
+      if (!mergedBody) {
         continue;
       }
       blocks.push(
@@ -140,10 +132,21 @@ export async function buildRequestedSkillGuideText(
           `Path: ${definition.path}`,
           `Description: ${definition.description}`,
           "",
-          body,
+          mergedBody,
         ].join("\n"),
       );
     } catch {
+      if (options.paperStudyAttachmentTurn && runtimeResolvedGuide) {
+        blocks.push(
+          [
+            `Skill guide: $${definition.name}`,
+            `Path: ${definition.path}`,
+            `Description: ${definition.description}`,
+            "",
+            runtimeResolvedGuide,
+          ].join("\n"),
+        );
+      }
       // Missing or unreadable guides should not block the turn.
     }
   }

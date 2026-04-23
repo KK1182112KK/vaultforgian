@@ -32,61 +32,109 @@ export function applyAnchorReplacements(
     }
 
     if (before && !after) {
-      const count = countOccurrences(working, before);
-      if (count === 0) {
+      const matchIndex = findUniqueLiteralMatchIndex(working, before);
+      if (matchIndex === null) {
         return { ok: false, failure: { reason: "anchor_not_found", anchorIndex: index } };
       }
-      if (count > 1) {
+      if (matchIndex === -1) {
         return { ok: false, failure: { reason: "anchor_ambiguous", anchorIndex: index } };
       }
-      working = working.replace(before, before + replacement);
+      working = spliceText(working, matchIndex + before.length, matchIndex + before.length, replacement);
       continue;
     }
 
     if (!before && after) {
-      const count = countOccurrences(working, after);
-      if (count === 0) {
+      const matchIndex = findUniqueLiteralMatchIndex(working, after);
+      if (matchIndex === null) {
         return { ok: false, failure: { reason: "anchor_not_found", anchorIndex: index } };
       }
-      if (count > 1) {
+      if (matchIndex === -1) {
         return { ok: false, failure: { reason: "anchor_ambiguous", anchorIndex: index } };
       }
-      working = working.replace(after, replacement + after);
+      working = spliceText(working, matchIndex, matchIndex, replacement);
       continue;
     }
 
-    const combined = before + after;
-    const combinedCount = countOccurrences(working, combined);
-    if (combinedCount === 1) {
-      working = working.replace(combined, before + replacement + after);
-      continue;
-    }
-    const pattern = new RegExp(`${escapeRegExp(before)}[\\s\\S]*?${escapeRegExp(after)}`);
-    const matches = working.match(new RegExp(pattern, "g"));
-    if (!matches || matches.length === 0) {
+    const range = findUniqueAnchorRange(working, before, after);
+    if (!range) {
       return { ok: false, failure: { reason: "anchor_not_found", anchorIndex: index } };
     }
-    if (matches.length > 1) {
+    if (range === "ambiguous") {
       return { ok: false, failure: { reason: "anchor_ambiguous", anchorIndex: index } };
     }
-    working = working.replace(pattern, before + replacement + after);
+    working = spliceText(working, range.start + before.length, range.end - after.length, replacement);
   }
   return { ok: true, text: working };
 }
 
-function countOccurrences(haystack: string, needle: string): number {
+function findUniqueLiteralMatchIndex(haystack: string, needle: string): number | null {
   if (!needle) {
-    return 0;
+    return null;
   }
-  let count = 0;
-  let index = 0;
-  while ((index = haystack.indexOf(needle, index)) !== -1) {
-    count += 1;
-    index += needle.length;
+  let foundIndex = -1;
+  let searchIndex = 0;
+  while (true) {
+    const nextIndex = haystack.indexOf(needle, searchIndex);
+    if (nextIndex === -1) {
+      return foundIndex === -1 ? null : foundIndex;
+    }
+    if (foundIndex !== -1) {
+      return -1;
+    }
+    foundIndex = nextIndex;
+    searchIndex = nextIndex + needle.length;
   }
-  return count;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function findAllLiteralMatchIndexes(haystack: string, needle: string): number[] {
+  if (!needle) {
+    return [];
+  }
+  const indexes: number[] = [];
+  let searchIndex = 0;
+  while (true) {
+    const nextIndex = haystack.indexOf(needle, searchIndex);
+    if (nextIndex === -1) {
+      return indexes;
+    }
+    indexes.push(nextIndex);
+    searchIndex = nextIndex + needle.length;
+  }
+}
+
+function spliceText(text: string, start: number, end: number, replacement: string): string {
+  return `${text.slice(0, start)}${replacement}${text.slice(end)}`;
+}
+
+function findUniqueAnchorRange(
+  haystack: string,
+  before: string,
+  after: string,
+): { start: number; end: number } | "ambiguous" | null {
+  const combined = before + after;
+  const exactMatches = findAllLiteralMatchIndexes(haystack, combined);
+  if (exactMatches.length === 1) {
+    const start = exactMatches[0]!;
+    return { start, end: start + combined.length };
+  }
+  if (exactMatches.length > 1) {
+    return "ambiguous";
+  }
+
+  const candidates: Array<{ start: number; end: number }> = [];
+  for (const beforeIndex of findAllLiteralMatchIndexes(haystack, before)) {
+    const afterIndex = haystack.indexOf(after, beforeIndex + before.length);
+    if (afterIndex === -1) {
+      continue;
+    }
+    candidates.push({
+      start: beforeIndex,
+      end: afterIndex + after.length,
+    });
+    if (candidates.length > 1) {
+      return "ambiguous";
+    }
+  }
+
+  return candidates[0] ?? null;
 }

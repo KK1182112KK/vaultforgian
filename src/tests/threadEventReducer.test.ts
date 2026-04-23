@@ -197,4 +197,64 @@ describe("ThreadEventReducer", () => {
       }),
     ]);
   });
+
+  it("passes through string turn.failed errors", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer } = createReducer(store);
+    const error = reducer.handleThreadEvent(tabId, {
+      type: "turn.failed",
+      error: "raw runtime failure",
+    });
+
+    expect(error).toBe("raw runtime failure");
+  });
+
+  it("passes through nested turn.failed API errors", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer } = createReducer(store);
+    const error = reducer.handleThreadEvent(tabId, {
+      type: "turn.failed",
+      error: {
+        error: {
+          message: "nested runtime failure",
+        },
+      },
+    });
+
+    expect(error).toBe("nested runtime failure");
+  });
+
+  it("passes through item.error payloads without dropping nested messages", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer } = createReducer(store);
+    const error = reducer.handleThreadEvent(tabId, {
+      type: "item.completed",
+      item: {
+        id: "error-1",
+        type: "error",
+        error: {
+          error: {
+            message: "item payload failed",
+          },
+        },
+      },
+    });
+
+    expect(error).toBe("item payload failed");
+  });
 });

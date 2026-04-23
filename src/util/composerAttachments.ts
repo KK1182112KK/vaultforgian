@@ -479,8 +479,11 @@ export async function buildInlineAttachmentContentPack(
   let remainingChars = maxChars;
 
   for (const attachment of attachments) {
-    if (remainingChars <= 0 || attachment.kind === "image") {
+    if (remainingChars <= 0) {
       break;
+    }
+    if (attachment.kind === "image") {
+      continue;
     }
 
     const source = await readAttachmentSourceText(vaultRoot, attachment);

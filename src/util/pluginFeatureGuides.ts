@@ -13,10 +13,6 @@ interface PluginFeatureGuideParams {
   targetNotePath: string | null;
 }
 
-function mentionsPanelStudio(prompt: string): boolean {
-  return /(?:panel\s*studio|ingest\s*hub)/i.test(prompt);
-}
-
 function buildPanelStudioGuide(params: PluginFeatureGuideParams): string {
   const { activePanelId, copy, isCollapsed, locale, panels, targetNotePath } = params;
   const activePanel = activePanelId ? panels.find((entry) => entry.id === activePanelId) ?? null : null;
@@ -82,8 +78,20 @@ function buildPanelStudioGuide(params: PluginFeatureGuideParams): string {
 }
 
 export function buildPluginFeatureGuideText(params: PluginFeatureGuideParams): string | null {
-  if (mentionsPanelStudio(params.prompt)) {
+  if (mentionsPanelStudioPrompt(params.prompt, params.copy.workspace.ingestHubTitle)) {
     return buildPanelStudioGuide(params);
   }
   return null;
+}
+
+function mentionsPanelStudioPrompt(prompt: string, localizedTitle: string): boolean {
+  const normalizedPrompt = normalizePromptText(prompt);
+  const aliases = ["panel studio", "ingest hub", "パネルスタジオ", localizedTitle]
+    .map((value) => normalizePromptText(value))
+    .filter(Boolean);
+  return aliases.some((alias) => normalizedPrompt.includes(alias));
+}
+
+function normalizePromptText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
 }

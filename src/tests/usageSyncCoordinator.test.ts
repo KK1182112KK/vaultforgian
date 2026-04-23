@@ -79,8 +79,9 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function waitForSnapshots(check: () => boolean, attempts = 20): Promise<void> {
-  for (let index = 0; index < attempts; index += 1) {
+async function waitForCondition(check: () => boolean, timeoutMs = 250): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= timeoutMs) {
     if (check()) {
       return;
     }
@@ -144,7 +145,7 @@ describe("UsageSyncCoordinator", () => {
     });
 
     coordinator.refreshUsageForTab("tab-1");
-    await waitForSnapshots(() => applied.length === 1);
+    await waitForCondition(() => applied.length === 1);
     expect(applied).toEqual([
       expect.objectContaining({
         threadId: null,

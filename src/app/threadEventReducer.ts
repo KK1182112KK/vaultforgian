@@ -30,12 +30,44 @@ function getErrorMessage(value: unknown): string {
     return unwrapApiErrorMessage(value);
   }
   if (asRecord(value)) {
-    const message = asString(asRecord(value)?.message);
+    const message = extractNestedErrorMessage(value);
     if (message) {
       return unwrapApiErrorMessage(message);
     }
+    const json = safeJson(value);
+    if (json !== "{}") {
+      return unwrapApiErrorMessage(json);
+    }
   }
   return "Unknown Codex error.";
+}
+
+function extractNestedErrorMessage(value: unknown, seen = new Set<unknown>()): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Error) {
+    return value.message;
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  if (seen.has(record)) {
+    return null;
+  }
+  seen.add(record);
+  const directMessage = asString(record.message);
+  if (directMessage) {
+    return directMessage;
+  }
+  for (const key of ["error", "last_error", "cause", "details", "payload"]) {
+    const nestedMessage = extractNestedErrorMessage(record[key], seen);
+    if (nestedMessage) {
+      return nestedMessage;
+    }
+  }
+  return null;
 }
 
 function extractCodexSessionId(event: JsonRecord): string | null {
@@ -262,13 +294,15 @@ export class ThreadEventReducer {
     }
 
     if (eventType === "turn.failed") {
-      this.failRunningActivities(tabId, getErrorMessage(asRecord(event.error)));
-      return getErrorMessage(asRecord(event.error));
+      const message = getErrorMessage(event.error);
+      this.failRunningActivities(tabId, message);
+      return message;
     }
 
     if (eventType === "error") {
-      this.failRunningActivities(tabId, unwrapApiErrorMessage(asString(event.message) ?? "Unknown Codex error."));
-      return unwrapApiErrorMessage(asString(event.message) ?? "Unknown Codex error.");
+      const message = getErrorMessage(event.message ?? event.error);
+      this.failRunningActivities(tabId, message);
+      return message;
     }
 
     if (eventType === "event_msg" && payload) {
@@ -351,8 +385,9 @@ export class ThreadEventReducer {
     }
 
     if (asString(item.type) === "error") {
-      this.failRunningActivities(tabId, unwrapApiErrorMessage(asString(item.message) ?? getErrorMessage(asRecord(item.error))));
-      return unwrapApiErrorMessage(asString(item.message) ?? getErrorMessage(asRecord(item.error)));
+      const message = getErrorMessage(item.message ?? item.error);
+      this.failRunningActivities(tabId, message);
+      return message;
     }
 
     this.handleThreadItem(tabId, item, eventType !== "item.completed", assistantOutputVisibility);

@@ -218,14 +218,29 @@ export class StudyPanelCoordinator {
     }
   }
 
-  createHubPanel(): StudyRecipe {
+  createHubPanel(
+    initialDraft: Partial<Pick<StudyRecipe, "title" | "description" | "promptTemplate" | "linkedSkillNames">> = {},
+  ): StudyRecipe {
     const panels = this.deps.getStudyRecipes();
     if (panels.length >= MAX_STUDY_HUB_PANELS) {
       throw new Error(this.deps.getLocalizedCopy().service.panelLimitReached(MAX_STUDY_HUB_PANELS));
     }
     const created = this.buildBlankPanelSeed(panels.map((entry) => entry.commandAlias));
-    this.deps.store.upsertStudyRecipe(created);
-    return created;
+    const normalizedTitle = initialDraft.title?.trim() ?? "";
+    const normalizedLinkedSkillNames = [...new Set((initialDraft.linkedSkillNames ?? []).map((entry) => entry.trim()).filter(Boolean))];
+    const finalTitle = normalizedTitle ? this.createUniquePanelTitle(normalizedTitle) : "";
+    const finalAlias = finalTitle ? buildStudyRecipeCommandAlias(finalTitle, panels.map((entry) => entry.commandAlias)) : created.commandAlias;
+    const finalized: StudyRecipe = {
+      ...created,
+      title: finalTitle,
+      description: initialDraft.description?.trim() ?? created.description,
+      promptTemplate: initialDraft.promptTemplate?.trim() ?? created.promptTemplate,
+      linkedSkillNames: normalizedLinkedSkillNames,
+      commandAlias: finalAlias,
+      updatedAt: Date.now(),
+    };
+    this.deps.store.upsertStudyRecipe(finalized);
+    return finalized;
   }
 
   updateHubPanel(

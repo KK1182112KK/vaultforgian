@@ -88,4 +88,18 @@ describe("plugin feature guides", () => {
     expect(guide).toContain("アクティブ panel: 無題の panel");
     expect(guide).toContain("- 無題の panel (カスタム)");
   });
+
+  it("detects localized panel-studio aliases beyond the English title", () => {
+    const guide = buildPluginFeatureGuideText({
+      prompt: "ingest hub の使い方を教えて",
+      locale: "en",
+      copy: getLocalizedCopy("en"),
+      panels: [createStudyRecipe()],
+      activePanelId: "study-recipe-1",
+      isCollapsed: false,
+      targetNotePath: null,
+    });
+
+    expect(guide).toContain("Plugin feature guide: Panel Studio");
+  });
 });

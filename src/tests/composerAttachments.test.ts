@@ -432,6 +432,48 @@ describe("composer attachment helpers", () => {
     expect(pack.missingSourceAttachmentNames).toEqual(["scanned.pdf"]);
   });
 
+  it("skips images and still evaluates later file attachments for inline content", async () => {
+    const vaultRoot = await fs.mkdtemp(join(tmpdir(), "obsidian-codex-study-vault-"));
+    const stageRoot = join(vaultRoot, ".obsidian", "plugins", "obsidian-codex-study", ".staging", "tab-1");
+    const textPath = join(stageRoot, "notes.txt");
+    await fs.mkdir(stageRoot, { recursive: true });
+    await fs.writeFile(textPath, "later attachment text", "utf8");
+
+    try {
+      const pack = await buildInlineAttachmentContentPack(vaultRoot, [
+        {
+          id: "image-1",
+          kind: "image",
+          displayName: "diagram.png",
+          mimeType: "image/png",
+          stagedPath: join(stageRoot, "diagram.png"),
+          vaultPath: ".obsidian/plugins/obsidian-codex-study/.staging/tab-1/diagram.png",
+          promptPath: ".obsidian/plugins/obsidian-codex-study/.staging/tab-1/diagram.png",
+          originalPath: "/tmp/diagram.png",
+          source: "picker",
+          createdAt: 1,
+        },
+        {
+          id: "file-1",
+          kind: "file",
+          displayName: "notes.txt",
+          mimeType: "text/plain",
+          stagedPath: textPath,
+          vaultPath: ".obsidian/plugins/obsidian-codex-study/.staging/tab-1/notes.txt",
+          promptPath: ".obsidian/plugins/obsidian-codex-study/.staging/tab-1/notes.txt",
+          originalPath: textPath,
+          source: "picker",
+          createdAt: 2,
+        },
+      ]);
+
+      expect(pack.text).toContain("Attachment text excerpt: notes.txt");
+      expect(pack.text).toContain("later attachment text");
+    } finally {
+      await fs.rm(vaultRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not read attachment sources outside the managed staging root", async () => {
     const vaultRoot = await fs.mkdtemp(join(tmpdir(), "obsidian-codex-study-vault-"));
     const outsidePath = join(vaultRoot, "outside.txt");

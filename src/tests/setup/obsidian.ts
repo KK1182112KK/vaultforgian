@@ -128,7 +128,7 @@ export class Modal {
 
   close(): void {
     this.onClose();
-    this.modalEl.remove();
+    this.modalEl.remove?.();
   }
 }
 
@@ -136,7 +136,14 @@ export class TextAreaComponent {
   inputEl: HTMLTextAreaElement;
 
   constructor() {
-    this.inputEl = document.createElement("textarea");
+    this.inputEl =
+      typeof document !== "undefined"
+        ? document.createElement("textarea")
+        : ({
+            value: "",
+            placeholder: "",
+            addEventListener() {},
+          } as unknown as HTMLTextAreaElement);
   }
 
   setPlaceholder(value: string): this {
@@ -159,10 +166,16 @@ export class Setting {
   private readonly controlEl: HTMLDivElement;
 
   constructor(containerEl: HTMLElement) {
-    this.settingEl = document.createElement("div");
-    this.controlEl = document.createElement("div");
-    this.settingEl.appendChild(this.controlEl);
-    containerEl.appendChild(this.settingEl);
+    this.settingEl =
+      typeof document !== "undefined"
+        ? document.createElement("div")
+        : ({ dataset: {}, appendChild() {} } as unknown as HTMLDivElement);
+    this.controlEl =
+      typeof document !== "undefined"
+        ? document.createElement("div")
+        : ({ appendChild() {} } as unknown as HTMLDivElement);
+    this.settingEl.appendChild?.(this.controlEl);
+    containerEl.appendChild?.(this.settingEl);
   }
 
   setName(name: string): this {
@@ -183,8 +196,11 @@ export class Setting {
   }
 
   addButton(callback: (button: { setButtonText(text: string): unknown; setCta(): unknown; onClick(fn: () => void): unknown }) => void): this {
-    const buttonEl = document.createElement("button");
-    this.controlEl.appendChild(buttonEl);
+    const buttonEl =
+      typeof document !== "undefined"
+        ? document.createElement("button")
+        : ({ textContent: "", classList: { add() {} }, addEventListener() {} } as unknown as HTMLButtonElement);
+    this.controlEl.appendChild?.(buttonEl);
     const api = {
       setButtonText: (text: string) => {
         buttonEl.textContent = text;
