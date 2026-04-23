@@ -609,3 +609,5 @@
 }
 
 .obsidian-codex__change-card-btn.is-muted::before {
+  background: rgba(var(--obsidian-codex-edge-rgb), 0.18);
+}

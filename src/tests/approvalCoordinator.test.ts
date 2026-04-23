@@ -10,12 +10,23 @@ import { ApprovalCoordinator, type ApprovalCoordinatorDeps } from "../app/approv
 import type { ParsedAssistantOp } from "../util/assistantProposals";
 import { PatchConflictError, hashPatchContent } from "../util/patchConflicts";
 import { CALLOUT_MATH_COLLISION_SAMPLE, CALLOUT_MATH_HEALED_SAMPLE, CALLOUT_MATH_SAMPLE } from "./fixtures/calloutMathFixture";
+import type { InstalledSkillDefinition } from "../util/skillCatalog";
 
 const tempRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
 
 function createApp(initialFiles: Record<string, string> = {}) {
   const files = new Map(Object.entries(initialFiles));
@@ -24,6 +35,9 @@ function createApp(initialFiles: Record<string, string> = {}) {
 
   const app = {
     vault: {
+      adapter: {
+        basePath: "/vault",
+      },
       getAbstractFileByPath(path: string) {
         if (files.has(path) || folders.has(path)) {
           return { path };
@@ -74,6 +88,7 @@ function createDeps(overrides: Partial<ApprovalCoordinatorDeps> = {}, initialFil
     store,
     findTab: (tabId) => store.getState().tabs.find((tab) => tab.id === tabId) ?? null,
     getLocalizedCopy: () => getLocalizedCopy("en"),
+    getUserOwnedInstalledSkills: () => [],
     abortTabRun: vi.fn(() => true),
     hasCodexLogin: () => true,
     getMissingLoginMessage: () => "Missing login",
@@ -81,6 +96,7 @@ function createDeps(overrides: Partial<ApprovalCoordinatorDeps> = {}, initialFil
     ...overrides,
   };
   return {
+    app,
     store,
     files,
     openFile,
@@ -177,6 +193,98 @@ describe("ApprovalCoordinator", () => {
     expect(result).toBe("denied");
     expect(tab?.pendingApprovals).toHaveLength(0);
     expect(tab?.messages.at(-1)?.text).toContain("Denied");
+  });
+
+  it("ignores a duplicate approval action while the same approval is already in flight", async () => {
+    const { app, store, files, coordinator } = createDeps({}, { "notes/source.md": "# Source" });
+    const tabId = store.getActiveTab()!.id;
+    const approval: PendingApproval = {
+      id: "approval-1",
+      tabId,
+      callId: "call-1",
+      toolName: "vault_op",
+      title: "Rename note",
+      description: "notes/source.md -> archive/source-renamed.md",
+      details: "Backlinks detected: 0",
+      createdAt: 1,
+      sourceMessageId: "assistant-1",
+      originTurnId: "turn-1",
+      transport: "plugin_proposal",
+      decisionTarget: "notes/source.md",
+      scopeEligible: false,
+      scope: "write",
+      toolPayload: {
+        kind: "rename",
+        targetPath: "notes/source.md",
+        destinationPath: "archive/source-renamed.md",
+        impact: null,
+      },
+    };
+    const renameGate = createDeferred<void>();
+    (app.fileManager.renameFile as ReturnType<typeof vi.fn>).mockImplementation(async (file: { path: string }, nextPath: string) => {
+      await renameGate.promise;
+      const content = files.get(file.path);
+      files.delete(file.path);
+      files.set(nextPath, content ?? "");
+    });
+    store.setApprovals(tabId, [approval]);
+
+    const firstAttempt = coordinator.respondToApproval("approval-1", "approve");
+    await Promise.resolve();
+    const secondAttempt = await coordinator.respondToApproval("approval-1", "approve");
+
+    expect(secondAttempt).toBe("ignored");
+
+    renameGate.resolve();
+    expect(await firstAttempt).toBe("applied");
+    expect(app.fileManager.renameFile).toHaveBeenCalledTimes(1);
+    expect(files.has("archive/source-renamed.md")).toBe(true);
+  });
+
+  it("ignores single approval actions while a batch approval is in flight for the same tab", async () => {
+    const { app, store, files, coordinator } = createDeps({}, { "notes/source.md": "# Source" });
+    const tabId = store.getActiveTab()!.id;
+    const approval: PendingApproval = {
+      id: "approval-1",
+      tabId,
+      callId: "call-1",
+      toolName: "vault_op",
+      title: "Rename note",
+      description: "notes/source.md -> archive/source-renamed.md",
+      details: "Backlinks detected: 0",
+      createdAt: 1,
+      sourceMessageId: "assistant-1",
+      originTurnId: "turn-1",
+      transport: "plugin_proposal",
+      decisionTarget: "notes/source.md",
+      scopeEligible: false,
+      scope: "write",
+      toolPayload: {
+        kind: "rename",
+        targetPath: "notes/source.md",
+        destinationPath: "archive/source-renamed.md",
+        impact: null,
+      },
+    };
+    const renameGate = createDeferred<void>();
+    (app.fileManager.renameFile as ReturnType<typeof vi.fn>).mockImplementation(async (file: { path: string }, nextPath: string) => {
+      await renameGate.promise;
+      const content = files.get(file.path);
+      files.delete(file.path);
+      files.set(nextPath, content ?? "");
+    });
+    store.setApprovals(tabId, [approval]);
+
+    const batchAttempt = coordinator.respondToAllApprovals(tabId, "approve");
+    await Promise.resolve();
+    const singleResult = await coordinator.respondToApproval("approval-1", "approve");
+
+    expect(singleResult).toBe("ignored");
+
+    renameGate.resolve();
+    await batchAttempt;
+    expect(app.fileManager.renameFile).toHaveBeenCalledTimes(1);
+    expect(files.has("archive/source-renamed.md")).toBe(true);
   });
 
   it("throws PatchConflictError for stale full-rewrite patches", async () => {
@@ -300,6 +408,42 @@ describe("ApprovalCoordinator", () => {
     );
   });
 
+  it("ignores patch rejection while the same patch is being applied", async () => {
+    const { app, store, files, coordinator } = createDeps({}, { "notes/source.md": "old" });
+    const tabId = store.getActiveTab()!.id;
+    const patch: PatchProposal = {
+      id: "patch-1",
+      threadId: null,
+      sourceMessageId: "assistant-1",
+      originTurnId: "turn-1",
+      targetPath: "notes/source.md",
+      kind: "update",
+      baseSnapshot: "old",
+      proposedText: "new",
+      unifiedDiff: "@@",
+      summary: "Update note",
+      status: "pending",
+      createdAt: 1,
+    };
+    const modifyGate = createDeferred<void>();
+    (app.vault.modify as ReturnType<typeof vi.fn>).mockImplementation(async (file: { path: string }, content: string) => {
+      await modifyGate.promise;
+      files.set(file.path, content);
+    });
+    store.setPatchBasket(tabId, [patch]);
+
+    const applyAttempt = coordinator.applyPatchProposal(tabId, "patch-1");
+    await Promise.resolve();
+    coordinator.rejectPatchProposal(tabId, "patch-1");
+
+    expect(store.getActiveTab()?.patchBasket[0]?.status).toBe("pending");
+
+    modifyGate.resolve();
+    await applyAttempt;
+    expect(store.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
+    expect(files.get("notes/source.md")).toBe("new");
+  });
+
   it("applies a skill-update approval by writing back to the original SKILL.md", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-skill-update-"));
     tempRoots.push(tempRoot);
@@ -307,7 +451,14 @@ describe("ApprovalCoordinator", () => {
     await mkdir(join(tempRoot, "skills", "note-refiner"), { recursive: true });
     await writeFile(skillPath, "# Note Refiner\n\nOriginal body.\n", "utf8");
 
-    const { store, coordinator } = createDeps();
+    const installedSkill: InstalledSkillDefinition = {
+      name: "note-refiner",
+      description: "Refine note rewrites.",
+      path: skillPath,
+    };
+    const { store, coordinator } = createDeps({
+      getUserOwnedInstalledSkills: () => [installedSkill],
+    });
     const tabId = store.getActiveTab()!.id;
     const approval: PendingApproval = {
       id: "approval-skill-1",
@@ -358,7 +509,14 @@ describe("ApprovalCoordinator", () => {
     await mkdir(join(tempRoot, "skills", "deep-read"), { recursive: true });
     await writeFile(skillPath, "# Deep Read\n\nOriginal body.\n", "utf8");
 
-    const { store, coordinator } = createDeps();
+    const installedSkill: InstalledSkillDefinition = {
+      name: "deep-read",
+      description: "Read deeply.",
+      path: skillPath,
+    };
+    const { store, coordinator } = createDeps({
+      getUserOwnedInstalledSkills: () => [installedSkill],
+    });
     const tabId = store.getActiveTab()!.id;
     store.setApprovals(tabId, [
       {
@@ -398,5 +556,118 @@ describe("ApprovalCoordinator", () => {
 
     expect(await readFile(skillPath, "utf8")).toContain("Prefer precise evidence.");
     expect(store.getActiveTab()?.pendingApprovals).toHaveLength(0);
+  });
+
+  it("rejects skill-update approvals for paths outside the current user-owned skill catalog", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-skill-update-outside-"));
+    tempRoots.push(tempRoot);
+    const skillPath = join(tempRoot, "skills", "deep-read", "SKILL.md");
+    await mkdir(join(tempRoot, "skills", "deep-read"), { recursive: true });
+    await writeFile(skillPath, "# Deep Read\n\nOriginal body.\n", "utf8");
+
+    const { store, coordinator } = createDeps({
+      getUserOwnedInstalledSkills: () => [],
+    });
+    const tabId = store.getActiveTab()!.id;
+    store.setApprovals(tabId, [
+      {
+        id: "approval-skill-outside",
+        tabId,
+        callId: "call-skill-outside",
+        toolName: "skill_update" as never,
+        title: "Update skill: deep-read",
+        description: skillPath,
+        details: "Learned refinement",
+        diffText: "@@",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        transport: "plugin_proposal",
+        decisionTarget: skillPath,
+        scopeEligible: false,
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath,
+          baseContent: "# Deep Read\n\nOriginal body.\n",
+          baseContentHash: hashPatchContent("# Deep Read\n\nOriginal body.\n"),
+          nextContent: "# Deep Read\n\nUpdated body.\n",
+          feedbackSummary: "Learned refinement",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/source.md",
+            panelId: null,
+          },
+        } as never,
+      },
+    ]);
+
+    const result = await coordinator.respondToApproval("approval-skill-outside", "approve");
+
+    expect(result).toBe("failed");
+    expect(await readFile(skillPath, "utf8")).toBe("# Deep Read\n\nOriginal body.\n");
+    expect(store.getActiveTab()?.messages.at(-1)?.text).toContain("Skill update blocked");
+  });
+
+  it("rejects skill-update approvals when the skill name/path pair no longer matches the current catalog", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-skill-update-mismatch-"));
+    tempRoots.push(tempRoot);
+    const actualSkillPath = join(tempRoot, "skills", "deep-read", "SKILL.md");
+    const mismatchedSkillPath = join(tempRoot, "skills", "other", "SKILL.md");
+    await mkdir(join(tempRoot, "skills", "deep-read"), { recursive: true });
+    await mkdir(join(tempRoot, "skills", "other"), { recursive: true });
+    await writeFile(actualSkillPath, "# Deep Read\n\nOriginal body.\n", "utf8");
+    await writeFile(mismatchedSkillPath, "# Other\n\nOriginal body.\n", "utf8");
+
+    const { store, coordinator } = createDeps({
+      getUserOwnedInstalledSkills: () => [
+        {
+          name: "deep-read",
+          description: "Read deeply.",
+          path: actualSkillPath,
+        },
+      ],
+    });
+    const tabId = store.getActiveTab()!.id;
+    store.setApprovals(tabId, [
+      {
+        id: "approval-skill-mismatch",
+        tabId,
+        callId: "call-skill-mismatch",
+        toolName: "skill_update" as never,
+        title: "Update skill: deep-read",
+        description: mismatchedSkillPath,
+        details: "Learned refinement",
+        diffText: "@@",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        transport: "plugin_proposal",
+        decisionTarget: mismatchedSkillPath,
+        scopeEligible: false,
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath: mismatchedSkillPath,
+          baseContent: "# Other\n\nOriginal body.\n",
+          baseContentHash: hashPatchContent("# Other\n\nOriginal body.\n"),
+          nextContent: "# Other\n\nUpdated body.\n",
+          feedbackSummary: "Learned refinement",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/source.md",
+            panelId: null,
+          },
+        } as never,
+      },
+    ]);
+
+    const result = await coordinator.respondToApproval("approval-skill-mismatch", "approve");
+
+    expect(result).toBe("failed");
+    expect(await readFile(actualSkillPath, "utf8")).toBe("# Deep Read\n\nOriginal body.\n");
+    expect(await readFile(mismatchedSkillPath, "utf8")).toBe("# Other\n\nOriginal body.\n");
   });
 });

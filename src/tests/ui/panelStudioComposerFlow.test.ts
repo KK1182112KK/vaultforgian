@@ -135,10 +135,10 @@ function createState(): WorkspaceState {
   };
 }
 
-function createDeferred() {
-  let resolve!: () => void;
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (error: unknown) => void;
-  const promise = new Promise<void>((res, rej) => {
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
     reject = rej;
   });
@@ -190,6 +190,8 @@ function createHarness(
     contextPaths?: string[];
     composeMode?: WorkspaceState["tabs"][number]["composeMode"];
     status?: WorkspaceState["tabs"][number]["status"];
+    createHubPanelError?: string;
+    updateHubPanelError?: string;
   } = {},
 ) {
   const state = createState();
@@ -255,16 +257,19 @@ function createHarness(
     refreshInstalledSkills: vi.fn(async () => {}),
     getUserOwnedInstalledSkills: () => installedSkills.filter((entry) => isUserOwnedSkillDefinition(entry)),
     getInstalledSkills: () => installedSkills,
-    createHubPanel: vi.fn(() => {
+    createHubPanel: vi.fn((draft?: { title?: string; description?: string; promptTemplate?: string; linkedSkillNames?: string[] }) => {
+      if (options.createHubPanelError) {
+        throw new Error(options.createHubPanelError);
+      }
       const panel: StudyRecipe = {
         ...state.studyRecipes[0]!,
         id: `panel-${nextPanelIndex}`,
-        title: "",
-        description: "",
+        title: draft?.title?.trim() ?? "",
+        description: draft?.description?.trim() ?? "",
         commandAlias: `panel-${nextPanelIndex}`,
         workflow: "custom",
-        promptTemplate: "",
-        linkedSkillNames: [],
+        promptTemplate: draft?.promptTemplate?.trim() ?? "",
+        linkedSkillNames: draft?.linkedSkillNames ? [...draft.linkedSkillNames] : [],
         createdAt: nextPanelIndex,
         updatedAt: nextPanelIndex,
       };
@@ -273,6 +278,9 @@ function createHarness(
       return panel;
     }),
     updateHubPanel: vi.fn((panelId: string, patch: { title?: string; description?: string; promptTemplate?: string; linkedSkillNames?: string[] }) => {
+      if (options.updateHubPanelError) {
+        throw new Error(options.updateHubPanelError);
+      }
       state.studyRecipes = state.studyRecipes.map((panel) =>
         panel.id === panelId
           ? {
@@ -737,17 +745,35 @@ describe("Panel Studio composer flow", () => {
     await tick();
 
     expect(harness.service.createHubPanel).toHaveBeenCalledTimes(1);
-    expect(harness.service.updateHubPanel).toHaveBeenCalledWith("panel-2", {
+    expect(harness.service.createHubPanel).toHaveBeenCalledWith({
       title: "Exam drill",
       description: "Use this before the exam.",
       promptTemplate: "Turn these notes into an exam drill.",
       linkedSkillNames: ["grill-me"],
     });
-    expect(harness.service.createHubPanel.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.service.updateHubPanel.mock.invocationCallOrder[0]!,
-    );
+    expect(harness.service.updateHubPanel).not.toHaveBeenCalled();
     expect(harness.hubRoot.querySelector('[data-smoke="panel-create-popover"]')).toBeNull();
     expect(harness.hubRoot.textContent).toContain("Exam drill");
+  });
+
+  it("keeps the new-panel popover open when panel creation fails", async () => {
+    const harness = createHarness({ createHubPanelError: "Create failed" });
+    await tick();
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-studio-add"]')?.click();
+    await tick();
+
+    const titleInput = harness.hubRoot.querySelector<HTMLInputElement>('[data-smoke="panel-create-title"]')!;
+    titleInput.value = "Exam drill";
+    titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-create-save"]')?.click();
+    await tick();
+
+    expect(harness.service.createHubPanel).toHaveBeenCalledTimes(1);
+    expect(harness.hubRoot.querySelector('[data-smoke="panel-create-popover"]')).not.toBeNull();
+    expect(harness.hubRoot.querySelector<HTMLInputElement>('[data-smoke="panel-create-title"]')?.value).toBe("Exam drill");
+    expect(Notice.messages).toContain("Create failed");
   });
 
   it("confirms before discarding a dirty new panel draft from the overlay", async () => {
@@ -821,6 +847,26 @@ describe("Panel Studio composer flow", () => {
 
     expect(harness.hubRoot.querySelector(".obsidian-codex__hub-panel.is-editing")).not.toBeNull();
     expect(harness.hubRoot.querySelector<HTMLInputElement>(".obsidian-codex__panel-edit-input-title")?.value).toBe("Edited title");
+  });
+
+  it("keeps panel edits open when saving the panel fails", async () => {
+    const harness = createHarness({ updateHubPanelError: "Save failed" });
+    await tick();
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]')?.click();
+    await tick();
+
+    const titleInput = harness.hubRoot.querySelector<HTMLInputElement>(".obsidian-codex__panel-edit-input-title")!;
+    titleInput.value = "Edited title";
+    titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]')?.click();
+    await tick();
+
+    expect(harness.service.updateHubPanel).toHaveBeenCalledTimes(1);
+    expect(harness.hubRoot.querySelector(".obsidian-codex__hub-panel.is-editing")).not.toBeNull();
+    expect(harness.hubRoot.querySelector<HTMLInputElement>(".obsidian-codex__panel-edit-input-title")?.value).toBe("Edited title");
+    expect(Notice.messages).toContain("Save failed");
   });
 
   it("opens the skills drawer as a panel-local popover", async () => {
@@ -1402,6 +1448,89 @@ describe("Panel Studio composer flow", () => {
     await tick();
 
     expect(harness.composerRoot.textContent).toContain("Plugin normalized Markdown structure. Review it before applying.");
+  });
+
+  it("disables the patch apply button while the apply action is in flight", async () => {
+    const harness = createHarness();
+    const applyGate = createDeferred<void>();
+    const proposal: PatchProposal = {
+      id: "patch-apply-1",
+      threadId: null,
+      sourceMessageId: "assistant-1",
+      originTurnId: "turn-1",
+      targetPath: "courses/lecture-15.md",
+      kind: "update",
+      baseSnapshot: "# Before",
+      proposedText: "# After",
+      unifiedDiff: "@@ -1 +1 @@",
+      summary: "Apply this patch once.",
+      status: "pending",
+      createdAt: 1,
+    };
+    harness.service.getTabPatchBasket = () => [proposal];
+    harness.service.applyPatchProposal.mockImplementation(() => applyGate.promise);
+    harness.renderAll();
+    await tick();
+
+    const applyButton = Array.from(harness.composerRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn")).find(
+      (button) => button.textContent === "Apply",
+    );
+    expect(applyButton).not.toBeNull();
+
+    applyButton!.click();
+    applyButton!.click();
+    await tick();
+
+    expect(harness.service.applyPatchProposal).toHaveBeenCalledTimes(1);
+    expect(applyButton!.disabled).toBe(true);
+
+    applyGate.resolve();
+    await tick();
+    await tick();
+  });
+
+  it("disables patch rejection while the apply action is in flight", async () => {
+    const harness = createHarness();
+    const applyGate = createDeferred<void>();
+    const proposal: PatchProposal = {
+      id: "patch-apply-2",
+      threadId: null,
+      sourceMessageId: "assistant-1",
+      originTurnId: "turn-1",
+      targetPath: "courses/lecture-15.md",
+      kind: "update",
+      baseSnapshot: "# Before",
+      proposedText: "# After",
+      unifiedDiff: "@@ -1 +1 @@",
+      summary: "Apply this patch once.",
+      status: "pending",
+      createdAt: 1,
+    };
+    harness.service.getTabPatchBasket = () => [proposal];
+    harness.service.applyPatchProposal.mockImplementation(() => applyGate.promise);
+    harness.renderAll();
+    await tick();
+
+    const buttons = Array.from(harness.composerRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn"));
+    const rejectButton = buttons.find((button) => button.textContent === "Reject");
+    const applyButton = buttons.find((button) => button.textContent === "Apply");
+    expect(rejectButton).not.toBeNull();
+    expect(applyButton).not.toBeNull();
+
+    applyButton!.click();
+    await tick();
+
+    const refreshedRejectButton = Array.from(
+      harness.composerRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn"),
+    ).find((button) => button.textContent === "Reject");
+
+    expect(refreshedRejectButton?.disabled).toBe(true);
+    refreshedRejectButton?.click();
+    expect(harness.service.rejectPatchProposal).not.toHaveBeenCalled();
+
+    applyGate.resolve();
+    await tick();
+    await tick();
   });
 
   it("focuses the textarea when the input row is clicked", async () => {

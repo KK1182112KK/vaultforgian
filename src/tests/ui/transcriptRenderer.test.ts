@@ -1,11 +1,28 @@
 // @vitest-environment jsdom
 
+import { Notice } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ApprovalResult } from "../../app/approvalCoordinator";
 import type { WorkspaceState } from "../../model/types";
 import { getLocalizedCopy } from "../../util/i18n";
 import { TranscriptRenderer } from "../../views/renderers/transcriptRenderer";
 import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "../../views/renderers/types";
 import { installObsidianDomHelpers } from "../setup/obsidian";
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+const testNotice = Notice as typeof Notice & {
+  messages: string[];
+  reset(): void;
+};
 
 function createState(): WorkspaceState {
   return {
@@ -97,6 +114,7 @@ function createContext(
   state: WorkspaceState,
   activeTabIndex = 0,
   locale: "en" | "ja" = "en",
+  serviceOverrides: Partial<WorkspaceRenderContext["service"]> = {},
 ): WorkspaceRenderContext {
   const copy = getLocalizedCopy(locale);
   const activeTab = state.tabs[activeTabIndex] ?? null;
@@ -110,6 +128,9 @@ function createContext(
     service: {
       getShowReasoning: () => true,
       getPermissionMode: () => "suggest",
+      respondToApproval: vi.fn(async (): Promise<ApprovalResult> => "ignored"),
+      respondToAllApprovals: vi.fn(async () => {}),
+      ...serviceOverrides,
     } as WorkspaceRenderContext["service"],
     state,
     activeTab,
@@ -119,9 +140,13 @@ function createContext(
   };
 }
 
-function createCallbacks(): Pick<WorkspaceRenderCallbacks, "markdownComponent" | "seedDraftAndSend" | "respondToChatSuggestion"> {
+function createCallbacks(): Pick<
+  WorkspaceRenderCallbacks,
+  "markdownComponent" | "requestRender" | "seedDraftAndSend" | "respondToChatSuggestion"
+> {
   return {
     markdownComponent: {} as WorkspaceRenderCallbacks["markdownComponent"],
+    requestRender: vi.fn(),
     seedDraftAndSend: vi.fn(async () => {}),
     respondToChatSuggestion: vi.fn(async () => {}),
   };
@@ -131,6 +156,7 @@ describe("TranscriptRenderer avatar safety", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     installObsidianDomHelpers();
+    testNotice.reset();
     window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -318,6 +344,412 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(root.textContent).toContain(context.copy.workspace.approveAll);
     expect(root.textContent).toContain(context.copy.workspace.denyAll);
     expect(root.querySelectorAll(".obsidian-codex__approval-card")).toHaveLength(2);
+  });
+
+  it("rerenders when message text changes without changing length", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [{ id: "m1", kind: "assistant", text: "ABCD", createdAt: 1 }];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+    state.tabs[0]!.messages[0]!.text = "WXYZ";
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("WXYZ");
+  });
+
+  it("disables single approval actions while a request is in flight and re-enables them after failure", async () => {
+    const state = createState();
+    state.tabs[0]!.pendingApprovals = [
+      {
+        id: "approval-1",
+        tabId: "tab-1",
+        callId: "call-1",
+        toolName: "vault_op",
+        title: "Rename note",
+        description: "notes/source.md -> notes/destination.md",
+        details: "Backlinks detected",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          kind: "rename",
+          targetPath: "notes/source.md",
+          destinationPath: "notes/destination.md",
+          impact: null,
+        },
+      },
+    ];
+    const approvalGate = createDeferred<ApprovalResult>();
+    const respondToApproval = vi.fn(() => approvalGate.promise);
+    const root = document.createElement("div");
+    const callbacks = createCallbacks();
+    const renderer = new TranscriptRenderer(root, callbacks);
+    const context = createContext(state, 0, "en", { respondToApproval });
+    callbacks.requestRender = () => renderer.render(context);
+
+    renderer.render(context);
+
+    const approveButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+      (button) => button.textContent === context.copy.workspace.approve,
+    );
+    expect(approveButton).not.toBeNull();
+
+    approveButton!.click();
+    approveButton!.click();
+    expect(respondToApproval).toHaveBeenCalledTimes(1);
+    expect(approveButton!.disabled).toBe(true);
+
+    approvalGate.reject(new Error("Approval failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const refreshedApproveButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+      (button) => button.textContent === context.copy.workspace.approve,
+    );
+    expect(refreshedApproveButton?.disabled).toBe(false);
+    expect(testNotice.messages).toContain("Approval failed");
+  });
+
+  it("disables batch approval controls while a single approval is in flight on the same tab", async () => {
+    const state = createState();
+    state.tabs[0]!.pendingApprovals = [
+      {
+        id: "approval-1",
+        tabId: "tab-1",
+        callId: "call-1",
+        toolName: "skill_update",
+        title: "Update skill: lecture-read",
+        description: "/vault/.codex/skills/lecture-read/SKILL.md",
+        details: "Learned refinement 1",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "lecture-read",
+          skillPath: "/vault/.codex/skills/lecture-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-1",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 1",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/a.md",
+            panelId: null,
+          },
+        },
+      },
+      {
+        id: "approval-2",
+        tabId: "tab-1",
+        callId: "call-2",
+        toolName: "skill_update",
+        title: "Update skill: deep-read",
+        description: "/vault/.codex/skills/deep-read/SKILL.md",
+        details: "Learned refinement 2",
+        createdAt: 2,
+        sourceMessageId: "assistant-2",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath: "/vault/.codex/skills/deep-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-2",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 2",
+          attribution: {
+            prompt: "Clean up this note.",
+            summary: "Applied a note rewrite.",
+            targetNotePath: "notes/b.md",
+            panelId: null,
+          },
+        },
+      },
+    ];
+    const approvalGate = createDeferred<ApprovalResult>();
+    const respondToApproval = vi.fn(() => approvalGate.promise);
+    const root = document.createElement("div");
+    const callbacks = createCallbacks();
+    const renderer = new TranscriptRenderer(root, callbacks);
+    const context = createContext(state, 0, "en", { respondToApproval });
+    const renderCurrent = () => renderer.render(context);
+    callbacks.requestRender = renderCurrent;
+
+    renderCurrent();
+
+    const approveButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+      (button) => button.textContent === context.copy.workspace.approve,
+    );
+    approveButton?.click();
+    await Promise.resolve();
+
+    const approveAllButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+      (button) => button.textContent === context.copy.workspace.approveAll,
+    );
+    expect(approveAllButton?.disabled).toBe(true);
+
+    approvalGate.resolve("applied");
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  it("disables batch approval actions while a batch request is in flight and re-enables them after failure", async () => {
+    const state = createState();
+    state.tabs[0]!.pendingApprovals = [
+      {
+        id: "approval-1",
+        tabId: "tab-1",
+        callId: "call-1",
+        toolName: "skill_update",
+        title: "Update skill: lecture-read",
+        description: "/vault/.codex/skills/lecture-read/SKILL.md",
+        details: "Learned refinement 1",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "lecture-read",
+          skillPath: "/vault/.codex/skills/lecture-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-1",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 1",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/a.md",
+            panelId: null,
+          },
+        },
+      },
+      {
+        id: "approval-2",
+        tabId: "tab-1",
+        callId: "call-2",
+        toolName: "skill_update",
+        title: "Update skill: deep-read",
+        description: "/vault/.codex/skills/deep-read/SKILL.md",
+        details: "Learned refinement 2",
+        createdAt: 2,
+        sourceMessageId: "assistant-2",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath: "/vault/.codex/skills/deep-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-2",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 2",
+          attribution: {
+            prompt: "Clean up this note.",
+            summary: "Applied a note rewrite.",
+            targetNotePath: "notes/b.md",
+            panelId: null,
+          },
+        },
+      },
+    ];
+    const approvalGate = createDeferred<void>();
+    const respondToAllApprovals = vi.fn(() => approvalGate.promise);
+    const root = document.createElement("div");
+    const callbacks = createCallbacks();
+    const renderer = new TranscriptRenderer(root, callbacks);
+    const context = createContext(state, 0, "en", { respondToAllApprovals });
+    callbacks.requestRender = () => renderer.render(context);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    try {
+      renderer.render(context);
+
+      const approveAllButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+        (button) => button.textContent === context.copy.workspace.approveAll,
+      );
+      expect(approveAllButton).not.toBeNull();
+
+      approveAllButton!.click();
+      approveAllButton!.click();
+      expect(respondToAllApprovals).toHaveBeenCalledTimes(1);
+      expect(approveAllButton!.disabled).toBe(true);
+
+      approvalGate.reject(new Error("Batch failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const refreshedApproveAllButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+        (button) => button.textContent === context.copy.workspace.approveAll,
+      );
+      expect(refreshedApproveAllButton?.disabled).toBe(false);
+      expect(testNotice.messages).toContain("Batch failed");
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("disables single approval controls while a batch request is in flight on the same tab", async () => {
+    const state = createState();
+    state.tabs[0]!.pendingApprovals = [
+      {
+        id: "approval-1",
+        tabId: "tab-1",
+        callId: "call-1",
+        toolName: "skill_update",
+        title: "Update skill: lecture-read",
+        description: "/vault/.codex/skills/lecture-read/SKILL.md",
+        details: "Learned refinement 1",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "lecture-read",
+          skillPath: "/vault/.codex/skills/lecture-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-1",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 1",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/a.md",
+            panelId: null,
+          },
+        },
+      },
+      {
+        id: "approval-2",
+        tabId: "tab-1",
+        callId: "call-2",
+        toolName: "skill_update",
+        title: "Update skill: deep-read",
+        description: "/vault/.codex/skills/deep-read/SKILL.md",
+        details: "Learned refinement 2",
+        createdAt: 2,
+        sourceMessageId: "assistant-2",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath: "/vault/.codex/skills/deep-read/SKILL.md",
+          baseContent: "# Skill",
+          baseContentHash: "hash-2",
+          nextContent: "# Skill\n\nRefined",
+          feedbackSummary: "Learned refinement 2",
+          attribution: {
+            prompt: "Clean up this note.",
+            summary: "Applied a note rewrite.",
+            targetNotePath: "notes/b.md",
+            panelId: null,
+          },
+        },
+      },
+    ];
+    const approvalGate = createDeferred<void>();
+    const respondToAllApprovals = vi.fn(() => approvalGate.promise);
+    const root = document.createElement("div");
+    const callbacks = createCallbacks();
+    const renderer = new TranscriptRenderer(root, callbacks);
+    const context = createContext(state, 0, "en", { respondToAllApprovals });
+    callbacks.requestRender = () => renderer.render(context);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    try {
+      renderer.render(context);
+
+      const approveAllButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+        (button) => button.textContent === context.copy.workspace.approveAll,
+      );
+      approveAllButton?.click();
+      await Promise.resolve();
+
+      const approveButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+        (button) => button.textContent === context.copy.workspace.approve,
+      );
+      expect(approveButton?.disabled).toBe(true);
+
+      approvalGate.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("rerenders through requestRender so resolving an approval does not repaint a stale tab", async () => {
+    const state = createState();
+    state.tabs[0]!.pendingApprovals = [
+      {
+        id: "approval-1",
+        tabId: "tab-1",
+        callId: "call-1",
+        toolName: "vault_op",
+        title: "Rename note",
+        description: "notes/source.md -> notes/destination.md",
+        details: "Backlinks detected",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        transport: "plugin_proposal",
+        scope: "write",
+        toolPayload: {
+          kind: "rename",
+          targetPath: "notes/source.md",
+          destinationPath: "notes/destination.md",
+          impact: null,
+        },
+      },
+    ];
+    const tabTwo = {
+      ...state.tabs[0]!,
+      id: "tab-2",
+      title: "Chat 2",
+      pendingApprovals: [],
+      messages: [{ id: "m-tab-2", kind: "assistant" as const, text: "Tab two content", createdAt: 2 }],
+      toolLog: [],
+      patchBasket: [],
+      summary: null,
+      waitingState: null,
+      lastError: null,
+      status: "ready" as const,
+    };
+    state.tabs = [state.tabs[0]!, tabTwo];
+    const approvalGate = createDeferred<ApprovalResult>();
+    const respondToApproval = vi.fn(() => approvalGate.promise);
+    const root = document.createElement("div");
+    const callbacks = createCallbacks();
+    const renderer = new TranscriptRenderer(root, callbacks);
+    const currentContext = () =>
+      createContext(
+        state,
+        state.tabs.findIndex((tab) => tab.id === state.activeTabId),
+        "en",
+        { respondToApproval },
+      );
+    callbacks.requestRender = () => renderer.render(currentContext());
+
+    renderer.render(currentContext());
+
+    const approveButton = Array.from(root.querySelectorAll<HTMLButtonElement>(".obsidian-codex__approval-btn")).find(
+      (button) => button.textContent === currentContext().copy.workspace.approve,
+    );
+    approveButton?.click();
+    await Promise.resolve();
+
+    state.activeTabId = "tab-2";
+    renderer.render(currentContext());
+    expect(root.textContent).toContain("Tab two content");
+
+    approvalGate.resolve("applied");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(root.textContent).toContain("Tab two content");
+    expect(root.textContent).not.toContain("Rename note");
   });
 
   it("shows effective skills as compact metadata on a normal user message", () => {

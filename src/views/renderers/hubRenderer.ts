@@ -271,12 +271,16 @@ export class HubRenderer {
       event.preventDefault();
       event.stopPropagation();
       if (isEditing) {
-        const draft = this.getPanelDraft(panel);
-        service.updateHubPanel(panel.id, draft);
-        this.editingPanelId = null;
-        this.panelDrafts.delete(panel.id);
-        this.pendingFocusTitlePanelId = null;
-        this.callbacks.requestRender();
+        try {
+          const draft = this.getPanelDraft(panel);
+          service.updateHubPanel(panel.id, draft);
+          this.editingPanelId = null;
+          this.panelDrafts.delete(panel.id);
+          this.pendingFocusTitlePanelId = null;
+          this.callbacks.requestRender();
+        } catch (error) {
+          new Notice((error as Error).message);
+        }
         return;
       }
       this.beginEditingPanel(panel);
@@ -627,8 +631,7 @@ export class HubRenderer {
   private saveCreatePanel(context: WorkspaceRenderContext): void {
     try {
       const draft = this.getOrCreateNewPanelDraft();
-      const panel = context.service.createHubPanel();
-      context.service.updateHubPanel(panel.id, draft);
+      const panel = context.service.createHubPanel(draft);
       this.pendingScrollTargetPanelId = panel.id;
       this.closeCreatePanelPopover();
       this.callbacks.requestRender();

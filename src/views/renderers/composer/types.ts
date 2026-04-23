@@ -51,6 +51,7 @@ export interface ComposerSharedState {
   historyByTab: Map<string, ComposerHistoryState>;
   lastAppliedDraftByTab: Map<string, string>;
   lastRenderedTabId: string | null;
+  applyingPatchIds: Set<string>;
   isSending: boolean;
   isApplyingHistoryDraft: boolean;
 }

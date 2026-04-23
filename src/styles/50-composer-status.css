@@ -1,6 +1,3 @@
-  background: rgba(var(--obsidian-codex-edge-rgb), 0.18);
-}
-
 .obsidian-codex__attachment-chip {
   display: inline-flex;
   align-items: center;

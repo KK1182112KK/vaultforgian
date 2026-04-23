@@ -622,6 +622,7 @@ export class CodexService {
       store: this.store,
       findTab: (tabId) => this.findTab(tabId),
       getLocalizedCopy: () => this.getLocalizedCopy(),
+      getUserOwnedInstalledSkills: () => this.getUserOwnedInstalledSkills(),
       abortTabRun: (tabId, addMessage, reason) => this.abortTabRun(tabId, addMessage, reason),
       hasCodexLogin: () => this.hasAuthEvidence(),
       getMissingLoginMessage: () => this.getMissingLoginMessage(),
@@ -779,8 +780,10 @@ export class CodexService {
     this.studyPanels.ensureDefaultStudyPanels();
   }
 
-  createHubPanel(): StudyRecipe {
-    return this.studyPanels.createHubPanel();
+  createHubPanel(
+    initialDraft: Partial<Pick<StudyRecipe, "title" | "description" | "promptTemplate" | "linkedSkillNames">> = {},
+  ): StudyRecipe {
+    return this.studyPanels.createHubPanel(initialDraft);
   }
 
   updateHubPanel(

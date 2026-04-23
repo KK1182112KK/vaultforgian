@@ -170,7 +170,7 @@ export class CodexWorkspaceView extends ItemView {
     this.pendingResponsiveHubCollapsedState = null;
     this.isNarrowLayout = false;
     this.hubRenderer?.dispose();
-    this.composerRenderer?.closeStatusMenu();
+    this.composerRenderer?.dispose();
     this.contentEl.removeEventListener("keydown", this.keydownHandler, true);
     this.contentEl.ownerDocument.defaultView?.removeEventListener("resize", this.windowResizeHandler);
   }

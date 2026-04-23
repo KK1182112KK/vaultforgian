@@ -19,6 +19,7 @@ export class ComposerRenderer {
     historyByTab: new Map(),
     lastAppliedDraftByTab: new Map(),
     lastRenderedTabId: null,
+    applyingPatchIds: new Set(),
     isSending: false,
     isApplyingHistoryDraft: false,
   };
@@ -71,6 +72,11 @@ export class ComposerRenderer {
 
   async setDraftAndSend(prompt: string): Promise<void> {
     await this.inputController.setDraftAndSend(prompt);
+  }
+
+  dispose(): void {
+    this.inputController.dispose();
+    this.closeStatusMenu();
   }
 
   syncInputHeight(reset = false): void {

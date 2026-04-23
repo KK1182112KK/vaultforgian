@@ -16,105 +16,112 @@ import type { ComposerCallbacks, ComposerElements, ComposerSharedState } from ".
 
 export class ComposerInputController {
   private readonly lastTypedValueByTab = new Map<string, string>();
+  private readonly handleInputRowMouseDown = (event: MouseEvent) => {
+    if (!this.shouldFocusTextareaFromInputRow(event)) {
+      return;
+    }
+    event.preventDefault();
+    this.elements.inputEl.focus();
+  };
+  private readonly handleInputClick = () => {
+    if (document.activeElement !== this.elements.inputEl) {
+      this.elements.inputEl.focus();
+    }
+  };
+  private readonly handleInputEvent = () => {
+    this.syncInputHeight();
+    const tabId = this.context?.activeTab?.id ?? this.context?.service.getActiveTab()?.id ?? null;
+    if (tabId) {
+      this.lastTypedValueByTab.set(tabId, this.elements.inputEl.value);
+      if (!this.state.isApplyingHistoryDraft) {
+        const nextHistory = clearComposerHistoryNavigation(this.getHistoryState(tabId));
+        this.state.historyByTab.set(tabId, nextHistory);
+        this.context?.service.setTabComposerHistory(tabId, nextHistory);
+      }
+      this.context?.service.setDraft(tabId, this.elements.inputEl.value);
+    }
+    this.renderComposerSuggestions();
+  };
+  private readonly handleInputPasteEvent = (event: ClipboardEvent) => {
+    void this.handleInputPaste(event);
+  };
+  private readonly handleInputKeyDown = (event: KeyboardEvent) => {
+    event.stopPropagation();
+    if (event.key === "Tab" && event.shiftKey) {
+      event.preventDefault();
+      this.togglePlanMode();
+      return;
+    }
+
+    if (this.state.composerSuggestions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        this.moveComposerSelection(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        this.moveComposerSelection(-1);
+        return;
+      }
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+        event.preventDefault();
+        this.applyComposerMenuSuggestion(this.state.composerSuggestions[this.state.composerSelectedIndex] ?? null);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.state.composerSuggestions = [];
+        this.state.composerSelectedIndex = 0;
+        this.renderComposerSuggestions();
+        return;
+      }
+    }
+
+    if (event.key === "ArrowUp" && this.shouldHandleHistoryNavigation("older")) {
+      event.preventDefault();
+      this.navigateComposerHistory("older");
+      return;
+    }
+
+    if (event.key === "ArrowDown" && this.shouldHandleHistoryNavigation("newer")) {
+      event.preventDefault();
+      this.navigateComposerHistory("newer");
+      return;
+    }
+
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void this.sendCurrentPrompt();
+    }
+  };
+  private readonly handleAttachButtonClick = () => {
+    this.openAttachmentPicker();
+  };
+  private readonly handleSendButtonClick = () => {
+    if (this.isBusy()) {
+      void this.interruptActiveTurn();
+      return;
+    }
+    void this.sendCurrentPrompt();
+  };
+  private readonly handleFileInputChangeEvent = () => {
+    void this.handleFileInputChange();
+  };
 
   constructor(
     private readonly elements: ComposerElements,
     private readonly state: ComposerSharedState,
     private readonly callbacks: ComposerCallbacks,
   ) {
-    this.elements.inputRowEl.addEventListener("mousedown", (event) => {
-      if (!this.shouldFocusTextareaFromInputRow(event)) {
-        return;
-      }
-      event.preventDefault();
-      this.elements.inputEl.focus();
-    });
-    this.elements.inputEl.addEventListener("click", () => {
-      if (document.activeElement !== this.elements.inputEl) {
-        this.elements.inputEl.focus();
-      }
-    });
-    this.elements.inputEl.addEventListener("input", () => {
-      this.syncInputHeight();
-      const tabId = this.context?.activeTab?.id ?? this.context?.service.getActiveTab()?.id ?? null;
-      if (tabId) {
-        this.lastTypedValueByTab.set(tabId, this.elements.inputEl.value);
-        if (!this.state.isApplyingHistoryDraft) {
-          const nextHistory = clearComposerHistoryNavigation(this.getHistoryState(tabId));
-          this.state.historyByTab.set(tabId, nextHistory);
-          this.context?.service.setTabComposerHistory(tabId, nextHistory);
-        }
-        this.context?.service.setDraft(tabId, this.elements.inputEl.value);
-      }
-      this.renderComposerSuggestions();
-    });
-    this.elements.inputEl.addEventListener("paste", (event) => {
-      void this.handleInputPaste(event);
-    });
-    this.elements.inputEl.addEventListener("keydown", (event) => {
-      event.stopPropagation();
-      if (event.key === "Tab" && event.shiftKey) {
-        event.preventDefault();
-        this.togglePlanMode();
-        return;
-      }
-
-      if (this.state.composerSuggestions.length > 0) {
-        if (event.key === "ArrowDown") {
-          event.preventDefault();
-          this.moveComposerSelection(1);
-          return;
-        }
-        if (event.key === "ArrowUp") {
-          event.preventDefault();
-          this.moveComposerSelection(-1);
-          return;
-        }
-        if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
-          event.preventDefault();
-          this.applyComposerMenuSuggestion(this.state.composerSuggestions[this.state.composerSelectedIndex] ?? null);
-          return;
-        }
-        if (event.key === "Escape") {
-          event.preventDefault();
-          this.state.composerSuggestions = [];
-          this.state.composerSelectedIndex = 0;
-          this.renderComposerSuggestions();
-          return;
-        }
-      }
-
-      if (event.key === "ArrowUp" && this.shouldHandleHistoryNavigation("older")) {
-        event.preventDefault();
-        this.navigateComposerHistory("older");
-        return;
-      }
-
-      if (event.key === "ArrowDown" && this.shouldHandleHistoryNavigation("newer")) {
-        event.preventDefault();
-        this.navigateComposerHistory("newer");
-        return;
-      }
-
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        void this.sendCurrentPrompt();
-      }
-    });
-
-    this.elements.attachButtonEl.addEventListener("click", () => {
-      this.openAttachmentPicker();
-    });
-    this.elements.sendButton.addEventListener("click", () => {
-      if (this.isBusy()) {
-        void this.interruptActiveTurn();
-        return;
-      }
-      void this.sendCurrentPrompt();
-    });
-    this.elements.fileInputEl.addEventListener("change", () => {
-      void this.handleFileInputChange();
-    });
+    this.elements.inputRowEl.addEventListener("mousedown", this.handleInputRowMouseDown);
+    this.elements.inputEl.addEventListener("click", this.handleInputClick);
+    this.elements.inputEl.addEventListener("input", this.handleInputEvent);
+    this.elements.inputEl.addEventListener("paste", this.handleInputPasteEvent);
+    this.elements.inputEl.addEventListener("keydown", this.handleInputKeyDown);
+    this.elements.attachButtonEl.addEventListener("click", this.handleAttachButtonClick);
+    this.elements.sendButton.addEventListener("click", this.handleSendButtonClick);
+    this.elements.fileInputEl.addEventListener("change", this.handleFileInputChangeEvent);
 
     this.syncInputHeight(true);
   }
@@ -169,6 +176,17 @@ export class ComposerInputController {
 
   openAttachmentPicker(): void {
     this.elements.fileInputEl.click();
+  }
+
+  dispose(): void {
+    this.elements.inputRowEl.removeEventListener("mousedown", this.handleInputRowMouseDown);
+    this.elements.inputEl.removeEventListener("click", this.handleInputClick);
+    this.elements.inputEl.removeEventListener("input", this.handleInputEvent);
+    this.elements.inputEl.removeEventListener("paste", this.handleInputPasteEvent);
+    this.elements.inputEl.removeEventListener("keydown", this.handleInputKeyDown);
+    this.elements.attachButtonEl.removeEventListener("click", this.handleAttachButtonClick);
+    this.elements.sendButton.removeEventListener("click", this.handleSendButtonClick);
+    this.elements.fileInputEl.removeEventListener("change", this.handleFileInputChangeEvent);
   }
 
   async setDraftAndSend(prompt: string): Promise<void> {

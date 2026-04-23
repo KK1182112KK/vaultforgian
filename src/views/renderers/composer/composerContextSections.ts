@@ -250,6 +250,7 @@ export class ComposerContextSections {
       });
 
       const actionsEl = cardEl.createDiv({ cls: "obsidian-codex__change-card-actions" });
+      const patchActionInFlight = this.deps.state.applyingPatchIds.has(proposal.id);
       const openButton = actionsEl.createEl("button", {
         cls: "obsidian-codex__change-card-btn is-muted",
         text: context.copy.workspace.open,
@@ -266,8 +267,13 @@ export class ComposerContextSections {
         text: context.copy.workspace.reject,
       });
       rejectButton.type = "button";
+      rejectButton.disabled = patchActionInFlight;
       rejectButton.addEventListener("click", () => {
+        if (this.deps.state.applyingPatchIds.has(proposal.id)) {
+          return;
+        }
         context.service.rejectPatchProposal(context.activeTab!.id, proposal.id);
+        this.deps.callbacks.requestRender();
       });
 
       const applyButton = actionsEl.createEl("button", {
@@ -275,13 +281,23 @@ export class ComposerContextSections {
         text: proposal.status === "conflicted" || proposal.status === "stale" ? context.copy.workspace.retry : context.copy.workspace.apply,
       });
       applyButton.type = "button";
+      applyButton.disabled = patchActionInFlight;
       applyButton.addEventListener("click", () => {
+        if (this.deps.state.applyingPatchIds.has(proposal.id)) {
+          return;
+        }
+        this.deps.state.applyingPatchIds.add(proposal.id);
+        applyButton.disabled = true;
+        this.deps.callbacks.requestRender();
         void context.service.applyPatchProposal(context.activeTab!.id, proposal.id).catch((error: unknown) => {
           if (error instanceof PatchConflictError) {
             openPatchConflictModal(context.app, context.service, context.copy.workspace, error);
             return;
           }
           new Notice((error as Error).message);
+        }).finally(() => {
+          this.deps.state.applyingPatchIds.delete(proposal.id);
+          this.deps.callbacks.requestRender();
         });
       });
     }

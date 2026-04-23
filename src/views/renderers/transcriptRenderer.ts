@@ -28,10 +28,14 @@ export class TranscriptRenderer {
   private ignoreProgrammaticScroll = false;
   private restoreScrollVersion = 0;
   private lastRenderSignature: string | null = null;
+  private readonly approvalActionScopesInFlight = new Set<string>();
 
   constructor(
     private readonly root: HTMLDivElement,
-    private readonly callbacks: Pick<WorkspaceRenderCallbacks, "markdownComponent" | "seedDraftAndSend" | "respondToChatSuggestion">,
+    private readonly callbacks: Pick<
+      WorkspaceRenderCallbacks,
+      "markdownComponent" | "requestRender" | "seedDraftAndSend" | "respondToChatSuggestion"
+    >,
   ) {
     this.root.addEventListener("scroll", () => {
       if (this.ignoreProgrammaticScroll) {
@@ -158,24 +162,17 @@ export class TranscriptRenderer {
     const summaryText = activeTab?.summary?.text ?? "";
     const waitingText = activeTab?.waitingState?.text ?? "";
     const suggestionSignature = createChatSuggestionSignature(activeTab?.chatSuggestion ?? null);
+    const approvalInFlightSignature = [...this.approvalActionScopesInFlight].sort().join("|");
     const transcriptSignature = transcript
       .map((entry) => {
         if (entry.type === "message") {
-          return [
-            "m",
-            entry.message.id,
-            entry.message.kind,
-            String(entry.message.createdAt),
-            String(entry.message.text.length),
-            entry.message.pending ? "1" : "0",
-            createMessageMetaSignature(entry.message.meta),
-          ].join(":");
+          return createTranscriptMessageSignature(entry.message);
         }
         if (entry.type === "activity") {
-          return `a:${entry.activity.id}:${entry.activity.status}:${entry.activity.createdAt}:${entry.activity.title}:${entry.activity.summary}`;
+          return createActivityEntrySignature(entry.activity);
         }
         if (entry.type === "approval") {
-          return `p:${entry.approval.id}:${entry.approval.createdAt}:${entry.approval.title}:${entry.approval.toolName}`;
+          return createApprovalEntrySignature(entry.approval);
         }
         return `w:${entry.waitingState.phase}:${entry.waitingState.text}`;
       })
@@ -197,6 +194,7 @@ export class TranscriptRenderer {
       String(renderState.showApprovalBatchBar),
       String(renderState.showSummaryWindow),
       String(showCollapsedTranscript),
+      approvalInFlightSignature,
       suggestionSignature,
       transcriptSignature,
     ].join("::");
@@ -618,11 +616,12 @@ export class TranscriptRenderer {
     }
 
     const actionsEl = cardEl.createDiv({ cls: "obsidian-codex__approval-actions" });
-    this.createApprovalButton(context, actionsEl, approval.id, context.copy.workspace.approve, "approve", false);
-    this.createApprovalButton(context, actionsEl, approval.id, context.copy.workspace.deny, "deny", true);
+    this.createApprovalButton(context, actionsEl, approval.tabId, approval.id, context.copy.workspace.approve, "approve", false);
+    this.createApprovalButton(context, actionsEl, approval.tabId, approval.id, context.copy.workspace.deny, "deny", true);
     this.createApprovalButton(
       context,
       actionsEl,
+      approval.tabId,
       approval.id,
       context.copy.workspace.abort,
       "abort",
@@ -746,6 +745,7 @@ export class TranscriptRenderer {
   private createApprovalButton(
     context: WorkspaceRenderContext,
     parent: HTMLElement,
+    tabId: string,
     approvalId: string,
     label: string,
     decision: "approve" | "approve_session" | "deny" | "abort",
@@ -757,11 +757,31 @@ export class TranscriptRenderer {
       text: label,
     });
     button.type = "button";
+    const scopeKey = `single:${approvalId}`;
+    const tabScopeKey = `tab:${tabId}`;
+    button.disabled = this.approvalActionScopesInFlight.has(tabScopeKey);
     button.addEventListener("click", () => {
+      if (
+        button.disabled ||
+        this.approvalActionScopesInFlight.has(scopeKey) ||
+        this.approvalActionScopesInFlight.has(tabScopeKey)
+      ) {
+        return;
+      }
       if (confirmText && typeof window !== "undefined" && !window.confirm(confirmText)) {
         return;
       }
-      void context.service.respondToApproval(approvalId, decision);
+      this.approvalActionScopesInFlight.add(scopeKey);
+      this.approvalActionScopesInFlight.add(tabScopeKey);
+      button.disabled = true;
+      this.callbacks.requestRender();
+      void context.service.respondToApproval(approvalId, decision).catch((error: unknown) => {
+        new Notice((error as Error).message);
+      }).finally(() => {
+        this.approvalActionScopesInFlight.delete(scopeKey);
+        this.approvalActionScopesInFlight.delete(tabScopeKey);
+        this.callbacks.requestRender();
+      });
     });
   }
 
@@ -779,13 +799,75 @@ export class TranscriptRenderer {
       text: label,
     });
     button.type = "button";
+    const scopeKey = `batch:${tabId}`;
+    const tabScopeKey = `tab:${tabId}`;
+    button.disabled = this.approvalActionScopesInFlight.has(tabScopeKey);
     button.addEventListener("click", () => {
+      if (
+        button.disabled ||
+        this.approvalActionScopesInFlight.has(scopeKey) ||
+        this.approvalActionScopesInFlight.has(tabScopeKey)
+      ) {
+        return;
+      }
       if (confirmText && typeof window !== "undefined" && !window.confirm(confirmText)) {
         return;
       }
-      void context.service.respondToAllApprovals(tabId, decision);
+      this.approvalActionScopesInFlight.add(scopeKey);
+      this.approvalActionScopesInFlight.add(tabScopeKey);
+      button.disabled = true;
+      this.callbacks.requestRender();
+      void context.service.respondToAllApprovals(tabId, decision).catch((error: unknown) => {
+        new Notice((error as Error).message);
+      }).finally(() => {
+        this.approvalActionScopesInFlight.delete(scopeKey);
+        this.approvalActionScopesInFlight.delete(tabScopeKey);
+        this.callbacks.requestRender();
+      });
     });
   }
+}
+
+function createTranscriptMessageSignature(message: ChatMessage): string {
+  return JSON.stringify({
+    id: message.id,
+    kind: message.kind,
+    createdAt: message.createdAt,
+    text: message.text,
+    pending: message.pending === true,
+    meta: createMessageMetaSignature(message.meta),
+  });
+}
+
+function createActivityEntrySignature(activity: ToolCallRecord): string {
+  return JSON.stringify({
+    id: activity.id,
+    callId: activity.callId,
+    kind: activity.kind,
+    name: activity.name,
+    title: activity.title,
+    summary: activity.summary,
+    status: activity.status,
+    resultText: activity.resultText ?? null,
+    argsJson: activity.argsJson,
+    createdAt: activity.createdAt,
+    updatedAt: activity.updatedAt,
+  });
+}
+
+function createApprovalEntrySignature(approval: PendingApproval): string {
+  return JSON.stringify({
+    id: approval.id,
+    callId: approval.callId,
+    toolName: approval.toolName,
+    title: approval.title,
+    description: approval.description,
+    details: approval.details,
+    diffText: approval.diffText ?? null,
+    decisionTarget: approval.decisionTarget ?? null,
+    createdAt: approval.createdAt,
+    scope: approval.scope,
+  });
 }
 
 function activeTabSuggestion(
