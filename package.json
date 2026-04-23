@@ -7,7 +7,7 @@
   "description": "Study-first Obsidian desktop plugin backed by the local Codex login and direct Codex CLI threads.",
   "scripts": {
     "build": "npm run build:bundle",
-    "build:avatar": "python3 scripts/build-avatar.py",
+    "build:avatar": "node scripts/build-avatar.mjs",
     "build:bundle": "npm run build:styles && node esbuild.config.mjs production",
     "build:smoke": "node scripts/build-smoke.mjs",
     "build:styles": "node scripts/build-styles.mjs",

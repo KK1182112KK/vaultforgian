@@ -1,25 +1,15 @@
-import { spawn } from "node:child_process";
+import { resolveProjectRoot } from "./lib/project-root.mjs";
+import { runCommand } from "./lib/spawn.mjs";
 
-function run(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: process.cwd(),
-      stdio: "inherit",
-      shell: process.platform === "win32",
-    });
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
-    });
-  });
-}
+const projectRoot = resolveProjectRoot(import.meta.url);
 
-await run("npx", [
+await runCommand("npx", [
   "vitest",
   "run",
   "src/tests/ui/panelStudioComposerFlow.test.ts",
   "src/tests/usageSyncCoordinator.test.ts",
-]);
+], {
+  cwd: projectRoot,
+  stdio: "inherit",
+  shell: process.platform === "win32",
+});

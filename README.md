@@ -97,7 +97,7 @@ Open *Settings → Codex Noteforge*:
 - **Default permission mode** — which of the three modes a new turn starts in.
 - **Language** — UI language (English or Japanese).
 
-Package checks also verify the avatar source/generated pair: if you change `assets/Gemini_Generated_Image_n5otwzn5otwzn5ot.png`, run `npm run build:avatar` before committing.
+Package checks also verify the avatar source/generated pair by hashing `assets/chat-avatar-source.png` against the committed marker in `src/generated/chatAvatar.ts`. If you change the source image, run `npm run build:avatar` before committing.
 
 ---
 
@@ -133,6 +133,7 @@ npm run dev        # watch build
 npm run test       # vitest
 npm run typecheck  # tsc --noEmit
 npm run lint
+npm run build:avatar  # regenerate tracked avatar module (requires Python 3 + Pillow)
 npm run build      # production bundle only
 npm run release:bundle
 npm run deploy     # requires CODEX_NOTEFORGE_PLUGIN_DIR to be set explicitly
@@ -147,6 +148,8 @@ If you update the source avatar image under `assets/`, regenerate the tracked av
 ```bash
 npm run build:avatar
 ```
+
+The launcher tries `python3`, `python`, then `py -3`. It only falls through when an interpreter is missing or that interpreter's environment cannot import Pillow; missing source files, bad arguments, and image-processing failures stop immediately.
 
 ---
 

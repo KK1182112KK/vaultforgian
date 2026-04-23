@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { resolveProjectRoot } from "./lib/project-root.mjs";
 
-const projectRoot = process.cwd();
+const projectRoot = resolveProjectRoot(import.meta.url);
 const mainJsPath = path.join(projectRoot, "main.js");
 
 const OBSIDIAN_STUB_SOURCE = `

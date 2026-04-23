@@ -1,8 +1,9 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import path from "node:path";
+import { compareStringsLexicographically, resolveProjectRoot } from "./lib/project-root.mjs";
 
-const projectRoot = process.cwd();
+const projectRoot = resolveProjectRoot(import.meta.url);
 const sourceDir = path.join(projectRoot, "src/styles");
 const outputPath = path.join(projectRoot, "styles.css");
 const watchMode = process.argv.includes("--watch");
@@ -12,7 +13,7 @@ async function getStyleFiles() {
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".css"))
     .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareStringsLexicographically);
 }
 
 async function buildStyles() {

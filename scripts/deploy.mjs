@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveProjectRoot } from "./lib/project-root.mjs";
 
-const sourceDir = process.cwd();
+const sourceDir = resolveProjectRoot(import.meta.url);
 
 function formatRelativePath(file) {
   return path.relative(sourceDir, path.join(sourceDir, file)) || file;

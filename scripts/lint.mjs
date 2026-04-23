@@ -1,7 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { compareStringsLexicographically, resolveProjectRoot } from "./lib/project-root.mjs";
 
-const projectRoot = process.cwd();
+const projectRoot = resolveProjectRoot(import.meta.url);
 const sourceDirs = ["src", "scripts"];
 const standaloneFiles = ["package.json", "manifest.json", "esbuild.config.mjs", "styles.css", "vitest.config.ts"];
 const conflictMarkers = [
@@ -28,7 +29,7 @@ async function buildExpectedStyles() {
   const files = entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".css"))
     .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareStringsLexicographically);
   const parts = await Promise.all(files.map((file) => readFile(path.join(sourceDir, file), "utf8")));
   return `${parts.map((part) => part.replace(/\s+$/u, "")).join("\n\n")}\n`;
 }

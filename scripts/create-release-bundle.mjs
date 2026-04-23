@@ -1,9 +1,9 @@
-import { cp, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { createDeterministicZip } from "./lib/deterministic-zip.mjs";
+import { resolveProjectRoot } from "./lib/project-root.mjs";
 
-const projectRoot = process.cwd();
+const projectRoot = resolveProjectRoot(import.meta.url);
 
 function normalizeVersion(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -14,42 +14,6 @@ async function assertReadable(filePath) {
   if (!fileStat.isFile() || fileStat.size === 0) {
     throw new Error(`Expected non-empty file: ${path.relative(projectRoot, filePath)}`);
   }
-}
-
-async function runCommand(command, args, options = {}) {
-  await new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: "inherit",
-      ...options,
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`${command} exited with code ${code ?? "unknown"}.`));
-    });
-  });
-}
-
-async function createZipArchive(stagingRoot, folderName, outputZipPath) {
-  if (process.platform === "win32") {
-    const escapedFolder = folderName.replace(/'/g, "''");
-    const escapedZipPath = outputZipPath.replace(/'/g, "''");
-    await runCommand("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      `Compress-Archive -Path '${escapedFolder}' -DestinationPath '${escapedZipPath}' -Force`,
-    ], {
-      cwd: stagingRoot,
-    });
-    return;
-  }
-
-  await runCommand("zip", ["-qr", outputZipPath, folderName], {
-    cwd: stagingRoot,
-  });
 }
 
 function listZipEntries(buffer) {
@@ -134,21 +98,22 @@ async function main() {
   await mkdir(releaseDir, { recursive: true });
   const zipFileName = `${pluginId}-v${manifestVersion}.zip`;
   const outputZipPath = path.join(releaseDir, zipFileName);
+  const zipBuffer = createDeterministicZip([
+    {
+      name: `${pluginId}/main.js`,
+      data: await readFile(mainJsPath),
+    },
+    {
+      name: `${pluginId}/manifest.json`,
+      data: await readFile(manifestPath),
+    },
+    {
+      name: `${pluginId}/styles.css`,
+      data: await readFile(stylesPath),
+    },
+  ]);
 
-  const stagingRoot = await mkdtemp(path.join(tmpdir(), "codex-noteforge-release-"));
-  const stagingPluginDir = path.join(stagingRoot, pluginId);
-
-  try {
-    await mkdir(stagingPluginDir, { recursive: true });
-    await cp(mainJsPath, path.join(stagingPluginDir, "main.js"));
-    await cp(manifestPath, path.join(stagingPluginDir, "manifest.json"));
-    await cp(stylesPath, path.join(stagingPluginDir, "styles.css"));
-
-    await rm(outputZipPath, { force: true });
-    await createZipArchive(stagingRoot, pluginId, outputZipPath);
-  } finally {
-    await rm(stagingRoot, { recursive: true, force: true });
-  }
+  await writeFile(outputZipPath, zipBuffer);
 
   await assertReadable(outputZipPath);
   await assertReleaseArchiveContents(outputZipPath, pluginId);

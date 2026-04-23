@@ -17,20 +17,25 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install Pillow
-        run: python3 -m pip install --user Pillow
-
-      - name: Build avatar module
-        run: python3 scripts/build-avatar.py
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Pillow in the setup-python environment
+        run: python -m pip install --user Pillow==12.1.0
+
+      - name: Build tracked avatar module
+        run: npm run build:avatar
 
       - name: Verify package
         run: npm run check
