@@ -473,6 +473,9 @@ export class ApprovalCoordinator {
     if (!tab || !proposal) {
       return;
     }
+    if (proposal.status === "blocked") {
+      throw new Error(this.deps.getLocalizedCopy().workspace.patchSafetyBlocked);
+    }
     this.patchApplyActionsInFlight.add(patchActionKey);
     try {
       const targetPath = this.assertManagedNotePath(proposal.targetPath, (path) => this.getUnsafeNotePathMessage(path));

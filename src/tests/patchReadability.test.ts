@@ -28,7 +28,7 @@ describe("patchReadability", () => {
     const result = assessPatchReadability(CALLOUT_MATH_COLLISION_SAMPLE);
 
     expect(result.qualityState).toBe("review_required");
-    expect(result.healedByPlugin).not.toBe(true);
+    expect(result.healedByPlugin).toBe(true);
     expect(result.qualityIssues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

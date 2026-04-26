@@ -24,7 +24,7 @@ export const CALLOUT_MATH_SAMPLE = [
 ].join("\n");
 
 export const CALLOUT_MATH_HEALED_SAMPLE = [
-  "[!example]- Step 4: Maximum possible dissipation in each transistor",
+  "> [!example]- Step 4: Maximum possible dissipation in each transistor",
   "> **Pause and predict:** transistor が一番熱くなるのは full output か、それとも途中か。",
   ">",
   "> 各 transistor の平均損失は",

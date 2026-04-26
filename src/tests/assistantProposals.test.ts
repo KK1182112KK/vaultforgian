@@ -290,6 +290,46 @@ describe("assistant proposal parsing", () => {
     ]);
   });
 
+  it("parses patch operation headers as patch intent", () => {
+    const parsed = extractAssistantProposals(
+      [
+        "```obsidian-patch",
+        "path: Notes/Appendix.md",
+        "kind: update",
+        "operation: augment",
+        "summary: Add a supporting derivation",
+        "---anchorBefore",
+        "## Dissipation",
+        "---anchorAfter",
+        "",
+        "---replacement",
+        "",
+        "Additional derivation.",
+        "---end",
+        "```",
+      ].join("\n"),
+    );
+
+    expect(parsed.patches[0]?.intent).toBe("augment");
+  });
+
+  it("parses JSON patch operation aliases as patch intent", () => {
+    const parsed = extractAssistantProposals(
+      [
+        "```obsidian-patch",
+        JSON.stringify({
+          path: "Notes/Whole.md",
+          kind: "update",
+          operation: "full-replace",
+          content: "# Rewritten",
+        }),
+        "```",
+      ].join("\n"),
+    );
+
+    expect(parsed.patches[0]?.intent).toBe("full_replace");
+  });
+
   it("parses multi-anchor delimiter patches", () => {
     const text = [
       "```obsidian-patch",

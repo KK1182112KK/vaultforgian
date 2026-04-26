@@ -1,4 +1,4 @@
-import type { PatchQualityIssueCode, UiLanguageSetting } from "../model/types";
+import type { PatchQualityIssueCode, PatchSafetyIssueCode, UiLanguageSetting } from "../model/types";
 
 export type SupportedLocale = "en" | "ja";
 
@@ -137,6 +137,7 @@ export interface LocalizedCopy {
     editReviewRequiredStatus: (name: string | null) => string;
     editReadabilityReviewStatus: (name: string | null) => string;
     editAutoHealedReviewStatus: (name: string | null) => string;
+    editSafetyReviewStatus: (name: string | null) => string;
     editProposalStatus: (name: string | null) => string;
     editExplanationOnlyStatus: string;
     editFailedStatus: (name: string | null) => string;
@@ -192,6 +193,9 @@ export interface LocalizedCopy {
     patchReadabilityAutoHealed: string;
     patchReadabilityAppliedAfterHeal: (name: string | null) => string;
     patchQualityIssue: (code: PatchQualityIssueCode, line?: number | null, detail?: string | null) => string;
+    patchSafetyBlocked: string;
+    patchSafetyReview: string;
+    patchSafetyIssue: (code: PatchSafetyIssueCode, detail?: string | null, deletedPercent?: number | null) => string;
     openedAt: (text: string) => string;
     note: (name: string) => string;
     studyRecipes: string;
@@ -342,6 +346,8 @@ function formatEnglishPatchQualityIssue(code: PatchQualityIssueCode, line?: numb
       return `${prefix}open and close the display-math block in the same quote or callout context${detail ? ` (${detail}).` : "."}`;
     case "display_math_same_line_delimiter":
       return `${prefix}keep unmatched \`$$\` delimiters off prose lines; use standalone delimiter lines for multi-line display math.`;
+    case "unquoted_callout_header":
+      return `${prefix}quote the callout header with \`>\` so it belongs to the callout block.`;
     default:
       return `${prefix}review the Markdown structure before applying this patch.`;
   }
@@ -366,8 +372,56 @@ function formatJapanesePatchQualityIssue(code: PatchQualityIssueCode, line?: num
       return `${prefix}display math block は同じ quote / callout の文脈で開始と終了をそろえてください${detail ? ` (${detail})。` : "。"}`;
     case "display_math_same_line_delimiter":
       return `${prefix}不完全な \`$$\` を本文行に置かず、複数行の式は単独行の区切りで囲ってください。`;
+    case "unquoted_callout_header":
+      return `${prefix}callout header も \`>\` で quote し、callout block に含めてください。`;
     default:
       return `${prefix}適用前に Markdown 構造を確認してください。`;
+  }
+}
+
+function formatEnglishPatchSafetyIssue(
+  code: PatchSafetyIssueCode,
+  _detail?: string | null,
+  deletedPercent?: number | null,
+): string {
+  switch (code) {
+    case "unsafe_full_update":
+      return "Existing note content is protected unless full replacement is explicit.";
+    case "full_replace_requires_review":
+      return "Full-note replacement requires review before applying.";
+    case "delete_requires_review":
+      return "Deletion requires review before applying.";
+    case "large_deletion":
+      return `Large deletion blocked because the request did not explicitly ask to delete content${
+        typeof deletedPercent === "number" && Number.isFinite(deletedPercent)
+          ? ` (${Math.round(deletedPercent * 100)}% removed).`
+          : "."
+      }`;
+    default:
+      return "Review note safety before applying this patch.";
+  }
+}
+
+function formatJapanesePatchSafetyIssue(
+  code: PatchSafetyIssueCode,
+  _detail?: string | null,
+  deletedPercent?: number | null,
+): string {
+  switch (code) {
+    case "unsafe_full_update":
+      return "全文置換が明示されていないため、既存ノート本文を保護しています。";
+    case "full_replace_requires_review":
+      return "ノート全体の置換は、適用前の確認が必要です。";
+    case "delete_requires_review":
+      return "削除操作は、適用前の確認が必要です。";
+    case "large_deletion":
+      return `削除指示が明示されていない大きな削除をブロックしました${
+        typeof deletedPercent === "number" && Number.isFinite(deletedPercent)
+          ? `（約 ${Math.round(deletedPercent * 100)}% 削除）`
+          : ""
+      }。`;
+    default:
+      return "適用前にノート変更の安全性を確認してください。";
   }
 }
 
@@ -514,6 +568,7 @@ const EN_COPY: LocalizedCopy = {
     editReviewRequiredStatus: (name) => `Review needed: ${name ?? "note"}.`,
     editReadabilityReviewStatus: (name) => `Readability review needed: ${name ?? "note"}.`,
     editAutoHealedReviewStatus: (name) => `Auto-healed structure: review ${name ?? "note"} before applying.`,
+    editSafetyReviewStatus: (name) => `Safety review needed: ${name ?? "note"}.`,
     editProposalStatus: (name) => `Proposed changes ready: ${name ?? "note"}.`,
     editExplanationOnlyStatus: "No note changes yet.",
     editFailedStatus: (name) => `Couldn't apply changes automatically: ${name ?? "note"}.`,
@@ -570,6 +625,9 @@ const EN_COPY: LocalizedCopy = {
     patchReadabilityAutoHealed: "Plugin normalized Markdown structure. Review it before applying.",
     patchReadabilityAppliedAfterHeal: (name) => `Applied after the plugin normalized Markdown structure: ${name ?? "note"}.`,
     patchQualityIssue: (code, line, detail) => formatEnglishPatchQualityIssue(code, line, detail),
+    patchSafetyBlocked: "Blocked: this patch could remove existing note content.",
+    patchSafetyReview: "Review required: this patch changes or removes protected note content.",
+    patchSafetyIssue: (code, detail, deletedPercent) => formatEnglishPatchSafetyIssue(code, detail, deletedPercent),
     openedAt: (text) => `Opened ${text}`,
     note: (name) => `Note ${name}`,
     studyRecipes: "Captured recipes",
@@ -848,6 +906,7 @@ const JA_COPY: LocalizedCopy = {
     editReviewRequiredStatus: (name) => `確認待ち: ${name ?? "ノート"}。`,
     editReadabilityReviewStatus: (name) => `可読性の確認待ち: ${name ?? "ノート"}。`,
     editAutoHealedReviewStatus: (name) => `構造を自動補正しました。${name ?? "ノート"} を確認してから適用してください。`,
+    editSafetyReviewStatus: (name) => `安全確認待ち: ${name ?? "ノート"}。`,
     editProposalStatus: (name) => `変更案を用意しました: ${name ?? "ノート"}。`,
     editExplanationOnlyStatus: "今回は説明のみで、ノートは変更していません。",
     editFailedStatus: (name) => `自動では反映できませんでした: ${name ?? "ノート"}。`,
@@ -904,6 +963,9 @@ const JA_COPY: LocalizedCopy = {
     patchReadabilityAutoHealed: "plugin が Markdown 構造を自動補正しました。適用前に確認してください。",
     patchReadabilityAppliedAfterHeal: (name) => `plugin が Markdown 構造を補正したうえで反映しました: ${name ?? "ノート"}。`,
     patchQualityIssue: (code, line, detail) => formatJapanesePatchQualityIssue(code, line, detail),
+    patchSafetyBlocked: "ブロック: この patch は既存ノート本文を削除する可能性があります。",
+    patchSafetyReview: "確認必須: この patch は保護対象のノート本文を変更または削除します。",
+    patchSafetyIssue: (code, detail, deletedPercent) => formatJapanesePatchSafetyIssue(code, detail, deletedPercent),
     openedAt: (text) => `Opened ${text}`,
     note: (name) => `ノート ${name}`,
     studyRecipes: "Captured recipes",

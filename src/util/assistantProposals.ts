@@ -1,12 +1,13 @@
-import type { PatchEvidenceSourceKind, PatchProposalKind, StudyWorkflowKind, VaultOpKind } from "../model/types";
+import type { PatchEvidenceSourceKind, PatchIntent, PatchProposalKind, StudyWorkflowKind, VaultOpKind } from "../model/types";
+import { normalizePatchIntent } from "./agenticTurnPolicy";
 import { sanitizeOperationalAssistantText } from "./assistantChatter";
 
 const PROPOSAL_BLOCK_PATTERN = /```(obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint)\s*\n([\s\S]*?)```/gim;
 const PARTIAL_PROPOSAL_FENCE_PATTERN = /```(?:obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint)\b[\s\S]*$/im;
 const JSON_PROPOSAL_LINE_PATTERN =
-  /^\s*"(?:patches|patch|ops|op|path|targetPath|file|kind|summary|content|text|proposedText|anchors|anchorBefore|anchorAfter|replacement|destinationPath|newPath|toPath|propertyKey|propertyValue|taskLine|taskText|checked)"\s*:/m;
+  /^\s*"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|content|text|proposedText|anchors|anchorBefore|anchorAfter|replacement|destinationPath|newPath|toPath|propertyKey|propertyValue|taskLine|taskText|checked)"\s*:/m;
 const JSON_PROPOSAL_MARKER_PATTERN =
-  /"(?:patches|patch|ops|op|path|targetPath|file|kind|summary|anchors|anchorBefore|anchorAfter|replacement|destinationPath|propertyKey|propertyValue|taskLine|taskText|checked)"\s*:/i;
+  /"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|anchors|anchorBefore|anchorAfter|replacement|destinationPath|propertyKey|propertyValue|taskLine|taskText|checked)"\s*:/i;
 
 export interface ParsedAssistantPatchAnchor {
   anchorBefore: string;
@@ -18,6 +19,7 @@ export interface ParsedAssistantPatch {
   sourceIndex: number;
   targetPath: string;
   kind: PatchProposalKind;
+  intent?: PatchIntent;
   summary: string;
   proposedText: string;
   anchors?: ParsedAssistantPatchAnchor[];
@@ -406,6 +408,7 @@ function parseDelimiterPatch(body: string, sourceIndex: number): ParsedAssistant
 
   const rawKind = (headerMap.kind ?? "").toLowerCase();
   const kind: PatchProposalKind = rawKind === "create" ? "create" : "update";
+  const intent = normalizePatchIntent(headerMap.operation ?? headerMap.intent ?? headerMap.op ?? null) ?? undefined;
   const summary = normalizeWhitespace(headerMap.summary ?? defaultPatchSummary(targetPath, kind));
   const evidence = evidenceLines.map(parseEvidenceHeaderLine).filter((entry): entry is ParsedAssistantPatchEvidence => Boolean(entry));
 
@@ -413,6 +416,7 @@ function parseDelimiterPatch(body: string, sourceIndex: number): ParsedAssistant
     sourceIndex,
     targetPath,
     kind,
+    intent,
     summary,
     proposedText: createContent ?? "",
     anchors: anchors.length > 0 ? anchors : undefined,
@@ -445,11 +449,15 @@ function parsePatchEntries(raw: unknown, sourceIndex: number): ParsedAssistantPa
     }
     const rawKind = asString(record?.kind)?.trim().toLowerCase();
     const kind: PatchProposalKind = rawKind === "create" ? "create" : "update";
+    const intent = normalizePatchIntent(
+      asString(record?.operation) ?? asString(record?.intent) ?? asString(record?.op) ?? null,
+    ) ?? undefined;
     const summary = normalizeWhitespace(asString(record?.summary) ?? defaultPatchSummary(targetPath, kind));
     patches.push({
       sourceIndex,
       targetPath,
       kind,
+      intent,
       summary,
       proposedText,
       anchors: anchors.length > 0 ? anchors : undefined,

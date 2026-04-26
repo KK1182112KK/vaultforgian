@@ -38,6 +38,7 @@ export interface PatchReadabilityAssessment {
 }
 
 const QUOTE_PREFIX_PATTERN = /^(\s*(?:>\s*)+)(.*)$/;
+const CALLOUT_HEADER_PATTERN = /^\s*\[![^\]]+\][+-]?/u;
 
 function createIssue(code: PatchQualityIssueCode, line: number, detail?: string | null): PatchQualityIssue {
   return {
@@ -206,7 +207,11 @@ function collectIssues(lines: readonly string[]): PatchQualityIssue[] {
   const parsedLines = parseLines(lines);
   const issues: PatchQualityIssue[] = [];
 
-  for (const line of parsedLines) {
+  for (const [index, line] of parsedLines.entries()) {
+    const nextLine = parsedLines[index + 1];
+    if (line.quoteDepth === 0 && CALLOUT_HEADER_PATTERN.test(line.content) && nextLine && nextLine.quoteDepth > 0) {
+      issues.push(createIssue("unquoted_callout_header", line.lineNumber));
+    }
     if (isLegacyDisplayDelimiter(line)) {
       issues.push(createIssue("display_math_single_dollar", line.lineNumber));
       continue;
@@ -377,6 +382,20 @@ function healDisplayMathSpacing(lines: string[]): boolean {
   return changed;
 }
 
+function healUnquotedCalloutHeaders(lines: string[]): boolean {
+  let changed = false;
+  const parsedLines = parseLines(lines);
+  for (const [index, line] of parsedLines.entries()) {
+    const nextLine = parsedLines[index + 1];
+    if (line.quoteDepth > 0 || !CALLOUT_HEADER_PATTERN.test(line.content) || !nextLine || nextLine.quoteDepth === 0) {
+      continue;
+    }
+    lines[index] = `> ${line.content.trim()}`;
+    changed = true;
+  }
+  return changed;
+}
+
 export function assessPatchReadability(text: string): PatchReadabilityAssessment {
   const normalized = text.replace(/\r\n/g, "\n");
   const initialLines = normalized.split("\n");
@@ -390,12 +409,13 @@ export function assessPatchReadability(text: string): PatchReadabilityAssessment
   }
 
   const healedLines = [...initialLines];
+  const healedCalloutHeaders = healUnquotedCalloutHeaders(healedLines);
   const healedLegacyDelimiters = healStandaloneLegacyDelimiters(healedLines);
   const healedCollisions = healDelimiterMarkerCollisions(healedLines);
   const healedSpacing = healDisplayMathSpacing(healedLines);
   const healedText = healedLines.join("\n");
   const healedIssues = collectIssues(healedLines);
-  const healedByPlugin = healedLegacyDelimiters || healedCollisions || healedSpacing;
+  const healedByPlugin = healedCalloutHeaders || healedLegacyDelimiters || healedCollisions || healedSpacing;
 
   if (healedByPlugin && healedIssues.length === 0) {
     return {
@@ -415,7 +435,14 @@ export function assessPatchReadability(text: string): PatchReadabilityAssessment
 }
 
 export function shouldBlockAutomaticPatchApply(
-  proposal: Pick<PatchProposal, "qualityState" | "healedByPlugin">,
+  proposal: Pick<PatchProposal, "qualityState" | "healedByPlugin" | "status" | "intent" | "safetyIssues">,
 ): boolean {
-  return proposal.qualityState === "review_required" || proposal.healedByPlugin === true;
+  return (
+    proposal.status === "blocked" ||
+    proposal.intent === "delete" ||
+    proposal.intent === "full_replace" ||
+    (proposal.safetyIssues?.length ?? 0) > 0 ||
+    proposal.qualityState === "review_required" ||
+    proposal.healedByPlugin === true
+  );
 }

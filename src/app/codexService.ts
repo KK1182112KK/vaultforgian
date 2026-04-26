@@ -104,7 +104,8 @@ import {
   shouldPreferWslForTurn,
   shouldRetryWithWslFallback,
 } from "../util/runtimeFallback";
-import { normalizeVisibleUserPromptText, sanitizeOperationalAssistantText } from "../util/assistantChatter";
+import { containsFuturePatchPromise, normalizeVisibleUserPromptText, sanitizeOperationalAssistantText } from "../util/assistantChatter";
+import { classifyAgenticTurnIntent, resolvePatchIntent } from "../util/agenticTurnPolicy";
 import {
   buildCodexRunWatchdogMessage,
   getCodexRunWatchdogStage,
@@ -130,6 +131,7 @@ import {
   PatchReadabilityError,
   shouldBlockAutomaticPatchApply,
 } from "../util/patchReadability";
+import { assessPatchSafety, hasRepairablePatchSafetyIssue } from "../util/patchSafety";
 import { buildSkillImprovementDiff, buildSkillImprovementProposal } from "../util/skillImprovement";
 import {
   buildDelimiterPatchExample,
@@ -297,6 +299,7 @@ type TranscriptSyncResult =
 type ProposalRepairReason = "malformed" | "empty" | "promise_without_block";
 type ProposalRepairFailureMode = "error" | "silent";
 type NoteReflectionRescueStrength = "strong_repair" | "cta_only";
+type PatchReviewReason = "approval_mode" | "readability_risk" | "auto_healed" | "safety_risk";
 
 interface NoteReflectionRescueCandidate {
   message: ChatMessage;
@@ -451,6 +454,10 @@ function createAbortError(reason: AbortReason = "runtime_abort"): Error {
 function getVaultBasePath(app: App): string {
   const adapter = app.vault.adapter as { basePath?: string };
   return adapter.basePath ?? "";
+}
+
+function asVaultFileLike(value: unknown): TFile | null {
+  return value && typeof value === "object" && "path" in value ? (value as TFile) : null;
 }
 
 function sanitizeTitle(input: string, fallback = "New chat"): string {
@@ -1900,17 +1907,26 @@ export class CodexService {
     const rawExcerpt = message.text.trim().slice(0, 6000);
     const currentText = proposal.proposedText.trim().slice(0, 6000);
     const qualityIssues = proposal.qualityIssues ?? [];
+    const safetyIssues = proposal.safetyIssues ?? [];
     const issueSummary =
-      qualityIssues.length > 0
-        ? qualityIssues.map((issue) => issue.code).join(", ")
-        : "structural markdown readability issues";
+      [...qualityIssues.map((issue) => issue.code), ...safetyIssues.map((issue) => issue.code)].join(", ") ||
+      "structural markdown readability or note safety issues";
+    const safetyInstructions = safetyIssues.some((issue) => issue.code === "unsafe_full_update")
+      ? [
+          "The previous patch tried to update an existing note with `---content`, which would replace the whole note.",
+          "Convert it to an anchored patch using `---anchorBefore`, `---anchorAfter`, and `---replacement`.",
+          "Do not use `---content` for an existing note unless `operation: full_replace` is explicitly intended.",
+        ].join(" ")
+      : null;
     return [
       "The previous reply produced a parseable Obsidian patch, but the markdown structure is still unsafe to auto-apply.",
       `Detected issues: ${issueSummary}.`,
+      safetyInstructions,
       "Re-emit exactly one fenced `obsidian-patch` block and nothing else.",
       `Target note path: ${targetPath}`,
       "Required delimiter format — copy the shape exactly:",
       buildDelimiterPatchExample(targetPath),
+      `Include this header: operation: ${proposal.intent ?? "replace"}`,
       "Use canonical markdown structure for math-heavy notes:",
       ...buildPatchMathFormattingRules().map((line) => `- ${line}`),
       ...buildQuotedPatchMathFormattingRules().map((line) => `- ${line}`),
@@ -2002,7 +2018,12 @@ export class CodexService {
     }
     for (const messageId of newAssistantMessageIds) {
       const proposals = tab.patchBasket.filter(
-        (proposal) => proposal.sourceMessageId === messageId && proposal.status === "pending" && proposal.qualityState === "review_required",
+        (proposal) =>
+          proposal.sourceMessageId === messageId &&
+          (
+            (proposal.status === "pending" && proposal.qualityState === "review_required") ||
+            (proposal.status === "blocked" && hasRepairablePatchSafetyIssue(proposal))
+          ),
       );
       if (proposals.length === 0) {
         continue;
@@ -2037,6 +2058,13 @@ export class CodexService {
       return false;
     }
     const beforeArtifacts = this.captureTurnArtifacts(params.tabId);
+    this.store.setWaitingState(params.tabId, {
+      phase: "tools",
+      text: pickWaitingCopy("tools", params.mode, Date.now(), {
+        focus: hasRepairablePatchSafetyIssue(params.candidate.proposals[0]!) ? "repair" : "readability",
+        locale: this.getLocale(),
+      }),
+    });
     await this.runTurn(
       params.tabId,
       this.buildPatchReadabilityRepairPrompt(params.turnContext, params.candidate.message, params.candidate.proposals[0]!),
@@ -3895,7 +3923,7 @@ export class CodexService {
     messageId: string,
     visibility: AssistantOutputVisibility,
   ): boolean {
-    const normalizedText = sanitizeOperationalAssistantText(text) ?? "";
+    const normalizedText = sanitizeOperationalAssistantText(text) ?? (containsFuturePatchPromise(text) ? text : "");
     if (!normalizedText) {
       return false;
     }
@@ -3942,6 +3970,12 @@ export class CodexService {
     const originTurnId = this.pendingTurns.get(tabId)?.turnId ?? null;
 
     const parsed = extractAssistantProposals(text);
+    if (parsed.patches.length > 0 && this.activeRuns.has(tabId)) {
+      this.store.setWaitingState(tabId, {
+        phase: "tools",
+        text: pickWaitingCopy("tools", tab.runtimeMode, Date.now(), { focus: "patch_safety", locale: this.getLocale() }),
+      });
+    }
     const patchBasket = (
       await Promise.all(
         parsed.patches.map((patch, index) => this.buildPatchProposalFromParsed(tabId, messageId, patch, index, originTurnId)),
@@ -4198,7 +4232,7 @@ export class CodexService {
   private recordAssistantEditOutcome(
     tabId: string,
     messageId: string,
-    outcome: { outcome: EditOutcome; targetPath: string | null; reviewReason?: "approval_mode" | "readability_risk" | "auto_healed" | null } | null,
+    outcome: { outcome: EditOutcome; targetPath: string | null; reviewReason?: PatchReviewReason | null } | null,
     visibility: AssistantOutputVisibility = "visible",
   ): void {
     if (!outcome) {
@@ -4227,7 +4261,10 @@ export class CodexService {
   private resolvePatchReviewReason(
     patchBasket: readonly PatchProposal[],
     approvals: readonly PendingApproval[],
-  ): "approval_mode" | "readability_risk" | "auto_healed" | null {
+  ): PatchReviewReason | null {
+    if (patchBasket.some((proposal) => proposal.status === "blocked" || (proposal.safetyIssues?.length ?? 0) > 0)) {
+      return "safety_risk";
+    }
     if (patchBasket.some((proposal) => proposal.qualityState === "review_required")) {
       return "readability_risk";
     }
@@ -4243,7 +4280,7 @@ export class CodexService {
     parsed: ParsedAssistantProposalResult,
     patchBasket: readonly PatchProposal[],
     approvals: readonly PendingApproval[],
-  ): { outcome: EditOutcome; targetPath: string | null; reviewReason?: "approval_mode" | "readability_risk" | "auto_healed" | null } | null {
+  ): { outcome: EditOutcome; targetPath: string | null; reviewReason?: PatchReviewReason | null } | null {
     const targetPath = patchBasket[0]?.targetPath ?? approvals[0]?.decisionTarget ?? null;
     const hasProposalBlocks = /```obsidian-(?:patch|ops)\b/.test(text);
     if (patchBasket.length === 0 && approvals.length === 0) {
@@ -4568,10 +4605,16 @@ export class CodexService {
 
     const id = buildPatchProposalId(messageId, patch.sourceIndex, index);
     const existing = tab.patchBasket.find((entry) => entry.id === id) ?? null;
-    const abstractFile = this.app.vault.getAbstractFileByPath(targetPath);
-    const file = abstractFile instanceof TFile ? abstractFile : null;
+    const file = asVaultFileLike(this.app.vault.getAbstractFileByPath(targetPath));
     const baseSnapshot = file ? await this.app.vault.cachedRead(file) : null;
     const kind = patch.kind === "create" || !file ? "create" : "update";
+    const userMessage = this.findUserMessageForApprovedEdit(tabId, originTurnId, messageId);
+    const turnIntent = classifyAgenticTurnIntent(userMessage?.text ?? "");
+    const intent = resolvePatchIntent({
+      explicitIntent: patch.intent ?? null,
+      patchKind: kind,
+      turnIntent,
+    });
     let proposedText = normalizeProposalText(patch.proposedText);
     const anchors = patch.anchors && patch.anchors.length > 0 ? patch.anchors : undefined;
     if (anchors && kind === "update" && baseSnapshot !== null) {
@@ -4589,18 +4632,20 @@ export class CodexService {
         }
       }
     }
-    if (!anchors && kind === "update" && baseSnapshot !== null && proposedText) {
-      const baseLength = baseSnapshot.length;
-      if (baseLength > 2_000 && proposedText.length < baseLength * 0.5) {
-        console.warn("[obsidian-codex-study] rejecting proposal: suspected truncation", {
-          targetPath,
-          baseLength,
-          proposedLength: proposedText.length,
-        });
-        return null;
-      }
-    }
     const readability = assessPatchReadability(proposedText);
+    const safety = assessPatchSafety({
+      kind,
+      intent,
+      hasAnchors: Boolean(anchors?.length),
+      baseText: baseSnapshot,
+      proposedText: readability.text,
+    });
+    const existingStatus = existing?.status ?? null;
+    const status = existingStatus && existingStatus !== "pending" && existingStatus !== "blocked"
+      ? existingStatus
+      : safety.blocked
+        ? "blocked"
+        : "pending";
     return {
       anchors,
       id,
@@ -4609,15 +4654,17 @@ export class CodexService {
       originTurnId,
       targetPath: file?.path ?? targetPath,
       kind,
+      intent,
       baseSnapshot,
       proposedText: readability.text,
       unifiedDiff: buildUnifiedDiff(file?.path ?? targetPath, baseSnapshot, readability.text),
       summary: patch.summary || `${kind === "create" ? "Create" : "Update"} ${basename(targetPath)}`,
-      status: existing?.status ?? "pending",
+      status,
       createdAt: existing?.createdAt ?? Date.now(),
       qualityState: readability.qualityState,
       qualityIssues: readability.qualityIssues.map((issue) => ({ ...issue })),
       healedByPlugin: readability.healedByPlugin,
+      safetyIssues: safety.safetyIssues.map((issue) => ({ ...issue })),
       evidence: patch.evidence ? patch.evidence.map((entry) => ({ ...entry })) : existing?.evidence,
     };
   }

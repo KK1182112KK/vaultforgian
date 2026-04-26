@@ -169,7 +169,13 @@ export class ComposerContextSections {
     }
     const proposals = context.service
       .getTabPatchBasket(context.activeTab.id)
-      .filter((proposal) => proposal.status === "pending" || proposal.status === "conflicted" || proposal.status === "stale");
+      .filter(
+        (proposal) =>
+          proposal.status === "pending" ||
+          proposal.status === "conflicted" ||
+          proposal.status === "stale" ||
+          proposal.status === "blocked",
+      );
     if (proposals.length === 0) {
       changesTrayEl.classList.remove("is-visible");
       return;
@@ -244,6 +250,24 @@ export class ComposerContextSections {
           });
         }
       }
+      if (proposal.status === "blocked" || (proposal.safetyIssues?.length ?? 0) > 0) {
+        cardEl.createDiv({
+          cls: `obsidian-codex__change-card-warning is-${proposal.status === "blocked" ? "blocked" : "safety"}`,
+          text:
+            proposal.status === "blocked"
+              ? context.copy.workspace.patchSafetyBlocked
+              : context.copy.workspace.patchSafetyReview,
+        });
+      }
+      if ((proposal.safetyIssues?.length ?? 0) > 0) {
+        const safetyIssuesEl = cardEl.createDiv({ cls: "obsidian-codex__change-card-issues" });
+        for (const issue of proposal.safetyIssues ?? []) {
+          safetyIssuesEl.createDiv({
+            cls: "obsidian-codex__change-card-issue",
+            text: context.copy.workspace.patchSafetyIssue(issue.code, issue.detail ?? null, issue.deletedPercent ?? null),
+          });
+        }
+      }
       cardEl.createEl("pre", {
         cls: "obsidian-codex__change-card-diff",
         text: summarizePreviewText(proposal.unifiedDiff, 8, 520),
@@ -281,9 +305,9 @@ export class ComposerContextSections {
         text: proposal.status === "conflicted" || proposal.status === "stale" ? context.copy.workspace.retry : context.copy.workspace.apply,
       });
       applyButton.type = "button";
-      applyButton.disabled = patchActionInFlight;
+      applyButton.disabled = patchActionInFlight || proposal.status === "blocked";
       applyButton.addEventListener("click", () => {
-        if (this.deps.state.applyingPatchIds.has(proposal.id)) {
+        if (this.deps.state.applyingPatchIds.has(proposal.id) || proposal.status === "blocked") {
           return;
         }
         this.deps.state.applyingPatchIds.add(proposal.id);

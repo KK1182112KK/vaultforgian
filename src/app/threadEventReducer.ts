@@ -1,7 +1,7 @@
 import type { CodexSpawnSpec } from "../util/codexCli";
 import { renderCodexSpawnSpec } from "../util/codexCli";
 import { unwrapApiErrorMessage } from "../util/reasoning";
-import { sanitizeOperationalAssistantText } from "../util/assistantChatter";
+import { containsFuturePatchPromise, sanitizeOperationalAssistantText } from "../util/assistantChatter";
 import {
   createEmptyUsageSummary,
   extractUsageSummaryPatch,
@@ -20,6 +20,11 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function normalizeAssistantOutputText(rawText: string | null | undefined): string | null {
+  const raw = rawText ?? "";
+  return sanitizeOperationalAssistantText(raw) ?? (containsFuturePatchPromise(raw) ? raw : null);
 }
 
 function getErrorMessage(value: unknown): string {
@@ -313,7 +318,7 @@ export class ThreadEventReducer {
       }
 
       if (payloadType === "task_complete") {
-        const text = sanitizeOperationalAssistantText(extractTaskCompleteMessageText(payload) ?? "");
+        const text = normalizeAssistantOutputText(extractTaskCompleteMessageText(payload));
         if (text && assistantOutputVisibility !== "artifact_only") {
           this.appendAssistantFallbackMessage(
             tabId,
@@ -326,7 +331,7 @@ export class ThreadEventReducer {
       }
 
       if (payloadType === "agent_message") {
-        const text = sanitizeOperationalAssistantText(asString(payload.message) ?? "");
+        const text = normalizeAssistantOutputText(asString(payload.message));
         if (!text) {
           return null;
         }
@@ -343,7 +348,7 @@ export class ThreadEventReducer {
         if (asString(payload.role) !== "assistant") {
           return null;
         }
-        const text = sanitizeOperationalAssistantText(extractResponseMessageText(payload) ?? "");
+        const text = normalizeAssistantOutputText(extractResponseMessageText(payload));
         if (!text) {
           return null;
         }
@@ -614,7 +619,7 @@ export class ThreadEventReducer {
     messageId: string,
     visibility: AssistantOutputVisibility,
   ): void {
-    const normalizedText = sanitizeOperationalAssistantText(text) ?? "";
+    const normalizedText = normalizeAssistantOutputText(text) ?? "";
     if (!normalizedText) {
       return;
     }

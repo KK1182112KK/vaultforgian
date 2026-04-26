@@ -2449,7 +2449,7 @@ describe("CodexService sendPrompt skill context", () => {
               "",
               "---content",
               [
-                "[!example]- Collision",
+                "> [!example]- Collision",
                 ">",
                 "> $$",
                 "> x = y",
@@ -2535,9 +2535,18 @@ describe("CodexService sendPrompt skill context", () => {
             "```obsidian-patch",
             "path: notes/current.md",
             "kind: update",
+            "operation: augment",
             "summary: Rewrite the note body",
             "",
-            "---content",
+            "---anchorBefore",
+            "# Current",
+            "",
+            "Original",
+            "---anchorAfter",
+            "",
+            "---replacement",
+            "",
+            "",
             CALLOUT_MATH_SAMPLE,
             "---end",
             "```",
@@ -2578,6 +2587,265 @@ describe("CodexService sendPrompt skill context", () => {
     const assistantMessage = service.getActiveTab()?.messages.find((message) => message.kind === "assistant");
     expect(assistantMessage?.meta?.editOutcome).toBe("review_required");
     expect(assistantMessage?.meta?.editReviewReason).toBe("auto_healed");
+  }, 10000);
+
+  it("blocks unsafe content-only updates and keeps the existing note unchanged when repair finds no anchors", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-unsafe-full-update-"));
+    tempRoots.push(vaultRoot);
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      permissionMode: "full-auto",
+    };
+    const writable = createWritableApp(vaultRoot, {
+      "notes/current.md": "# Current\n\nExisting derivation.\n\nTail.",
+    });
+    const service = new CodexService(writable.app, () => settings, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Added the missing derivation.",
+              "",
+              "```obsidian-patch",
+              "path: notes/current.md",
+              "kind: update",
+              "summary: Add supporting derivation",
+              "---content",
+              "## Supporting derivation",
+              "",
+              "New derivation only.",
+              "---end",
+              "```",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-unsafe-full-update-1" };
+      })
+      .mockImplementationOnce(async () => ({ threadId: "thread-unsafe-full-update-1" }));
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "このノートに補足して",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      true,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    expect(writable.files.get("notes/current.md")).toBe("# Current\n\nExisting derivation.\n\nTail.");
+    expect(service.getActiveTab()?.patchBasket).toEqual([
+      expect.objectContaining({
+        targetPath: "notes/current.md",
+        status: "blocked",
+        intent: "augment",
+        safetyIssues: expect.arrayContaining([
+          expect.objectContaining({ code: "unsafe_full_update" }),
+        ]),
+      }),
+    ]);
+  }, 10000);
+
+  it("repairs unsafe content-only updates into anchored patch proposals when hidden repair succeeds", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-unsafe-full-update-repair-"));
+    tempRoots.push(vaultRoot);
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      permissionMode: "auto-edit",
+    };
+    const writable = createWritableApp(vaultRoot, {
+      "notes/current.md": "# Current\n\nExisting derivation.\n\nTail.",
+    });
+    const service = new CodexService(writable.app, () => settings, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Added the missing derivation.",
+              "",
+              "```obsidian-patch",
+              "path: notes/current.md",
+              "kind: update",
+              "summary: Add supporting derivation",
+              "---content",
+              "## Supporting derivation",
+              "",
+              "New derivation only.",
+              "---end",
+              "```",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-unsafe-full-update-repair-1" };
+      })
+      .mockImplementationOnce(async (request) => {
+        (request as { onEvent: (event: unknown) => void }).onEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "```obsidian-patch",
+              "path: notes/current.md",
+              "kind: update",
+              "operation: augment",
+              "summary: Add supporting derivation",
+              "---anchorBefore",
+              "Existing derivation.",
+              "---anchorAfter",
+              "",
+              "---replacement",
+              "",
+              "",
+              "## Supporting derivation",
+              "",
+              "New derivation only.",
+              "---end",
+              "```",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-unsafe-full-update-repair-1" };
+      });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "このノートに補足して",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      true,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    expect(writable.files.get("notes/current.md")).toBe("# Current\n\nExisting derivation.\n\nTail.");
+    expect(service.getActiveTab()?.patchBasket).toEqual([
+      expect.objectContaining({
+        targetPath: "notes/current.md",
+        status: "pending",
+        intent: "augment",
+        anchors: expect.any(Array),
+        safetyIssues: [],
+      }),
+    ]);
+  }, 10000);
+
+  it("keeps explicit full-note replacement waiting for review in full-auto mode", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-explicit-full-replace-"));
+    tempRoots.push(vaultRoot);
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      permissionMode: "full-auto",
+    };
+    const writable = createWritableApp(vaultRoot, {
+      "notes/current.md": "# Current\n\nExisting derivation.\n\nTail.",
+    });
+    const service = new CodexService(writable.app, () => settings, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onEvent: (event: unknown) => void }).onEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: [
+            "Rewrote the whole note.",
+            "",
+            "```obsidian-patch",
+            "path: notes/current.md",
+            "kind: update",
+            "operation: full_replace",
+            "summary: Rewrite the whole note",
+            "---content",
+            "# Rewritten note",
+            "",
+            "Replacement body.",
+            "---end",
+            "```",
+          ].join("\n"),
+        },
+      });
+      return { threadId: "thread-explicit-full-replace-1" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "ノート全体を書き換えて",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      true,
+      "draft",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(1);
+    expect(writable.files.get("notes/current.md")).toBe("# Current\n\nExisting derivation.\n\nTail.");
+    expect(service.getActiveTab()?.patchBasket).toEqual([
+      expect.objectContaining({
+        status: "pending",
+        intent: "full_replace",
+        safetyIssues: expect.arrayContaining([
+          expect.objectContaining({ code: "full_replace_requires_review" }),
+        ]),
+      }),
+    ]);
   }, 10000);
 
   it("keeps proposal-repair scaffolding hidden when the retry still fails", async () => {

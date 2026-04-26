@@ -28,6 +28,11 @@ describe("sanitizeOperationalAssistantText", () => {
     expect(text).toBe("This note is hard to follow because the theorem map appears too late.");
   });
 
+  it("drops future-tense patch promises that do not include an artifact", () => {
+    expect(sanitizeOperationalAssistantText("パッチとして返します。次に修正版を返します。")).toBeNull();
+    expect(sanitizeOperationalAssistantText("I will return a patch for this note next.")).toBeNull();
+  });
+
   it("keeps substantive text while stripping internal proposal-repair scaffolding", () => {
     const text = sanitizeOperationalAssistantText([
       "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",

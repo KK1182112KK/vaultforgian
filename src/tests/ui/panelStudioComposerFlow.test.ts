@@ -1456,6 +1456,35 @@ describe("Panel Studio composer flow", () => {
     expect(harness.composerRoot.textContent).toContain("Plugin normalized Markdown structure. Review it before applying.");
   });
 
+  it("shows blocked patch safety copy and disables apply without moving controls", async () => {
+    const harness = createHarness();
+    const proposal: PatchProposal = {
+      id: "patch-blocked-1",
+      threadId: null,
+      sourceMessageId: "assistant-blocked",
+      originTurnId: "turn-blocked",
+      targetPath: "courses/lecture-15.md",
+      kind: "update",
+      baseSnapshot: "# Before\n\nExisting content",
+      proposedText: "# After",
+      unifiedDiff: "@@ -1,3 +1 @@",
+      summary: "Add supporting derivation.",
+      status: "blocked",
+      createdAt: 3,
+      intent: "augment",
+      safetyIssues: [{ code: "unsafe_full_update", detail: "content_update_without_anchors" }],
+    };
+    harness.service.getTabPatchBasket = () => [proposal];
+    harness.renderAll();
+    await tick();
+
+    expect(harness.composerRoot.textContent).toContain("Blocked: this patch could remove existing note content.");
+    expect(harness.composerRoot.textContent).toContain("Existing note content is protected unless full replacement is explicit.");
+    const buttons = Array.from(harness.composerRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn"));
+    expect(buttons.map((button) => button.textContent)).toEqual(["Open", "Reject", "Apply"]);
+    expect(buttons.find((button) => button.textContent === "Apply")?.disabled).toBe(true);
+  });
+
   it("disables the patch apply button while the apply action is in flight", async () => {
     const harness = createHarness();
     const applyGate = createDeferred<void>();

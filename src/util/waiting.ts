@@ -1,5 +1,12 @@
 import type { RuntimeMode, WaitingPhase } from "../model/types";
 
+export type WaitingFocus = "note_context" | "patch_safety" | "readability" | "repair";
+
+export interface WaitingCopyOptions {
+  focus?: WaitingFocus | null;
+  locale?: "en" | "ja" | null;
+}
+
 const WAITING_COPY: Record<WaitingPhase, string[]> = {
   boot: [
     "入口を見つけています",
@@ -23,6 +30,25 @@ const WAITING_COPY: Record<WaitingPhase, string[]> = {
   ],
 };
 
+const FOCUSED_WAITING_COPY: Record<WaitingFocus, Record<"en" | "ja", string>> = {
+  note_context: {
+    en: "Checking note context",
+    ja: "ノートを確認しています",
+  },
+  patch_safety: {
+    en: "Checking note safety",
+    ja: "ノート変更の安全性を確認しています",
+  },
+  readability: {
+    en: "Checking Markdown readability",
+    ja: "Markdown の可読性を確認しています",
+  },
+  repair: {
+    en: "Repairing the change proposal",
+    ja: "変更案を回復しています",
+  },
+};
+
 function hash(input: string): number {
   let value = 0;
   for (const char of input) {
@@ -31,7 +57,15 @@ function hash(input: string): number {
   return value;
 }
 
-export function pickWaitingCopy(phase: WaitingPhase, mode: RuntimeMode, entropy = Date.now()): string {
+export function pickWaitingCopy(
+  phase: WaitingPhase,
+  mode: RuntimeMode,
+  entropy = Date.now(),
+  options: WaitingCopyOptions = {},
+): string {
+  if (phase === "tools" && options.focus) {
+    return FOCUSED_WAITING_COPY[options.focus][options.locale === "en" ? "en" : "ja"];
+  }
   const phrases = WAITING_COPY[phase];
   const prefix = mode === "skill" && phase === "tools" ? "skill を呼び出しています" : "";
   const seed = hash(`${phase}:${mode}:${entropy}`);

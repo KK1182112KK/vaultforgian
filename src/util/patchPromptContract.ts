@@ -22,6 +22,7 @@ export function buildDelimiterPatchExample(targetPath: string): string {
     "```obsidian-patch",
     `path: ${targetPath}`,
     "kind: update",
+    "operation: replace",
     "summary: Normalize display math and surrounding wording in the target section",
     `evidence: vault_note|Current note|${targetPath}|This section should keep display math on standalone $$ lines.`,
     "",

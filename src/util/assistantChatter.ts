@@ -63,6 +63,19 @@ const OPERATIONAL_STATUS_PATTERNS = [
   /現時点ではまだ .*読めていません/iu,
 ];
 
+const FUTURE_PATCH_PROMISE_PATTERNS = [
+  /\bI\s+will\s+(?:return|emit|make|create|generate|prepare)\b.*\bpatch\b/iu,
+  /\bpatch\b.*\bnext\b/iu,
+  /パッチとして返します/iu,
+  /次に.*(?:修正版|パッチ).*返します/iu,
+  /差し替え版を作ります/iu,
+];
+
+export function containsFuturePatchPromise(text: string | null | undefined): boolean {
+  const normalized = normalizeBlock(text ?? "");
+  return Boolean(normalized && FUTURE_PATCH_PROMISE_PATTERNS.some((pattern) => pattern.test(normalized)));
+}
+
 const INTERNAL_REWRITE_FOLLOWUP_START_PATTERN =
   /^Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block\.$/imu;
 
@@ -100,6 +113,9 @@ function isOperationalChatterBlock(block: string): boolean {
     return false;
   }
   if (OPERATIONAL_STATUS_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+  if (containsFuturePatchPromise(normalized)) {
     return true;
   }
   return (

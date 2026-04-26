@@ -276,7 +276,8 @@ export type ApprovalSessionScope = "write" | "shell";
 export type ApprovalTransport = "plugin_proposal";
 export type VaultOpKind = "rename" | "move" | "property_set" | "property_remove" | "task_update";
 export type PatchProposalKind = "update" | "create";
-export type PatchProposalStatus = "pending" | "applied" | "rejected" | "stale" | "conflicted";
+export type PatchProposalStatus = "pending" | "applied" | "rejected" | "stale" | "conflicted" | "blocked";
+export type PatchIntent = "augment" | "replace" | "delete" | "full_replace" | "create";
 export type PatchEvidenceSourceKind = "vault_note" | "attachment" | "web";
 export type PatchQualityState = "clean" | "auto_healed" | "review_required";
 export type PatchQualityIssueCode =
@@ -285,7 +286,13 @@ export type PatchQualityIssueCode =
   | "unmatched_display_math"
   | "adjacent_block_spacing"
   | "mixed_display_math_context"
-  | "display_math_same_line_delimiter";
+  | "display_math_same_line_delimiter"
+  | "unquoted_callout_header";
+export type PatchSafetyIssueCode =
+  | "unsafe_full_update"
+  | "full_replace_requires_review"
+  | "delete_requires_review"
+  | "large_deletion";
 export type StudyWorkflowKind = "lecture" | "review" | "paper" | "homework";
 export type StudyRecipeWorkflowKind = StudyWorkflowKind | "custom";
 export type RecentStudySourceKind = "note" | "attachment" | "selection";
@@ -470,6 +477,13 @@ export interface PatchQualityIssue {
   detail?: string | null;
 }
 
+export interface PatchSafetyIssue {
+  code: PatchSafetyIssueCode;
+  detail?: string | null;
+  deletedChars?: number | null;
+  deletedPercent?: number | null;
+}
+
 export interface PatchProposal {
   id: string;
   threadId: string | null;
@@ -477,6 +491,7 @@ export interface PatchProposal {
   originTurnId: string | null;
   targetPath: string;
   kind: PatchProposalKind;
+  intent?: PatchIntent;
   baseSnapshot: string | null;
   proposedText: string;
   unifiedDiff: string;
@@ -486,6 +501,7 @@ export interface PatchProposal {
   qualityState?: PatchQualityState;
   qualityIssues?: PatchQualityIssue[];
   healedByPlugin?: boolean;
+  safetyIssues?: PatchSafetyIssue[];
   anchors?: PatchProposalAnchor[];
   evidence?: PatchEvidence[];
 }

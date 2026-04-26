@@ -913,6 +913,9 @@ function buildEditStatusLine(
     case "applied":
       return context.copy.workspace.editAppliedStatus(targetName);
     case "review_required":
+      if (reviewReason === "safety_risk") {
+        return context.copy.workspace.editSafetyReviewStatus(targetName);
+      }
       if (reviewReason === "readability_risk") {
         return context.copy.workspace.editReadabilityReviewStatus(targetName);
       }

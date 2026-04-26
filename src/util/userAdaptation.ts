@@ -39,6 +39,17 @@ const AVOID_PATTERNS: Array<[string, RegExp]> = [
   ["overexplaining", /\b(don't overexplain|too long|長すぎ)\b/i],
 ];
 
+const AGENTIC_NOTE_STYLE_HINTS = [
+  "prefer_augmenting_existing_notes",
+  "preserve_existing_note_content",
+  "canonical_callout_math",
+];
+
+const AGENTIC_AVOID_PATTERNS = [
+  "unrequested_deletion",
+  "unrequested_full_note_replacement",
+];
+
 function unique(values: Iterable<string>): string[] {
   return [...new Set([...values].map((entry) => entry.trim()).filter(Boolean))];
 }
@@ -150,10 +161,12 @@ export function updateUserAdaptationMemory(
     preferredNoteStyleHints: unique([
       ...(normalized?.globalProfile?.preferredNoteStyleHints ?? []),
       ...detectTags(summaryHaystack, NOTE_STYLE_PATTERNS),
+      ...AGENTIC_NOTE_STYLE_HINTS,
     ]),
     avoidResponsePatterns: unique([
       ...(normalized?.globalProfile?.avoidResponsePatterns ?? []),
       ...detectTags(input.prompt, AVOID_PATTERNS),
+      ...AGENTIC_AVOID_PATTERNS,
     ]),
     updatedAt: occurredAt,
   };
