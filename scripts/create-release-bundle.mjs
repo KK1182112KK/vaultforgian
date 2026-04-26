@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createDeterministicZip } from "./lib/deterministic-zip.mjs";
 import { resolveProjectRoot } from "./lib/project-root.mjs";
@@ -13,6 +13,62 @@ async function assertReadable(filePath) {
   const fileStat = await stat(filePath);
   if (!fileStat.isFile() || fileStat.size === 0) {
     throw new Error(`Expected non-empty file: ${path.relative(projectRoot, filePath)}`);
+  }
+}
+
+async function collectSourceFiles(dir) {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...await collectSourceFiles(fullPath));
+      } else if (/\.(ts|tsx|js|mjs|css)$/i.test(entry.name)) {
+        files.push(fullPath);
+      }
+    }
+    return files;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function assertBundleFresh(mainJsPath) {
+  const mainStat = await stat(mainJsPath);
+  const sourceRoots = [
+    path.join(projectRoot, "src", "app"),
+    path.join(projectRoot, "src", "model"),
+    path.join(projectRoot, "src", "styles"),
+    path.join(projectRoot, "src", "util"),
+    path.join(projectRoot, "src", "views"),
+    path.join(projectRoot, "src", "main.ts"),
+  ];
+  const sourceFiles = (
+    await Promise.all(
+      sourceRoots.map(async (sourcePath) => {
+        try {
+          const sourceStat = await stat(sourcePath);
+          return sourceStat.isDirectory() ? await collectSourceFiles(sourcePath) : [sourcePath];
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+          }
+          throw error;
+        }
+      }),
+    )
+  ).flat();
+  for (const sourcePath of sourceFiles) {
+    const sourceStat = await stat(sourcePath);
+    if (sourceStat.mtimeMs > mainStat.mtimeMs) {
+      throw new Error(
+        `main.js is older than source files (${path.relative(projectRoot, sourcePath)}). Run npm run build:smoke before npm run release:bundle.`,
+      );
+    }
   }
 }
 
@@ -82,6 +138,7 @@ async function main() {
     assertReadable(mainJsPath),
     assertReadable(stylesPath),
   ]);
+  await assertBundleFresh(mainJsPath);
 
   const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));

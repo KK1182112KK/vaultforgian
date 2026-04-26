@@ -42,11 +42,19 @@ import {
 import { isWindowsUncPath, isWslPathLike, normalizeRuntimePath } from "../util/command";
 import { DEFAULT_CODEX_EXECUTABLE, isUnsafeCodexExecutablePath, sanitizeCodexExecutablePath } from "../util/codexLauncher";
 import {
+  coerceModelForRuntime,
   coerceModelForPicker,
   getFallbackModelCatalog,
   parseModelCatalog,
   resolveReasoningEffortForModel,
 } from "../util/models";
+import {
+  compareCodexVersions,
+  extractModelCacheClientVersion,
+  isCodexUpgradeRequiredError,
+  isModelRuntimeCompatible,
+  parseCodexCliVersion,
+} from "../util/codexVersion";
 import { buildContextPackText, MAX_CONTEXT_PATHS, normalizeContextPaths } from "../util/contextPack";
 import { loadCodexPromptCatalog, type CodexPromptDefinition } from "../util/codexPrompts";
 import {
@@ -255,6 +263,20 @@ interface ResolvedTurnCodexLauncher {
   runtime: CodexRuntime;
   executablePath: string;
   launcherOverrideParts?: string[];
+  cliVersion?: string | null;
+}
+
+interface CodexVersionProbeResult {
+  stdout: string;
+  stderr: string;
+  cliVersion: string | null;
+}
+
+interface RuntimeMetadataSnapshot {
+  resolvedCommand: string | null;
+  cliVersion: string | null;
+  modelCacheClientVersion: string | null;
+  modelCatalogSource: "native" | "wsl" | "fallback";
 }
 
 const MAX_AUTO_APPLY_PROPOSALS_PER_TURN = 5;
@@ -573,6 +595,13 @@ export class CodexService {
   private wslBridgeSessionRootsPromise: Promise<string[]> | null = null;
   private saveQueued = false;
   private jsonOutputFlag: JsonOutputFlag = "--json";
+  private preferredNativeLauncher: (ResolvedTurnCodexLauncher & { cliVersion: string | null }) | null = null;
+  private runtimeMetadata: RuntimeMetadataSnapshot = {
+    resolvedCommand: null,
+    cliVersion: null,
+    modelCacheClientVersion: null,
+    modelCatalogSource: "fallback",
+  };
   private customPromptCatalog: CodexPromptDefinition[] = [];
   private allInstalledSkillCatalog: InstalledSkillDefinition[] = [];
   private installedSkillCatalog: InstalledSkillDefinition[] = [];
@@ -682,6 +711,15 @@ export class CodexService {
 
   getRuntimeIssue(): string | null {
     return this.store.getState().runtimeIssue;
+  }
+
+  getRuntimeStatusSummaryParts(): string[] {
+    return [
+      this.runtimeMetadata.resolvedCommand ? `Command: ${this.runtimeMetadata.resolvedCommand}` : null,
+      this.runtimeMetadata.cliVersion ? `CLI: ${this.runtimeMetadata.cliVersion}` : "CLI: unknown",
+      this.runtimeMetadata.modelCacheClientVersion ? `Model cache: ${this.runtimeMetadata.modelCacheClientVersion}` : "Model cache: fallback",
+      `Catalog: ${this.runtimeMetadata.modelCatalogSource}`,
+    ].filter((entry): entry is string => Boolean(entry));
   }
 
   getAuthState(): "ready" | "missing_login" {
@@ -2194,6 +2232,18 @@ export class CodexService {
     const nextEffort = resolveReasoningEffortForModel(this.getAvailableModels(), resolvedModel, tab.reasoningEffort);
     this.store.setTabModel(tabId, resolvedModel);
     this.store.setTabReasoningEffort(tabId, nextEffort);
+    if (
+      resolvedModel === DEFAULT_MODEL &&
+      !isModelRuntimeCompatible(resolvedModel, {
+        cliVersion: this.runtimeMetadata.cliVersion,
+        modelCacheClientVersion: this.runtimeMetadata.modelCacheClientVersion,
+      })
+    ) {
+      this.store.setRuntimeIssue(this.buildCodexModelCompatibilityMessage(resolvedModel, coerceModelForRuntime(this.getAvailableModels(), resolvedModel, {
+        allowPrimaryModel: false,
+      })));
+      return;
+    }
     await this.persistDefaults(resolvedModel, nextEffort);
   }
 
@@ -3051,7 +3101,11 @@ export class CodexService {
     const assistantCountBefore = this.countVisibleAssistantReplies(tabId);
     const assistantMessageIdsBefore = this.collectAssistantMessageIds(tabId);
     const assistantOutputVisibility: AssistantOutputVisibility = proposalRepairPhase ? "artifact_only" : "visible";
-    const model = this.resolveSelectedModel(tabId);
+    const requestedModel = this.resolveSelectedModel(tabId);
+    const model = this.resolveRuntimeCompatibleModel(requestedModel, runtime);
+    if (model !== requestedModel) {
+      this.store.setRuntimeIssue(this.buildCodexModelCompatibilityMessage(requestedModel, model));
+    }
     const reasoningEffort = this.resolveSelectedReasoningEffort(tabId, model);
     const fastMode = Boolean(this.findTab(tabId)?.fastMode);
     const permissionProfile =
@@ -4625,6 +4679,21 @@ export class CodexService {
     );
   }
 
+  private resolveRuntimeCompatibleModel(model: string, runtime: CodexRuntime): string {
+    const metadata =
+      runtime === this.settingsProvider().codex.runtime
+        ? this.runtimeMetadata
+        : {
+            cliVersion: null,
+            modelCacheClientVersion: null,
+          };
+    const allowPrimaryModel = isModelRuntimeCompatible(model, {
+      cliVersion: metadata.cliVersion,
+      modelCacheClientVersion: metadata.modelCacheClientVersion,
+    });
+    return coerceModelForRuntime(this.getAvailableModels(), model, { allowPrimaryModel });
+  }
+
   private resolveSelectedReasoningEffort(tabId: string, model: string): ReasoningEffort {
     const tab = this.findTab(tabId);
     const desired = tab?.reasoningEffort ?? this.settingsProvider().defaultReasoningEffort;
@@ -4633,17 +4702,64 @@ export class CodexService {
 
   private async refreshModelCatalog(): Promise<void> {
     try {
-      const raw = await fs.readFile(join(CODEX_HOME, "models_cache.json"), "utf8");
+      const raw =
+        this.settingsProvider().codex.runtime === "wsl"
+          ? await this.readWslCodexHomeFile("models_cache.json")
+          : await fs.readFile(join(CODEX_HOME, "models_cache.json"), "utf8");
+      this.runtimeMetadata = {
+        ...this.runtimeMetadata,
+        modelCacheClientVersion: extractModelCacheClientVersion(raw),
+        modelCatalogSource: this.settingsProvider().codex.runtime === "wsl" ? "wsl" : "native",
+      };
       this.store.setAvailableModels(parseModelCatalog(raw));
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") {
+      if (code === "ENOENT" || this.settingsProvider().codex.runtime === "wsl") {
+        this.runtimeMetadata = {
+          ...this.runtimeMetadata,
+          modelCacheClientVersion: null,
+          modelCatalogSource: "fallback",
+        };
         this.store.setAvailableModels(getFallbackModelCatalog());
       } else {
         throw error;
       }
     }
     this.normalizeTabModels();
+  }
+
+  private async readWslCodexHomeFile(relativePath: string): Promise<string> {
+    const safeRelativePath = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!safeRelativePath || safeRelativePath.includes("..")) {
+      throw new Error("Invalid WSL Codex home path.");
+    }
+    return await new Promise<string>((resolve, reject) => {
+      const child = spawn("wsl.exe", ["-e", "bash", "-lc", `cat "$HOME/.codex/${safeRelativePath}"`], {
+        env: this.resolveProcessEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", (chunk) => {
+        stdout += String(chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code === 0) {
+          resolve(stdout);
+          return;
+        }
+        const error = new Error(stderr.trim() || `WSL Codex home read exited with code ${code ?? "unknown"}.`) as NodeJS.ErrnoException;
+        if (/No such file or directory/i.test(error.message)) {
+          error.code = "ENOENT";
+        }
+        reject(error);
+      });
+    });
   }
 
   private async refreshCodexCatalogs(): Promise<void> {
@@ -4764,6 +4880,14 @@ export class CodexService {
       };
     }
 
+    if (this.preferredNativeLauncher) {
+      return {
+        runtime,
+        executablePath: this.preferredNativeLauncher.executablePath,
+        cliVersion: this.preferredNativeLauncher.cliVersion,
+      };
+    }
+
     for (const candidate of this.getCodexCommandCandidates()) {
       if (candidate === DEFAULT_CODEX_EXECUTABLE || existsSync(candidate)) {
         return {
@@ -4832,8 +4956,37 @@ export class CodexService {
   private async refreshRuntimeHealth(): Promise<void> {
     const hasLogin = this.hasAuthEvidence();
     this.store.setAuthState(hasLogin);
+    this.preferredNativeLauncher = null;
+    if (
+      this.settingsProvider().codex.runtime === "native" &&
+      sanitizeCodexExecutablePath(this.settingsProvider().codex.executablePath) === DEFAULT_CODEX_EXECUTABLE
+    ) {
+      this.preferredNativeLauncher = await this.resolveBestNativeCodexLauncher();
+    }
     const cliIssue = await this.probeCodexCliIssue();
     this.store.setRuntimeIssue(cliIssue ?? (hasLogin ? null : this.getMissingLoginMessage()));
+  }
+
+  private async resolveBestNativeCodexLauncher(): Promise<(ResolvedTurnCodexLauncher & { cliVersion: string | null }) | null> {
+    let best: (ResolvedTurnCodexLauncher & { cliVersion: string | null }) | null = null;
+    for (const candidate of this.getCodexCommandCandidates()) {
+      if (candidate !== DEFAULT_CODEX_EXECUTABLE && !existsSync(candidate)) {
+        continue;
+      }
+      try {
+        const probe = await this.runCodexVersionProbe("native", candidate);
+        if (!best || compareCodexVersions(probe.cliVersion, best.cliVersion) > 0) {
+          best = {
+            runtime: "native",
+            executablePath: candidate,
+            cliVersion: probe.cliVersion,
+          };
+        }
+      } catch {
+        // Keep probing other candidates. A PATH entry can exist but be inaccessible from Obsidian.
+      }
+    }
+    return best;
   }
 
   private buildVersionProbeSpawnSpec(
@@ -4855,9 +5008,9 @@ export class CodexService {
     };
   }
 
-  private async runCodexVersionProbe(runtime: CodexRuntime, executablePath: string): Promise<void> {
+  private async runCodexVersionProbe(runtime: CodexRuntime, executablePath: string): Promise<CodexVersionProbeResult> {
     const spec = this.buildVersionProbeSpawnSpec(runtime, executablePath);
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<CodexVersionProbeResult>((resolve, reject) => {
       const child = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
         env: this.resolveProcessEnv(),
@@ -4900,7 +5053,11 @@ export class CodexService {
         settled = true;
         clearTimeout(timeout);
         if (code === 0) {
-          resolve();
+          resolve({
+            stdout,
+            stderr,
+            cliVersion: parseCodexCliVersion(`${stdout}\n${stderr}`),
+          });
           return;
         }
         reject(new Error(stderr.trim() || stdout.trim() || `Codex version probe exited with code ${code ?? "unknown"}.`));
@@ -4912,10 +5069,32 @@ export class CodexService {
     const launcher = this.resolveConfiguredCodexLauncher();
     const resolvedCommand = this.describeCodexLauncher(launcher);
     try {
-      await this.runCodexVersionProbe(launcher.runtime, launcher.executablePath);
+      const probe = await this.runCodexVersionProbe(launcher.runtime, launcher.executablePath);
+      this.runtimeMetadata = {
+        ...this.runtimeMetadata,
+        resolvedCommand,
+        cliVersion: probe.cliVersion,
+      };
+      const configuredModel = coerceModelForPicker(this.getAvailableModels(), this.settingsProvider().codex.model);
+      if (
+        configuredModel === DEFAULT_MODEL &&
+        !isModelRuntimeCompatible(configuredModel, {
+          cliVersion: probe.cliVersion,
+          modelCacheClientVersion: this.runtimeMetadata.modelCacheClientVersion,
+        })
+      ) {
+        return this.buildCodexModelCompatibilityMessage(configuredModel, coerceModelForRuntime(this.getAvailableModels(), configuredModel, {
+          allowPrimaryModel: false,
+        }));
+      }
       return null;
     } catch (error) {
       const detail = getErrorMessage(error);
+      this.runtimeMetadata = {
+        ...this.runtimeMetadata,
+        resolvedCommand,
+        cliVersion: null,
+      };
       const lines =
         this.getLocale() === "ja"
           ? [
@@ -4932,6 +5111,31 @@ export class CodexService {
             ];
       return lines.filter((line): line is string => Boolean(line)).join("\n");
     }
+  }
+
+  private buildCodexModelCompatibilityMessage(model: string, fallbackModel: string): string {
+    const command = this.runtimeMetadata.resolvedCommand ?? this.describeCodexLauncher();
+    const version = this.runtimeMetadata.cliVersion ?? "unknown";
+    const cacheVersion = this.runtimeMetadata.modelCacheClientVersion ?? "unknown";
+    const lines =
+      this.getLocale() === "ja"
+        ? [
+            `${model} を使うには、実行中の Codex が古すぎます。`,
+            `Fallback model: ${fallbackModel}`,
+            `Resolved command: ${command}`,
+            `Codex CLI version: ${version}`,
+            `Model cache client version: ${cacheVersion}`,
+            "Codex app/CLI を最新版に更新するか、plugin 設定の Codex executable path を新しい Codex 実行ファイルへ向けてください。",
+          ]
+        : [
+            `${model} requires a newer Codex runtime than the one this plugin is launching.`,
+            `Fallback model: ${fallbackModel}`,
+            `Resolved command: ${command}`,
+            `Codex CLI version: ${version}`,
+            `Model cache client version: ${cacheVersion}`,
+            'Update the Codex app/CLI or set "Codex executable path" to a newer Codex executable in plugin settings.',
+          ];
+    return lines.join("\n");
   }
 
   private getPlatformCodexInstallHintLines(locale: SupportedLocale): string[] {
@@ -4965,6 +5169,27 @@ export class CodexService {
     const apiError = extractApiErrorDetails(message);
     if (apiError?.param === "reasoning.effort") {
       return apiError.message;
+    }
+    if (isCodexUpgradeRequiredError(message)) {
+      const modelMatch = message.match(/'([^']+)' model/i);
+      const model = modelMatch?.[1] ?? (this.settingsProvider().codex.model.trim() || DEFAULT_MODEL);
+      const fallbackModel = coerceModelForRuntime(this.getAvailableModels(), model, { allowPrimaryModel: false });
+      return this.buildCodexModelCompatibilityMessage(model, fallbackModel);
+    }
+    if (/Access is denied|Permission denied|EACCES/i.test(message)) {
+      return this.getLocale() === "ja"
+        ? [
+            "Codex 実行ファイルを起動できませんでした。権限または WindowsApps の実行制限により拒否されています。",
+            `Resolved command: ${resolvedCommand}`,
+            "plugin 設定の Codex executable path を、PowerShell/Obsidian から直接実行できる Codex CLI に向けてください。",
+            message.trim(),
+          ].join("\n")
+        : [
+            "Codex executable could not be started because the OS denied access.",
+            `Resolved command: ${resolvedCommand}`,
+            'Set "Codex executable path" to a Codex CLI executable that PowerShell/Obsidian can run directly.',
+            message.trim(),
+          ].join("\n");
     }
     if (isWslCodexMissingError(message)) {
       return this.getLocale() === "ja"

@@ -251,6 +251,12 @@ async function main() {
         if (!instance || typeof instance !== "object") {
           throw new Error("Built plugin constructor did not create an instance.");
         }
+        if (typeof instance.onload === "function") {
+          await instance.onload();
+        }
+        if (typeof instance.onunload === "function") {
+          await instance.onunload();
+        }
       })().catch((error) => {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;

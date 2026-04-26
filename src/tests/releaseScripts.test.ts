@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -353,6 +353,23 @@ describe("release scripts", () => {
     expect(await readFile(join(targetRoot, "manifest.json"), "utf8")).toContain('"id": "obsidian-codex-study"');
     expect(await readFile(join(targetRoot, "styles.css"), "utf8")).toBe("body {}\n");
     await expect(readFile(join(targetRoot, "assets", "note.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("rejects deploy when source files are newer than the built bundle", async () => {
+    const sourceRoot = await makeTempRoot("obsidian-codex-release-deploy-stale-");
+    const targetRoot = await makeTempRoot("obsidian-codex-release-target-stale-");
+    await writePackageFixture(sourceRoot);
+    const oldTime = new Date(Date.now() - 60_000);
+    await utimes(join(sourceRoot, "main.js"), oldTime, oldTime);
+    await mkdir(join(sourceRoot, "src", "app"), { recursive: true });
+    await writeFile(join(sourceRoot, "src", "app", "changed.ts"), "export const changed = true;\n", "utf8");
+
+    const result = await runNodeScript(deployScript, sourceRoot, {
+      CODEX_NOTEFORGE_PLUGIN_DIR: targetRoot,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errors).toContain("main.js is older than source files");
   });
 
   it("creates a versioned release zip for the plugin bundle", async () => {

@@ -174,6 +174,10 @@ export default class ObsidianCodexPlugin extends Plugin {
     return this.service?.getAuthState() ?? "missing_login";
   }
 
+  getRuntimeStatusSummaryParts(): string[] {
+    return this.service?.getRuntimeStatusSummaryParts() ?? [];
+  }
+
   async updateSettings(partial: Partial<PluginSettings>): Promise<void> {
     this.settings = {
       ...this.settings,

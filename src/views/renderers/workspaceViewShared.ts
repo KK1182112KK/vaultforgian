@@ -1,5 +1,6 @@
 import type { AccountUsageSummary, ToolCallRecord, WorkspaceState } from "../../model/types";
 import { getLocaleDateTag, type LocalizedCopy, type SupportedLocale } from "../../util/i18n";
+import { formatModelLabel } from "../../util/models";
 import { formatReasoningEffortLabel } from "../../util/reasoning";
 
 export interface StatusMenuOption {
@@ -22,22 +23,7 @@ export function displayEffortLabel(value: string, locale: SupportedLocale): stri
 }
 
 export function compactModelLabel(slug: string, fallback: string): string {
-  if (/^gpt-5\.5$/i.test(slug)) {
-    return "GPT-5.5";
-  }
-  if (/^gpt-5\.4$/i.test(slug)) {
-    return "GPT-5.4";
-  }
-  if (/^gpt-5\.3-codex$/i.test(slug)) {
-    return "GPT-5.3";
-  }
-  if (/^gpt-5\.2$/i.test(slug)) {
-    return "GPT-5.2";
-  }
-  return fallback
-    .replace(/^gpt-/i, "GPT-")
-    .replace(/-mini$/i, "-Mini")
-    .replace(/-codex$/i, "-Codex");
+  return formatModelLabel(slug, fallback);
 }
 
 export function isTabStreaming(status: WorkspaceState["tabs"][number]["status"] | undefined): boolean {

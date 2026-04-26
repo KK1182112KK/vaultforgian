@@ -4,6 +4,7 @@ import {
   extractRetryableInTurnShellBootstrapError,
   isLegacyBareWslCodexCommand,
   isKnownWindowsSandboxBootstrapError,
+  isWindowsAppsCodexPath,
   isWslCodexMissingError,
   shouldPreferWslForTurn,
   shouldRetryWithWslFallback,
@@ -154,6 +155,13 @@ describe("runtime fallback", () => {
     expect(isWslCodexMissingError("bash: line 1: codex: command not found")).toBe(true);
     expect(isWslCodexMissingError("__OBSIDIAN_CODEX_WSL_MISSING__")).toBe(true);
     expect(isWslCodexMissingError("windows sandbox: spawn setup refresh failed")).toBe(false);
+  });
+
+  it("identifies WindowsApps Codex paths that should not be adopted by WSL fallback", () => {
+    expect(
+      isWindowsAppsCodexPath("/mnt/c/Program Files/WindowsApps/OpenAI.Codex_26.422.3464.0_x64__2p2nqsd0c76g0/app/resources/codex"),
+    ).toBe(true);
+    expect(isWindowsAppsCodexPath("/home/tester/.local/bin/codex")).toBe(false);
   });
 
   it("treats the legacy bare WSL codex launcher as default-like so the safer fallback can replace it", () => {

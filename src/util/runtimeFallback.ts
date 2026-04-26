@@ -9,7 +9,7 @@ function buildDefaultWslFallbackShellPrefix(): string {
     "source ~/.bashrc >/dev/null 2>&1 || true",
     'export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin:$PATH"',
     'CODEX_BIN=""',
-    'if [ -z "$CODEX_BIN" ] && command -v codex >/dev/null 2>&1; then CODEX_BIN="$(command -v codex)"; fi',
+    'if [ -z "$CODEX_BIN" ] && command -v codex >/dev/null 2>&1; then CANDIDATE="$(command -v codex)"; case "$CANDIDATE" in */WindowsApps/OpenAI.Codex_*|*/WindowsApps/OpenAI.Codex_*/*) CANDIDATE="";; esac; if [ -n "$CANDIDATE" ] && [ -x "$CANDIDATE" ]; then CODEX_BIN="$CANDIDATE"; fi; fi',
     'for candidate in "$HOME"/.nvm/versions/node/*/bin/codex "$HOME/.local/bin/codex" "$HOME/bin/codex" "/usr/local/bin/codex" "/usr/bin/codex"; do if [ -z "$CODEX_BIN" ] && [ -x "$candidate" ]; then CODEX_BIN="$candidate"; break; fi; done',
     `if [ -z "$CODEX_BIN" ]; then printf '%s\\n' '${WSL_CODEX_MISSING_SENTINEL}' >&2; exit 127; fi`,
   ].join("; ");
@@ -209,4 +209,8 @@ export function isWslCodexMissingError(message: string): boolean {
     return false;
   }
   return /bash:\s*line\s+\d+:\s*codex:\s*command not found/i.test(normalized) || normalized.includes(WSL_CODEX_MISSING_SENTINEL);
+}
+
+export function isWindowsAppsCodexPath(pathText: string): boolean {
+  return /(?:^|[\\/])WindowsApps[\\/]OpenAI\.Codex_[^\\/]+[\\/]/i.test(pathText.trim());
 }

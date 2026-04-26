@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CodexService } from "../app/codexService";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../model/types";
 
@@ -100,6 +103,73 @@ describe("CodexService launcher resolution", () => {
         value: originalPlatform,
       });
     }
+  });
+
+  it("normalizes Codex upgrade-required model errors with runtime context", () => {
+    const service = createService("/vault") as unknown as {
+      normalizeCodexError: (message: string) => string;
+    };
+
+    const normalized = service.normalizeCodexError("The 'gpt-5.5' model requires a newer version of Codex. Please upgrade.");
+    expect(normalized).toContain("gpt-5.5");
+    expect(normalized).toContain("newer Codex");
+    expect(normalized).toContain("Resolved command");
+  });
+
+  it("selects the newest probed native launcher instead of a stale sandbox binary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-noteforge-launcher-"));
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      codex: {
+        ...DEFAULT_SETTINGS.codex,
+        runtime: "native",
+        executablePath: "codex",
+      },
+    };
+    const service = new CodexService(createApp("C:\\vault"), () => settings, () => "en", null, async () => {}, async () => {}) as unknown as {
+      getCodexCommandCandidates: () => string[];
+      runCodexVersionProbe: (runtime: "native" | "wsl", executablePath: string) => Promise<{ cliVersion: string | null }>;
+      resolveBestNativeCodexLauncher: () => Promise<{ executablePath: string; cliVersion: string | null }>;
+    };
+    const stalePath = join(root, "codex-old.exe");
+    const freshPath = join(root, "codex-new.cmd");
+    await writeFile(stalePath, "", "utf8");
+    await writeFile(freshPath, "", "utf8");
+
+    try {
+      vi.spyOn(service, "getCodexCommandCandidates").mockReturnValue([stalePath, freshPath]);
+      vi.spyOn(service, "runCodexVersionProbe").mockImplementation(async (_runtime, executablePath) => ({
+        cliVersion: executablePath === stalePath ? "0.119.0-alpha.28" : "0.125.0",
+      }));
+
+      await expect(service.resolveBestNativeCodexLauncher()).resolves.toMatchObject({
+        executablePath: freshPath,
+        cliVersion: "0.125.0",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back from GPT-5.5 when the active runtime is older than the model cache", () => {
+    const service = createService("/vault") as unknown as {
+      runtimeMetadata: {
+        resolvedCommand: string | null;
+        cliVersion: string | null;
+        modelCacheClientVersion: string | null;
+        modelCatalogSource: "native" | "wsl" | "fallback";
+      };
+      resolveRuntimeCompatibleModel: (model: string, runtime: "native" | "wsl") => string;
+    };
+    service.runtimeMetadata = {
+      resolvedCommand: "codex",
+      cliVersion: "0.119.0-alpha.28",
+      modelCacheClientVersion: "0.125.0",
+      modelCatalogSource: "native",
+    };
+
+    expect(service.resolveRuntimeCompatibleModel("gpt-5.5", "native")).toBe("gpt-5.4");
+    expect(service.resolveRuntimeCompatibleModel("gpt-5.4", "native")).toBe("gpt-5.4");
   });
 
   it("prefers a WSL fallback launcher for WSL-native turn hints on Windows defaults", () => {

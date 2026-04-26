@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   coerceModelForPicker,
+  coerceModelForRuntime,
+  formatModelLabel,
   getDefaultReasoningEffortForModel,
+  getSafeFallbackModel,
   getSupportedReasoningEffortsForModel,
   parseModelCatalog,
   resolveReasoningEffortForModel,
@@ -117,8 +120,14 @@ describe("model catalog helpers", () => {
     expect(coerceModelForPicker(catalog, "gpt-5.4")).toBe("gpt-5.4");
     expect(coerceModelForPicker(catalog, "gpt-5.4-mini")).toBe("gpt-5.4");
     expect(coerceModelForPicker(catalog, "gpt-5.3-codex")).toBe("gpt-5.3-codex");
+    expect(coerceModelForPicker(catalog, "gpt-5.3-codex-spark")).toBe("gpt-5.3-codex");
     expect(coerceModelForPicker(catalog, "gpt-5.2")).toBe("gpt-5.5");
     expect(coerceModelForPicker(catalog, "gpt-5.2-codex")).toBe("gpt-5.5");
     expect(coerceModelForPicker(catalog, "gpt-5.1-codex")).toBe("gpt-5.5");
+    expect(getSafeFallbackModel(catalog)).toBe("gpt-5.4");
+    expect(coerceModelForRuntime(catalog, "gpt-5.5", { allowPrimaryModel: false })).toBe("gpt-5.4");
+    expect(coerceModelForRuntime(catalog, "gpt-5.5", { allowPrimaryModel: true })).toBe("gpt-5.5");
+    expect(formatModelLabel("gpt-5.5", "gpt-5.5")).toBe("GPT-5.5");
+    expect(formatModelLabel("gpt-5.3-codex", "gpt-5.3-codex")).toBe("GPT-5.3");
   });
 });

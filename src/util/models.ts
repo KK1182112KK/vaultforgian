@@ -9,7 +9,27 @@ import {
 
 const GPT_53_MODEL = "gpt-5.3-codex";
 const GPT_54_MODEL = "gpt-5.4";
-const PICKER_MODELS = [DEFAULT_PRIMARY_MODEL, GPT_54_MODEL, GPT_53_MODEL] as const;
+export const SAFE_FALLBACK_MODEL = GPT_54_MODEL;
+
+const MODEL_PICKER_POLICY = [
+  {
+    slug: DEFAULT_PRIMARY_MODEL,
+    label: "GPT-5.5",
+    aliases: [/^gpt-5\.5(?:$|-)/i],
+  },
+  {
+    slug: GPT_54_MODEL,
+    label: "GPT-5.4",
+    aliases: [/^gpt-5\.4(?:$|-)/i],
+  },
+  {
+    slug: GPT_53_MODEL,
+    label: "GPT-5.3",
+    aliases: [/^gpt-5\.3(?:$|-)/i],
+  },
+] as const;
+
+const PICKER_MODELS = MODEL_PICKER_POLICY.map((entry) => entry.slug);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
@@ -20,7 +40,7 @@ function asString(value: unknown): string | null {
 }
 
 export function isModelVisibleInPicker(slug: string): boolean {
-  return PICKER_MODELS.includes(slug.trim() as (typeof PICKER_MODELS)[number]);
+  return (PICKER_MODELS as readonly string[]).includes(slug.trim());
 }
 
 function normalizePickerModelSlug(slug: string): string {
@@ -28,14 +48,10 @@ function normalizePickerModelSlug(slug: string): string {
   if (!trimmed) {
     return "";
   }
-  if (/^gpt-5\.5(?:$|-)/i.test(trimmed)) {
-    return DEFAULT_PRIMARY_MODEL;
-  }
-  if (/^gpt-5\.4(?:$|-)/i.test(trimmed)) {
-    return GPT_54_MODEL;
-  }
-  if (/^gpt-5\.3(?:$|-)/i.test(trimmed)) {
-    return GPT_53_MODEL;
+  for (const policy of MODEL_PICKER_POLICY) {
+    if (policy.aliases.some((pattern) => pattern.test(trimmed))) {
+      return policy.slug;
+    }
   }
   return trimmed;
 }
@@ -55,6 +71,42 @@ export function coerceModelForPicker(catalog: readonly ModelCatalogEntry[], slug
   }
 
   return pickVisibleFallbackModel(catalog, DEFAULT_PRIMARY_MODEL);
+}
+
+export function getSafeFallbackModel(catalog: readonly ModelCatalogEntry[]): string {
+  if (catalog.some((entry) => entry.slug === SAFE_FALLBACK_MODEL)) {
+    return SAFE_FALLBACK_MODEL;
+  }
+  const nonPrimaryVisible = catalog.find((entry) => isModelVisibleInPicker(entry.slug) && entry.slug !== DEFAULT_PRIMARY_MODEL);
+  return nonPrimaryVisible?.slug ?? pickVisibleFallbackModel(catalog, SAFE_FALLBACK_MODEL);
+}
+
+export function coerceModelForRuntime(
+  catalog: readonly ModelCatalogEntry[],
+  slug: string | null | undefined,
+  options: { allowPrimaryModel: boolean },
+): string {
+  const normalized = coerceModelForPicker(catalog, slug);
+  if (normalized === DEFAULT_PRIMARY_MODEL && !options.allowPrimaryModel) {
+    return getSafeFallbackModel(catalog);
+  }
+  return normalized;
+}
+
+export function formatModelLabel(slug: string, fallback: string): string {
+  const normalizedSlug = slug.trim();
+  const policy = MODEL_PICKER_POLICY.find((entry) => entry.slug === normalizedSlug);
+  if (policy) {
+    return policy.label;
+  }
+  const gptMatch = normalizedSlug.match(/^gpt-(\d+(?:\.\d+)?)(?:-.+)?$/i);
+  if (gptMatch) {
+    return `GPT-${gptMatch[1]}`;
+  }
+  return fallback
+    .replace(/^gpt-/i, "GPT-")
+    .replace(/-mini$/i, "-Mini")
+    .replace(/-codex$/i, "-Codex");
 }
 
 function parseSupportedReasoningLevels(value: unknown, model: string): ReasoningEffort[] {

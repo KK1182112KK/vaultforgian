@@ -155,6 +155,7 @@ export class CodexSettingTab extends PluginSettingTab {
       authState === "ready" ? t("ログイン済み", "Logged in") : t("ログインが必要", "Login required"),
       settings.codex.runtime === "wsl" ? "WSL" : "Native",
       settings.codex.executablePath,
+      ...this.plugin.getRuntimeStatusSummaryParts(),
       runtimeIssue ? t("要確認", "Needs attention") : t("Ready", "Ready"),
     ].join(" · ");
     new Setting(containerEl)

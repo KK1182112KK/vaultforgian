@@ -192,7 +192,7 @@ export function buildStatusBarDisplayState(
   const activeModel = activeTab?.model ?? DEFAULT_PRIMARY_MODEL;
   const selectedModel =
     catalog.find((entry) => entry.slug === activeModel) ??
-    catalog[0] ?? {
+    {
       slug: activeModel,
       displayName: activeModel,
       defaultReasoningLevel: "medium" as const,

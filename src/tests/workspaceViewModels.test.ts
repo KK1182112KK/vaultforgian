@@ -319,6 +319,29 @@ describe("workspace view models", () => {
     expect(result.usageSourceLabel).toBe("Live");
   });
 
+  it("keeps the active model label when the model is absent from the catalog", () => {
+    const state = createState();
+    state.tabs[0]!.model = "gpt-5.6";
+
+    const result = buildStatusBarDisplayState(
+      state.tabs[0]!,
+      [
+        {
+          slug: "gpt-5.4",
+          displayName: "gpt-5.4",
+          defaultReasoningLevel: "medium",
+          supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+        },
+      ],
+      state.accountUsage,
+      "suggest",
+      "en",
+      workspaceCopy as never,
+    );
+
+    expect(result.modelLabel).toBe("GPT-5.6");
+  });
+
   it("disables the auto-apply toggle in Suggest only mode", () => {
     const state = createState();
 
