@@ -595,6 +595,7 @@ describe("CodexService sendPrompt skill context", () => {
     if (!tabId) {
       throw new Error("Missing tab");
     }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
 
     const assistantText = [
       "Here is the cleaned-up explanation.",
@@ -652,6 +653,7 @@ describe("CodexService sendPrompt skill context", () => {
     if (!tabId) {
       throw new Error("Missing tab");
     }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
 
     const assistantText = [
       "Here is the cleaned-up explanation.",
@@ -711,6 +713,7 @@ describe("CodexService sendPrompt skill context", () => {
     if (!tabId) {
       throw new Error("Missing tab");
     }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
 
     const assistantText = [
       "平均負荷電力の導出を短く整理できます。",
@@ -904,6 +907,7 @@ describe("CodexService sendPrompt skill context", () => {
     if (!tabId) {
       throw new Error("Missing tab");
     }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
 
     const assistantText = [
       "This explanation clarifies the note.",
@@ -934,6 +938,61 @@ describe("CodexService sendPrompt skill context", () => {
     const assistantMessage = service.getActiveTab()?.messages.find((message) => message.id === "assistant-explanation");
     expect(assistantMessage?.meta?.editOutcome).toBe("explanation_only");
     expect(service.getActiveTab()?.chatSuggestion?.kind).toBe("rewrite_followup");
+  });
+
+  it("drops rewrite-followup suggestions for greeting-only replies", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-greeting-no-rewrite-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "ja",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.addMessage(tabId, {
+      id: "user-greeting",
+      kind: "user",
+      text: "\u3053\u3093\u306b\u3061\u306f",
+      createdAt: Date.now(),
+    });
+
+    const assistantText = [
+      "No note changes yet.",
+      "",
+      "\u3053\u3093\u306b\u3061\u306f\u3002\u30ce\u30fc\u30c8\u306e\u78ba\u8a8d\u3001\u8981\u7d04\u3001\u66f8\u304d\u63db\u3048\u6848\u3001obsidian-patch \u4f5c\u6210\u307e\u3067\u5bfe\u5fdc\u3067\u304d\u307e\u3059\u3002",
+      "",
+      "Want me to apply this to the note now?",
+      "",
+      "```obsidian-suggest",
+      JSON.stringify({
+        kind: "rewrite_followup",
+        summary: "Apply the greeting to the note.",
+        question: "Want me to apply this to the note now?",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-greeting",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-greeting", assistantText);
+
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
   });
 
   it("rescues the reported missing-note-reflection shape with a hidden repair on non-edit prompts", async () => {

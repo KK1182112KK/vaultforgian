@@ -74,6 +74,7 @@ describe("buildTurnPrompt", () => {
       "chat",
       true,
       "approval",
+      { noteSuggestionPolicy: "eligible" },
     );
 
     expect(prompt).toContain("obsidian-suggest");
@@ -81,6 +82,23 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("evidence: kind|label|sourceRef|snippet");
     expect(prompt).toContain("Treat a turn as note editing when the user asks you to change the note");
     expect(prompt).toContain("start the visible answer with one short status line");
+  });
+
+  it("does not teach greeting turns to emit note rewrite suggestions", () => {
+    const prompt = buildTurnPrompt(
+      "\u3053\u3093\u306b\u3061\u306f",
+      createContext(),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+      { noteSuggestionPolicy: "never" },
+    );
+
+    expect(prompt).not.toContain("obsidian-suggest");
+    expect(prompt).not.toContain("note was not changed yet");
+    expect(prompt).toContain("Do not mention note changes");
   });
 
   it("injects requested skill guides when present", () => {

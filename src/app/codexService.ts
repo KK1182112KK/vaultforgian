@@ -139,6 +139,7 @@ import {
   readSessionUsageSnapshot,
 } from "../util/usageSessions";
 import { allowsVaultWrite } from "../util/vaultEdit";
+import { classifyTurnIntent, resolveNoteSuggestionPolicy, type NoteSuggestionPolicy } from "../util/turnIntent";
 import { pickWaitingCopy } from "../util/waiting";
 import {
   buildStudyRecipeMentionContext,
@@ -198,6 +199,8 @@ type AbortReason = "user_interrupt" | "approval_abort" | "tab_close" | "plugin_u
 interface ActiveRunState {
   controller: AbortController;
   mode: RuntimeMode;
+  turnContext: TurnContextSnapshot;
+  noteSuggestionPolicy: NoteSuggestionPolicy;
   abortReason: AbortReason | null;
   lastLivenessAt?: number | null;
   lastMeaningfulProgressAt?: number | null;
@@ -3002,9 +3005,21 @@ export class CodexService {
       this.armPendingTurn(tabId, turnId, userMessageId, Date.now());
     }
     const controller = new AbortController();
+    const turnIntent = classifyTurnIntent({
+      prompt,
+      composeMode,
+      allowVaultWrite,
+      hasNoteTarget: Boolean(this.getResolvedNoteReflectionTargetPath(turnContext)),
+      hasSelection: Boolean(turnContext.selection),
+      hasNoteSourcePack: Boolean(turnContext.noteSourcePackText),
+      hasAttachmentContent: Boolean(turnContext.attachmentContentText),
+    });
+    const noteSuggestionPolicy = resolveNoteSuggestionPolicy(turnIntent);
     this.activeRuns.set(tabId, {
       controller,
       mode,
+      turnContext,
+      noteSuggestionPolicy,
       abortReason: null,
       lastLivenessAt: Date.now(),
       lastMeaningfulProgressAt: Date.now(),
@@ -3046,6 +3061,7 @@ export class CodexService {
         preferredName: this.settingsProvider().preferredName,
         customSystemPrompt: this.settingsProvider().customSystemPrompt,
         learningMode: this.findTab(tabId)?.learningMode ?? false,
+        noteSuggestionPolicy,
         shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
           ? [
               ...this.settingsProvider().securityPolicy.blockedCommandsWindows,
@@ -4174,7 +4190,53 @@ export class CodexService {
     if (patchBasket.length > 0 || approvals.length > 0 || parsed.plan || !parsed.suggestion) {
       return;
     }
+    if (!this.canStoreRewriteSuggestion(tabId, parsed)) {
+      return;
+    }
     this.setRewriteFollowupSuggestion(tabId, messageId, parsed.suggestion.summary, parsed.suggestion.question);
+  }
+
+  private canStoreRewriteSuggestion(tabId: string, parsed: ParsedAssistantProposalResult): boolean {
+    const visibleText = parsed.sanitizedDisplayText.trim();
+    if (!visibleText) {
+      return false;
+    }
+    const activeRun = this.activeRuns.get(tabId) ?? null;
+    if (activeRun?.noteSuggestionPolicy === "never") {
+      return false;
+    }
+    const promptText = this.getCurrentTurnUserPromptMessage(tabId)?.text.trim() ?? "";
+    const tab = this.findTab(tabId);
+    const hasTarget =
+      Boolean(activeRun ? this.getResolvedNoteReflectionTargetPath(activeRun.turnContext) : null) ||
+      Boolean(tab?.targetNotePath) ||
+      Boolean(tab?.selectionContext?.sourcePath);
+    if (promptText) {
+      const intent = classifyTurnIntent({
+        prompt: promptText,
+        composeMode: tab?.composeMode ?? "chat",
+        allowVaultWrite: allowsVaultWrite(promptText),
+        hasNoteTarget: hasTarget,
+        hasSelection: Boolean(tab?.selectionContext?.text),
+        hasNoteSourcePack: Boolean(activeRun?.turnContext.noteSourcePackText),
+        hasAttachmentContent: Boolean(activeRun?.turnContext.attachmentContentText),
+      });
+      if (resolveNoteSuggestionPolicy(intent) === "never") {
+        return false;
+      }
+    }
+    if (!hasTarget) {
+      return false;
+    }
+    const contextForCheck =
+      activeRun?.turnContext ??
+      ({
+        activeFilePath: tab?.targetNotePath ?? null,
+        targetNotePath: tab?.targetNotePath ?? null,
+        selectionSourcePath: tab?.selectionContext?.sourcePath ?? null,
+        sourceAcquisitionMode: "vault_note",
+      } as TurnContextSnapshot);
+    return this.looksLikeNoteReadyRewrite(visibleText, contextForCheck);
   }
 
   private trackAssistantArtifactMessage(tabId: string, messageId: string): void {

@@ -71,6 +71,17 @@ const FUTURE_PATCH_PROMISE_PATTERNS = [
   /差し替え版を作ります/iu,
 ];
 
+const INTERNAL_PROCESS_CHATTER_PATTERNS = [
+  /conversation start rules/iu,
+  /related skill guides?/iu,
+  /checking?.{0,32}skill guides?/iu,
+  /I(?:'|’)ll check.{0,48}(?:rules|skill guides?)/iu,
+  /会話の開始ルール/u,
+  /関連するスキルガイド/u,
+  /スキルガイド.{0,24}(?:確認|見て|読み)/u,
+  /必要ならその範囲で進めます/u,
+];
+
 export function containsFuturePatchPromise(text: string | null | undefined): boolean {
   const normalized = normalizeBlock(text ?? "");
   return Boolean(normalized && FUTURE_PATCH_PROMISE_PATTERNS.some((pattern) => pattern.test(normalized)));
@@ -116,6 +127,9 @@ function isOperationalChatterBlock(block: string): boolean {
     return true;
   }
   if (containsFuturePatchPromise(normalized)) {
+    return true;
+  }
+  if (INTERNAL_PROCESS_CHATTER_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return true;
   }
   return (

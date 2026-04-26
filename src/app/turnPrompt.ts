@@ -1,5 +1,6 @@
 import type { ComposeMode, RuntimeMode, TurnContextSnapshot } from "../model/types";
 import type { NoteApplyPolicy } from "../util/permissionMode";
+import type { NoteSuggestionPolicy } from "../util/turnIntent";
 import {
   buildDelimiterPatchExample,
   buildPatchMathFormattingRules,
@@ -20,8 +21,10 @@ export function buildTurnPrompt(
     customSystemPrompt?: string | null;
     shellBlocklist?: readonly string[];
     learningMode?: boolean;
+    noteSuggestionPolicy?: NoteSuggestionPolicy;
   } = {},
 ): string {
+  const noteSuggestionPolicy = options.noteSuggestionPolicy ?? (allowVaultWrite ? "eligible" : "never");
   const studyOverlay = buildStudyLayerPromptOverlay({
     prompt,
     context,
@@ -43,12 +46,18 @@ export function buildTurnPrompt(
         : "Use the local workspace directly instead of guessing note contents.",
     composeMode === "plan"
       ? 'Planmode is active for this turn. Treat this as a specification interview. Ask exactly one high-impact clarifying question at a time until the request is decision-complete, then summarize the agreed plan. When the plan is ready to implement, append a fenced `obsidian-plan` JSON block with {"status":"ready_to_implement","summary":"..."} after the visible summary. Do not edit files, do not apply patches, and do not make lasting workspace changes.'
-      : [
-          "Chat mode is active for this turn.",
-          "If you are giving an explanation answer about a note or attached material AND you are not emitting an `obsidian-patch`, `obsidian-ops`, or `obsidian-plan` block, start the visible answer with one short status line saying the note was not changed yet, then end with one short question asking whether to apply it to the note now.",
-          "After that visible question, append a fenced `obsidian-suggest` JSON block with `{\"kind\":\"rewrite_followup\",\"summary\":\"...\",\"question\":\"...\"}` so the plugin can show the rewrite CTA.",
-          "Use the user's language for that visible question. Skip this suggestion block only when the user explicitly says not to edit or not to suggest note changes.",
-        ].join("\n"),
+      : noteSuggestionPolicy === "eligible"
+        ? [
+            "Chat mode is active for this turn.",
+            "If you are giving a note-ready explanation about the target note, selected text, or attached material AND you are not emitting an `obsidian-patch`, `obsidian-ops`, or `obsidian-plan` block, you may end with one short question asking whether to apply it to the note now.",
+            "Only after a genuinely note-ready answer with a clear note target, append a fenced `obsidian-suggest` JSON block with `{\"kind\":\"rewrite_followup\",\"summary\":\"...\",\"question\":\"...\"}` so the plugin can show the rewrite CTA.",
+            "Use the user's language for that visible question. Do not emit `obsidian-suggest` for greetings, smalltalk, generic Q&A, or answers without a clear note target.",
+          ].join("\n")
+        : [
+            "Chat mode is active for this turn.",
+            "Answer naturally and directly.",
+            "Do not mention note changes, do not ask whether to apply the answer to a note, and do not emit note rewrite suggestion artifacts.",
+          ].join("\n"),
     allowVaultWrite
       ? [
           "You are this user's Obsidian note-editing assistant. The vault is the user's knowledge base and your job is to EDIT it when they ask you to. Edits flow through the plugin's approval UI via fenced `obsidian-patch` and `obsidian-ops` blocks - NEVER by shell/apply_patch/write tools.",
@@ -83,7 +92,9 @@ export function buildTurnPrompt(
             "summary: Convert ASCII math to LaTeX in the Core Equations section",
           ),
           "- For rename/move/property/task edits emit an `obsidian-ops` JSON block with an `ops` array instead (ops are short - JSON is fine there).",
-          "- For explanation answers that do NOT emit a patch, start by stating that the note was not changed yet and MAY append an `obsidian-suggest` block with `kind: rewrite_followup` so the plugin can offer a one-click apply-to-note CTA.",
+          noteSuggestionPolicy === "eligible"
+            ? "- For note-ready explanation answers that do NOT emit a patch, MAY append an `obsidian-suggest` block with `kind: rewrite_followup` so the plugin can offer a one-click apply-to-note CTA."
+            : "- For explanation answers that do NOT emit a patch, do not ask whether to apply the answer to a note and do not emit `obsidian-suggest`.",
           'If the user explicitly says "just show me" or "don\'t edit, just suggest", then skip the patch block and describe the change in prose. Otherwise, emit a patch block whenever the user asks to revise the note, even if they say improve, translate, reformat, expand, or clean it up instead of literally saying edit.',
         ].join("\n")
       : "Default to analysis and explanation unless a concrete workspace change is clearly required by the user and permitted by the active sandbox.",

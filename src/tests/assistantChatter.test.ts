@@ -28,6 +28,24 @@ describe("sanitizeOperationalAssistantText", () => {
     expect(text).toBe("This note is hard to follow because the theorem map appears too late.");
   });
 
+  it("drops leaked conversation-start and skill-guide process chatter", () => {
+    expect(
+      sanitizeOperationalAssistantText(
+        "\u4f1a\u8a71\u306e\u958b\u59cb\u30eb\u30fc\u30eb\u3060\u3051\u78ba\u8a8d\u3057\u3066\u304b\u3089\u8fd4\u3057\u307e\u3059\u3002\u95a2\u9023\u3059\u308b\u30b9\u30ad\u30eb\u30ac\u30a4\u30c9\u3092\u77ed\u304f\u898b\u3066\u3001\u5fc5\u8981\u306a\u3089\u305d\u306e\u7bc4\u56f2\u3067\u9032\u3081\u307e\u3059\u3002",
+      ),
+    ).toBeNull();
+
+    expect(
+      sanitizeOperationalAssistantText(
+        [
+          "I will check the conversation start rules and related skill guides first.",
+          "",
+          "\u3053\u3093\u306b\u3061\u306f\u3002\u4f55\u3092\u624b\u4f1d\u3044\u307e\u3057\u3087\u3046\u304b\uff1f",
+        ].join("\n"),
+      ),
+    ).toBe("\u3053\u3093\u306b\u3061\u306f\u3002\u4f55\u3092\u624b\u4f1d\u3044\u307e\u3057\u3087\u3046\u304b\uff1f");
+  });
+
   it("drops future-tense patch promises that do not include an artifact", () => {
     expect(sanitizeOperationalAssistantText("パッチとして返します。次に修正版を返します。")).toBeNull();
     expect(sanitizeOperationalAssistantText("I will return a patch for this note next.")).toBeNull();
