@@ -194,7 +194,6 @@ export class CodexWorkspaceView extends ItemView {
 
   showIngestHubPanel(): void {
     this.service.openStudyHub();
-    this.ingestHubPanelEl.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   focusComposer(): void {

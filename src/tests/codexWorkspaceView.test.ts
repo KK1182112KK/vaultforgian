@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { syncWorkspaceLeafBranding } from "../views/codexWorkspaceView";
+import { CodexWorkspaceView, syncWorkspaceLeafBranding } from "../views/codexWorkspaceView";
 import { installObsidianDomHelpers } from "./setup/obsidian";
 
 describe("syncWorkspaceLeafBranding", () => {
@@ -61,5 +61,29 @@ describe("syncWorkspaceLeafBranding", () => {
 
     expect(setText).toHaveBeenCalledWith("Codex Noteforge");
     expect(setViewState).not.toHaveBeenCalled();
+  });
+});
+
+describe("CodexWorkspaceView Panel Studio opening", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    installObsidianDomHelpers();
+  });
+
+  it("opens Panel Studio without forcing the workspace scroll position", () => {
+    const openStudyHub = vi.fn();
+    const view = new CodexWorkspaceView({} as never, { openStudyHub } as never) as unknown as {
+      showIngestHubPanel: () => void;
+      ingestHubPanelEl: HTMLDivElement;
+    };
+    const panelEl = document.createElement("div");
+    const scrollIntoView = vi.fn();
+    panelEl.scrollIntoView = scrollIntoView;
+    view.ingestHubPanelEl = panelEl;
+
+    view.showIngestHubPanel();
+
+    expect(openStudyHub).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });
