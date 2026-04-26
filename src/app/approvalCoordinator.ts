@@ -651,6 +651,11 @@ export class ApprovalCoordinator {
         id: makeId("patch-auto-heal-audit"),
         kind: "system",
         text: this.deps.getLocalizedCopy().workspace.patchReadabilityAppliedAfterHeal(getPathStem(proposal.targetPath)),
+        meta: {
+          tone: "success",
+          patchTargetPath: proposal.targetPath,
+          patchOperation: proposal.kind,
+        },
         createdAt: Date.now(),
       });
     }

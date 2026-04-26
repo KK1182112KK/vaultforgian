@@ -467,6 +467,9 @@ describe("ApprovalCoordinator", () => {
         "Applied after the plugin normalized Markdown structure: source.",
       ]),
     );
+    expect(store.getActiveTab()?.messages.find((message) => message.id.startsWith("patch-auto-heal-audit"))?.meta).toEqual(
+      expect.objectContaining({ tone: "success" }),
+    );
   });
 
   it("ignores patch rejection while the same patch is being applied", async () => {
