@@ -314,7 +314,7 @@ export class ThreadEventReducer {
 
       if (payloadType === "task_complete") {
         const text = sanitizeOperationalAssistantText(extractTaskCompleteMessageText(payload) ?? "");
-        if (text) {
+        if (text && assistantOutputVisibility !== "artifact_only") {
           this.appendAssistantFallbackMessage(
             tabId,
             text,

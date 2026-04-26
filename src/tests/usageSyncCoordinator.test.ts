@@ -79,6 +79,14 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 async function waitForCondition(check: () => boolean, timeoutMs = 250): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt <= timeoutMs) {
@@ -197,6 +205,138 @@ describe("UsageSyncCoordinator", () => {
     coordinator.untrackTab("tab-1", "thread-123");
     await coordinator.syncKnownThreadsNow("idle_poll");
 
+    expect(applied).toEqual([]);
+  });
+
+  it("does not apply thread usage after stop interrupts an in-flight poll", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-sync-stop-race-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "thread-123.jsonl");
+    await writeUsageSession(sessionFile, { fiveHourPercent: 12, weekPercent: 34 });
+    const resolveStarted = deferred<void>();
+    const resolveRelease = deferred<string | null>();
+
+    const applied: Array<{ threadId: string | null; source: string }> = [];
+    const coordinator = new UsageSyncCoordinator({
+      getTabs: () => [],
+      resolveSessionFile: async (threadId) => {
+        if (threadId === "thread-123") {
+          resolveStarted.resolve();
+          return await resolveRelease.promise;
+        }
+        return null;
+      },
+      listRecentSessionFiles: async () => [],
+      applyUsageSnapshot: (snapshot) => {
+        applied.push({ threadId: snapshot.threadId, source: snapshot.source });
+      },
+    });
+
+    coordinator.noteThread("thread-123");
+    const syncPromise = coordinator.syncKnownThreadsNow("idle_poll");
+    await resolveStarted.promise;
+    coordinator.stop();
+    resolveRelease.resolve(sessionFile);
+    await syncPromise;
+
+    expect(applied).toEqual([]);
+  });
+
+  it("does not apply recent session usage after stop interrupts an in-flight scan", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-sync-recent-stop-race-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "external-run.jsonl");
+    await writeUsageSession(sessionFile, { fiveHourPercent: 22, weekPercent: 44 });
+    const listStarted = deferred<void>();
+    const listRelease = deferred<Array<{ path: string; name: string; modifiedAt: number }>>();
+
+    const applied: Array<{ threadId: string | null; source: string }> = [];
+    const coordinator = new UsageSyncCoordinator({
+      getTabs: () => [createTab()],
+      resolveSessionFile: async () => null,
+      listRecentSessionFiles: async () => {
+        listStarted.resolve();
+        return await listRelease.promise;
+      },
+      applyUsageSnapshot: (snapshot) => {
+        applied.push({ threadId: snapshot.threadId, source: snapshot.source });
+      },
+    });
+
+    coordinator.refreshUsageForTab("tab-1");
+    await listStarted.promise;
+    coordinator.stop();
+    listRelease.resolve([{ path: sessionFile, name: "external-run.jsonl", modifiedAt: Date.now() }]);
+    await tick();
+    await tick();
+
+    expect(applied).toEqual([]);
+  });
+
+  it("does not start a thread poll from refreshUsageForTab after stop", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-sync-stopped-refresh-thread-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "thread-123.jsonl");
+    await writeUsageSession(sessionFile, { fiveHourPercent: 12, weekPercent: 34 });
+
+    const resolveSessionFile = vi.fn(async () => sessionFile);
+    const applied: Array<{ threadId: string | null; source: string }> = [];
+    const coordinator = new UsageSyncCoordinator({
+      getTabs: () => [createTab({ codexThreadId: "thread-123" })],
+      resolveSessionFile,
+      listRecentSessionFiles: async () => [],
+      applyUsageSnapshot: (snapshot) => {
+        applied.push({ threadId: snapshot.threadId, source: snapshot.source });
+      },
+    });
+
+    coordinator.stop();
+    coordinator.refreshUsageForTab("tab-1");
+    await tick();
+
+    expect(resolveSessionFile).not.toHaveBeenCalled();
+    expect(applied).toEqual([]);
+  });
+
+  it("does not start a recent session scan from refreshUsageForTab after stop", async () => {
+    const listRecentSessionFiles = vi.fn(async () => []);
+    const coordinator = new UsageSyncCoordinator({
+      getTabs: () => [createTab()],
+      resolveSessionFile: async () => null,
+      listRecentSessionFiles,
+      applyUsageSnapshot: () => {
+        throw new Error("usage snapshot should not be applied after stop");
+      },
+    });
+
+    coordinator.stop();
+    coordinator.refreshUsageForTab("tab-1");
+    await tick();
+
+    expect(listRecentSessionFiles).not.toHaveBeenCalled();
+  });
+
+  it("does not start a tab-derived known thread sync after stop", async () => {
+    const root = await mkdtemp(join(tmpdir(), "obsidian-codex-usage-sync-stopped-known-thread-"));
+    tempRoots.push(root);
+    const sessionFile = join(root, "thread-123.jsonl");
+    await writeUsageSession(sessionFile, { fiveHourPercent: 12, weekPercent: 34 });
+
+    const resolveSessionFile = vi.fn(async () => sessionFile);
+    const applied: Array<{ threadId: string | null; source: string }> = [];
+    const coordinator = new UsageSyncCoordinator({
+      getTabs: () => [createTab({ codexThreadId: "thread-123" })],
+      resolveSessionFile,
+      listRecentSessionFiles: async () => [],
+      applyUsageSnapshot: (snapshot) => {
+        applied.push({ threadId: snapshot.threadId, source: snapshot.source });
+      },
+    });
+
+    coordinator.stop();
+    await coordinator.syncKnownThreadsNow("idle_poll");
+
+    expect(resolveSessionFile).not.toHaveBeenCalled();
     expect(applied).toEqual([]);
   });
 });

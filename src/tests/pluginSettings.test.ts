@@ -62,6 +62,8 @@ describe("pluginSettings helpers", () => {
     expect(roundTrip).toEqual(combined);
 
     expect(roundTrip.excludedTags).not.toBe(combined.excludedTags);
+    expect(roundTrip.vimMappings).not.toBe(combined.vimMappings);
+    expect(roundTrip.extraSkillRoots).not.toBe(combined.extraSkillRoots);
     expect(roundTrip.customEnv).not.toBe(combined.customEnv);
     expect(roundTrip.securityPolicy.allowedExportPaths).not.toBe(combined.securityPolicy.allowedExportPaths);
   });
@@ -73,6 +75,7 @@ describe("pluginSettings helpers", () => {
           { id: "one", name: " One ", command: " codex-one ", args: [" serve "], env: [" TOKEN=1 "], enabled: true },
           { id: "one", name: "Duplicate", command: "ignored" },
           { id: "", name: "", command: "missing-name" },
+          { id: "blank-command", name: "Blank Command", command: "   ", enabled: true },
         ],
         pluginOverrides: [{ key: " skill-a ", enabled: false }, { key: " skill-a ", enabled: true }],
         customEnv: [" export FOO=1 ", "FOO=1", "BAD ENTRY"],
@@ -90,6 +93,15 @@ describe("pluginSettings helpers", () => {
         args: ["serve"],
         env: ["TOKEN=1"],
         enabled: true,
+      },
+      {
+        id: "blank-command",
+        name: "Blank Command",
+        transport: "stdio",
+        command: "",
+        args: [],
+        env: [],
+        enabled: false,
       },
     ]);
     expect(normalized.pluginOverrides).toEqual([{ key: "skill-a", enabled: false }]);

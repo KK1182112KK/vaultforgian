@@ -171,6 +171,32 @@ describe("assistant proposal parsing", () => {
     });
   });
 
+  it.each([
+    ["obsidian-ops", { ops: [{ kind: "rename", path: "" }] }, "ops"],
+    ["obsidian-plan", { status: "drafting" }, "plan"],
+    ["obsidian-suggest", { kind: "unknown" }, "suggestion"],
+    ["obsidian-study-checkpoint", { workflow: "lecture", mastered: "not an array" }, "studyCheckpoint"],
+  ] as const)("marks invalid %s blocks as malformed", (blockType, payload, resultKey) => {
+    const parsed = extractAssistantProposals(
+      [
+        "Visible answer.",
+        "",
+        `\`\`\`${blockType}`,
+        JSON.stringify(payload),
+        "```",
+      ].join("\n"),
+    );
+
+    expect(parsed.displayText).toBe("Visible answer.");
+    expect(parsed.hasProposalMarkers).toBe(true);
+    expect(parsed.hasMalformedProposal).toBe(true);
+    if (resultKey === "ops") {
+      expect(parsed.ops).toHaveLength(0);
+    } else {
+      expect(parsed[resultKey]).toBeNull();
+    }
+  });
+
   it("hides malformed trailing proposal fragments from display text", () => {
     const text = [
       "I cleaned up the formulas and review section.",

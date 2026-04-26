@@ -232,6 +232,51 @@ describe("CodexService sendPrompt skill context", () => {
     expect(runTurnSpy.mock.calls[0]?.[11]).toBe(true);
   });
 
+  it("arms a new pending turn when a duplicate visible prompt is suppressed", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-duplicate-prompt-pending-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    await service.sendPrompt(tabId, "Repeat this prompt.");
+    await tick();
+    await service.sendPrompt(tabId, "Repeat this prompt.");
+    await tick();
+
+    const userMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "user") ?? [];
+    const secondTurnId = runTurnSpy.mock.calls[1]?.[15] as string | null | undefined;
+    const secondUserMessageId = runTurnSpy.mock.calls[1]?.[16] as string | null | undefined;
+    const pendingTurn = (
+      service as unknown as {
+        pendingTurns: Map<string, { turnId: string; userMessageId: string | null }>;
+      }
+    ).pendingTurns.get(tabId);
+
+    expect(userMessages).toHaveLength(1);
+    expect(runTurnSpy).toHaveBeenCalledTimes(2);
+    expect(secondTurnId).toEqual(expect.stringMatching(/^turn-/));
+    expect(secondUserMessageId).toEqual(expect.stringMatching(/^user-/));
+    expect(pendingTurn).toMatchObject({
+      turnId: secondTurnId,
+      userMessageId: secondUserMessageId,
+    });
+  });
+
   it("hydrates panel-selected skills before building the turn context", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-sendprompt-"));
     tempRoots.push(vaultRoot);
@@ -1513,6 +1558,71 @@ describe("CodexService sendPrompt skill context", () => {
     expect(assistantMessages).toHaveLength(1);
     expect(assistantMessages[0]?.text).toBe("Recovered visible answer.");
     expect(assistantMessages[0]?.text.includes("Turn your immediately previous assistant answer")).toBe(false);
+  });
+
+  it("uses distinct ids for multiple recovered replies in the same thread", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-session-distinct-backfill-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.addMessage(tabId, {
+      id: "user-1",
+      kind: "user",
+      text: "Explain this note.",
+      createdAt: Date.now(),
+    });
+
+    const sessionFile = join(vaultRoot, "rollout-session-repeat-thread.jsonl");
+    const writeRecoveredMessage = async (text: string) => {
+      await writeFile(
+        sessionFile,
+        JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ text }],
+          },
+        }),
+        "utf8",
+      );
+    };
+    await writeRecoveredMessage("First recovered answer.");
+
+    vi.spyOn(service as never, "resolveSessionFile").mockResolvedValue(sessionFile);
+    const syncTranscriptFromSession = (
+      service as unknown as {
+        syncTranscriptFromSession: (tabId: string, threadId: string, visibility: "visible" | "artifact_only") => Promise<string>;
+      }
+    ).syncTranscriptFromSession.bind(service);
+
+    await expect(syncTranscriptFromSession(tabId, "thread-repeat", "visible")).resolves.toBe("appended_reply");
+    service.store.addMessage(tabId, {
+      id: "user-2",
+      kind: "user",
+      text: "Follow up.",
+      createdAt: Date.now(),
+    });
+    await writeRecoveredMessage("Second recovered answer.");
+
+    await expect(syncTranscriptFromSession(tabId, "thread-repeat", "visible")).resolves.toBe("appended_reply");
+
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages.map((message) => message.text)).toEqual(["First recovered answer.", "Second recovered answer."]);
+    expect(new Set(assistantMessages.map((message) => message.id)).size).toBe(2);
   });
 
   it("suppresses duplicate assistant backfill when the visible answer is already in the transcript", async () => {

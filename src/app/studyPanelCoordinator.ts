@@ -166,9 +166,36 @@ function tokenizeForSimilarity(value: string): string[] {
     .filter((token) => token.length >= 3);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function isAsciiKeyword(keyword: string): boolean {
+  return /^[a-z0-9]+(?:\s+[a-z0-9]+)*$/u.test(keyword);
+}
+
+function buildAsciiKeywordSource(keyword: string): string {
+  return keyword
+    .trim()
+    .split(/\s+/u)
+    .map((part) => escapeRegExp(part))
+    .join("\\s+");
+}
+
 function containsCompletionKeyword(input: string): boolean {
   const normalized = input.trim().toLowerCase();
-  return COMPLETION_KEYWORDS.some((keyword) => normalized.includes(keyword));
+  return COMPLETION_KEYWORDS.some((keyword) => {
+    if (!isAsciiKeyword(keyword)) {
+      return normalized.includes(keyword);
+    }
+    const source = buildAsciiKeywordSource(keyword);
+    const keywordPattern = new RegExp(`\\b${source}\\b`, "u");
+    if (!keywordPattern.test(normalized)) {
+      return false;
+    }
+    const negatedPattern = new RegExp(`\\b(?:not|never|no)\\s+${source}\\b`, "u");
+    return !negatedPattern.test(normalized);
+  });
 }
 
 function getErrorMessage(value: unknown): string {

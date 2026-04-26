@@ -586,13 +586,33 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
           }
           patches.push(...parsedPatches);
         } else if (blockType === "obsidian-ops") {
-          ops.push(...parseOpEntries(parsed, blockIndex));
+          const parsedOps = parseOpEntries(parsed, blockIndex);
+          if (parsedOps.length === 0) {
+            hasMalformedProposal = true;
+          } else {
+            ops.push(...parsedOps);
+          }
         } else if (blockType === "obsidian-plan") {
-          plan = parsePlanSignal(parsed) ?? plan;
+          const parsedPlan = parsePlanSignal(parsed);
+          if (!parsedPlan) {
+            hasMalformedProposal = true;
+          } else {
+            plan = parsedPlan;
+          }
         } else if (blockType === "obsidian-suggest") {
-          suggestion = parseSuggestionSignal(parsed) ?? suggestion;
+          const parsedSuggestion = parseSuggestionSignal(parsed);
+          if (!parsedSuggestion) {
+            hasMalformedProposal = true;
+          } else {
+            suggestion = parsedSuggestion;
+          }
         } else if (blockType === "obsidian-study-checkpoint") {
-          studyCheckpoint = parseStudyCheckpointSignal(parsed) ?? studyCheckpoint;
+          const parsedCheckpoint = parseStudyCheckpointSignal(parsed);
+          if (!parsedCheckpoint) {
+            hasMalformedProposal = true;
+          } else {
+            studyCheckpoint = parsedCheckpoint;
+          }
         }
       } catch {
         if (blockType === "obsidian-patch") {

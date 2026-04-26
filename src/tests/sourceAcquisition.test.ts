@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVaultNoteSourcePackText } from "../util/sourceAcquisition";
+import { buildVaultNoteSourcePackText, extractSourcePackPriorityTerms } from "../util/sourceAcquisition";
 
 describe("buildVaultNoteSourcePackText", () => {
   it("includes frontmatter summary and headings for attached notes", () => {
@@ -109,5 +109,12 @@ describe("buildVaultNoteSourcePackText", () => {
 
     expect(text).toContain("## Section 5");
     expect(text).toContain("Important theorem bridge.");
+  });
+
+  it("extracts Japanese priority terms from prompts", () => {
+    expect(extractSourcePackPriorityTerms("定理の証明と安定性を重点的に確認して")).toEqual([
+      "定理の証明と安定性を重点的に確認して",
+    ]);
+    expect(extractSourcePackPriorityTerms("定理 証明 安定性 theorem")).toEqual(["定理", "証明", "安定性", "theorem"]);
   });
 });

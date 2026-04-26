@@ -2880,11 +2880,10 @@ export class CodexService {
       this.appendAttachmentSummaryMessage(tabId, attachments);
       const createdAt = Date.now();
       const turnId = makeId("turn");
-      let userMessageId: string | null = null;
+      const userMessageId = makeId("user");
+      const effectiveSkillsCsv = skillNames.length > 0 ? skillNames.join(",") : null;
+      const activePanelId = currentTab?.activeStudyRecipeId ?? null;
       if (!shouldSuppressImmediateDuplicateUserPrompt(getCurrentTab()?.messages ?? [], visiblePrompt, createdAt)) {
-        const effectiveSkillsCsv = skillNames.length > 0 ? skillNames.join(",") : null;
-        const activePanelId = currentTab?.activeStudyRecipeId ?? null;
-        userMessageId = makeId("user");
         this.store.addMessage(tabId, {
           id: userMessageId,
           kind: "user",
@@ -2899,8 +2898,8 @@ export class CodexService {
             ...(context?.transcriptMeta ?? {}),
           },
         });
-        this.armPendingTurn(tabId, turnId, userMessageId, createdAt);
       }
+      this.armPendingTurn(tabId, turnId, userMessageId, createdAt);
 
       scheduledRun = true;
       void this.runTurn(
@@ -5801,7 +5800,7 @@ export class CodexService {
       return this.appendAssistantFallbackMessageWithVisibility(
         tabId,
         lastAssistantMessage.rawText,
-        `codex-session-final-${threadId}`,
+        makeId(`codex-session-final-${threadId}`),
         visibility,
       )
         ? "appended_reply"

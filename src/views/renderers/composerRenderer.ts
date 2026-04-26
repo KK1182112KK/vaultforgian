@@ -76,7 +76,7 @@ export class ComposerRenderer {
 
   dispose(): void {
     this.inputController.dispose();
-    this.closeStatusMenu();
+    this.statusControls.dispose();
   }
 
   syncInputHeight(reset = false): void {

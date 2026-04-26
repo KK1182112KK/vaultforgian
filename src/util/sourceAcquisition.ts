@@ -165,10 +165,19 @@ function extractHeadings(content: string): string[] {
 }
 
 export function extractSourcePackPriorityTerms(prompt: string, maxTerms = 8): string[] {
-  return [...new Set(prompt.toLowerCase().split(/[^a-z0-9_/-]+/u).map((term) => term.trim()).filter((term) => term.length >= 3))].slice(
-    0,
-    maxTerms,
-  );
+  return [
+    ...new Set(
+      prompt
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_/-]+/u)
+        .map((term) => term.trim())
+        .filter((term) => (hasCompactScriptTerm(term) ? term.length > 0 : term.length >= 3)),
+    ),
+  ].slice(0, maxTerms);
+}
+
+function hasCompactScriptTerm(term: string): boolean {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(term);
 }
 
 export function buildVaultNoteSourcePackText(

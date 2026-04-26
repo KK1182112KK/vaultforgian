@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 
@@ -94,14 +94,47 @@ export function normalizeConfiguredSkillRoots(
   return roots;
 }
 
+const WSL_UNC_HOSTS = ["\\\\wsl.localhost", "\\\\wsl$"] as const;
+const FALLBACK_WSL_DISTROS = ["Ubuntu"] as const;
+
+function readDirectoryNames(path: string): string[] {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function uniqueNonEmpty(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function getDetectedWslDistroNames(): string[] {
+  const discovered = uniqueNonEmpty(WSL_UNC_HOSTS.flatMap((host) => readDirectoryNames(host)));
+  if (discovered.length > 0) {
+    return discovered;
+  }
+  return uniqueNonEmpty([process.env.WSL_DISTRO_NAME ?? "", ...FALLBACK_WSL_DISTROS]);
+}
+
 export function getDefaultWslBridgeSkillRoots(platformName = process.platform): string[] {
   if (platformName !== "win32") {
     return [];
   }
-  return [
-    "\\\\wsl.localhost\\Ubuntu\\home\\kenshin\\.codex\\skills",
-    "\\\\wsl.localhost\\Ubuntu\\home\\kenshin\\.agents\\skills",
-    "\\\\wsl$\\Ubuntu\\home\\kenshin\\.codex\\skills",
-    "\\\\wsl$\\Ubuntu\\home\\kenshin\\.agents\\skills",
-  ];
+  const roots: string[] = [];
+  for (const distro of getDetectedWslDistroNames()) {
+    for (const host of WSL_UNC_HOSTS) {
+      const homeRoot = `${host}\\${distro}\\home`;
+      for (const homeName of readDirectoryNames(homeRoot)) {
+        roots.push(
+          `${homeRoot}\\${homeName}\\.codex\\skills`,
+          `${homeRoot}\\${homeName}\\.agents\\skills`,
+        );
+      }
+    }
+  }
+  return uniqueNonEmpty(roots);
 }

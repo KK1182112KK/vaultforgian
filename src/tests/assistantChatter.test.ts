@@ -69,6 +69,26 @@ describe("sanitizeOperationalAssistantText", () => {
     ].join("\n"));
   });
 
+  it("does not split or strip chatter-looking text inside fenced code blocks", () => {
+    const text = sanitizeOperationalAssistantText([
+      "shell 自体の初期化で失敗しています。",
+      "",
+      "```txt",
+      "The local read failed because the windows sandbox spawn setup refresh failed.",
+      "",
+      "I will try a minimal command next.",
+      "```",
+    ].join("\n"));
+
+    expect(text).toBe([
+      "```txt",
+      "The local read failed because the windows sandbox spawn setup refresh failed.",
+      "",
+      "I will try a minimal command next.",
+      "```",
+    ].join("\n"));
+  });
+
   it("strips legacy rewrite-followup scaffolding while preserving the converted answer", () => {
     const text = sanitizeOperationalAssistantText([
       "Turn your immediately previous assistant answer in this same thread into exactly one obsidian-patch block.",

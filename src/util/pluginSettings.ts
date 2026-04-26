@@ -72,14 +72,15 @@ function normalizeMcpServerConfig(value: unknown): McpServerConfig | null {
   if (!name) {
     return null;
   }
+  const command = normalizeLineEntry(record.command);
   return {
     id: normalizeLineEntry(record.id) || makeId("mcp"),
     name,
     transport: "stdio",
-    command: normalizeLineEntry(record.command),
+    command,
     args: Array.isArray(record.args) ? normalizeLineList(record.args) : [],
     env: Array.isArray(record.env) ? normalizeLineList(record.env) : [],
-    enabled: record.enabled !== false,
+    enabled: command.length > 0 && record.enabled !== false,
   };
 }
 
@@ -252,6 +253,9 @@ export function combineSettings(vaultSettings: VaultSettings, localSettings: Loc
   return {
     ...vaultSettings,
     ...localSettings,
+    excludedTags: [...vaultSettings.excludedTags],
+    vimMappings: [...vaultSettings.vimMappings],
+    extraSkillRoots: [...localSettings.extraSkillRoots],
     codex: {
       ...localSettings.codex,
     },

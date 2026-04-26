@@ -26,10 +26,13 @@ export class UsageSyncCoordinator {
   private idleTimer: NodeJS.Timeout | null = null;
   private activePollInFlight = false;
   private idlePollInFlight = false;
+  private generation = 0;
+  private stopped = false;
 
   constructor(private readonly deps: UsageSyncCoordinatorDeps) {}
 
   start(): void {
+    this.stopped = false;
     if (!this.idleTimer) {
       this.idleTimer = setInterval(() => {
         void this.pollIdle();
@@ -39,6 +42,8 @@ export class UsageSyncCoordinator {
   }
 
   stop(): void {
+    this.stopped = true;
+    this.generation += 1;
     if (this.activeTimer) {
       clearInterval(this.activeTimer);
       this.activeTimer = null;
@@ -52,18 +57,27 @@ export class UsageSyncCoordinator {
   }
 
   noteLiveUsage(threadId: string | null): void {
+    if (this.stopped) {
+      return;
+    }
     if (threadId?.trim()) {
       this.knownThreadIds.add(threadId.trim());
     }
   }
 
   noteThread(threadId: string | null): void {
+    if (this.stopped) {
+      return;
+    }
     if (threadId?.trim()) {
       this.knownThreadIds.add(threadId.trim());
     }
   }
 
   armActiveRun(tabId: string, threadId: string | null): void {
+    if (this.stopped) {
+      return;
+    }
     this.activeRunThreads.set(tabId, threadId?.trim() ? threadId.trim() : null);
     if (threadId?.trim()) {
       this.knownThreadIds.add(threadId.trim());
@@ -73,6 +87,9 @@ export class UsageSyncCoordinator {
   }
 
   updateActiveRunThread(tabId: string, threadId: string | null): void {
+    if (this.stopped) {
+      return;
+    }
     if (!this.activeRunThreads.has(tabId)) {
       return;
     }
@@ -100,23 +117,36 @@ export class UsageSyncCoordinator {
   }
 
   refreshUsageForTab(tabId: string): void {
+    if (this.stopped) {
+      return;
+    }
+    const generation = this.generation;
     const tab = this.deps.getTabs().find((entry) => entry.id === tabId) ?? null;
     if (tab?.codexThreadId) {
       this.knownThreadIds.add(tab.codexThreadId);
-      void this.pollThread(tab.codexThreadId, "idle_poll");
+      void this.pollThread(tab.codexThreadId, "idle_poll", generation);
       return;
     }
-    void this.pollRecentSessions();
+    void this.pollRecentSessions(generation);
   }
 
-  async syncKnownThreadsNow(source: AccountUsageSource = "idle_poll"): Promise<void> {
+  async syncKnownThreadsNow(source: AccountUsageSource = "idle_poll", generation = this.generation): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     const threadIds = this.collectKnownThreadIds();
     for (const threadId of threadIds) {
-      await this.pollThread(threadId, source);
+      if (!this.isGenerationCurrent(generation)) {
+        return;
+      }
+      await this.pollThread(threadId, source, generation);
     }
   }
 
   private ensureActiveTimer(): void {
+    if (this.stopped) {
+      return;
+    }
     if (this.activeTimer) {
       return;
     }
@@ -126,16 +156,23 @@ export class UsageSyncCoordinator {
   }
 
   private async pollActive(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     if (this.activePollInFlight) {
       return;
     }
     this.activePollInFlight = true;
+    const generation = this.generation;
     try {
       const threadIds = new Set(
         [...this.activeRunThreads.values()].filter((threadId): threadId is string => Boolean(threadId?.trim())),
       );
       for (const threadId of threadIds) {
-        await this.pollThread(threadId, "active_poll");
+        if (!this.isGenerationCurrent(generation)) {
+          return;
+        }
+        await this.pollThread(threadId, "active_poll", generation);
       }
     } finally {
       this.activePollInFlight = false;
@@ -143,16 +180,27 @@ export class UsageSyncCoordinator {
   }
 
   private async pollIdle(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     if (this.idlePollInFlight) {
       return;
     }
     this.idlePollInFlight = true;
+    const generation = this.generation;
     try {
-      await this.syncKnownThreadsNow("idle_poll");
-      await this.pollRecentSessions();
+      await this.syncKnownThreadsNow("idle_poll", generation);
+      if (!this.isGenerationCurrent(generation)) {
+        return;
+      }
+      await this.pollRecentSessions(generation);
     } finally {
       this.idlePollInFlight = false;
     }
+  }
+
+  private isGenerationCurrent(generation: number): boolean {
+    return !this.stopped && generation === this.generation;
   }
 
   private collectKnownThreadIds(): string[] {
@@ -168,14 +216,26 @@ export class UsageSyncCoordinator {
     return [...threadIds];
   }
 
-  private async pollThread(threadId: string, source: AccountUsageSource): Promise<void> {
+  private async pollThread(threadId: string, source: AccountUsageSource, generation = this.generation): Promise<void> {
     try {
+      if (!this.isGenerationCurrent(generation)) {
+        return;
+      }
       const sessionFile = await this.deps.resolveSessionFile(threadId);
+      if (!this.isGenerationCurrent(generation)) {
+        return;
+      }
       if (!sessionFile) {
         return;
       }
       const snapshot = await readSessionUsageSnapshot(sessionFile);
+      if (!this.isGenerationCurrent(generation)) {
+        return;
+      }
       if (!snapshot?.summary) {
+        return;
+      }
+      if (!this.isGenerationCurrent(generation)) {
         return;
       }
       this.deps.applyUsageSnapshot({
@@ -190,13 +250,25 @@ export class UsageSyncCoordinator {
     }
   }
 
-  private async pollRecentSessions(): Promise<void> {
+  private async pollRecentSessions(generation = this.generation): Promise<void> {
     try {
+      if (!this.isGenerationCurrent(generation)) {
+        return;
+      }
       const files = await this.deps.listRecentSessionFiles();
+      if (!this.isGenerationCurrent(generation)) {
+        return;
+      }
       for (const file of files) {
         const snapshot = await readSessionUsageSnapshot(file.path);
+        if (!this.isGenerationCurrent(generation)) {
+          return;
+        }
         if (!snapshot?.summary) {
           continue;
+        }
+        if (!this.isGenerationCurrent(generation)) {
+          return;
         }
         this.deps.applyUsageSnapshot({
           threadId: null,

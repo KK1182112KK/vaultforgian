@@ -157,6 +157,79 @@ function stripProposalRepairScaffolding(text: string): string {
   return kept.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
 
+interface MarkdownFence {
+  marker: "`" | "~";
+  length: number;
+}
+
+function matchMarkdownFenceStart(trimmedLine: string): MarkdownFence | null {
+  const match = trimmedLine.match(/^(`{3,}|~{3,})/u);
+  if (!match?.[1]) {
+    return null;
+  }
+  return {
+    marker: match[1][0] as "`" | "~",
+    length: match[1].length,
+  };
+}
+
+function isMarkdownFenceEnd(trimmedLine: string, fence: MarkdownFence): boolean {
+  const markerMatch = trimmedLine.match(fence.marker === "`" ? /^`+/u : /^~+/u);
+  return Boolean(
+    markerMatch?.[0] &&
+      markerMatch[0].length >= fence.length &&
+      trimmedLine.slice(markerMatch[0].length).trim().length === 0,
+  );
+}
+
+function splitBlocksOutsideCodeFences(text: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let activeFence: MarkdownFence | null = null;
+
+  const flush = () => {
+    const block = current.join("\n").trim();
+    if (block) {
+      blocks.push(block);
+    }
+    current = [];
+  };
+
+  for (const line of normalizeNewlines(text).split("\n")) {
+    const trimmed = line.trim();
+    if (activeFence) {
+      current.push(line);
+      if (isMarkdownFenceEnd(trimmed, activeFence)) {
+        activeFence = null;
+      }
+      continue;
+    }
+
+    const fenceStart = matchMarkdownFenceStart(trimmed);
+    if (fenceStart) {
+      current.push(line);
+      activeFence = fenceStart;
+      continue;
+    }
+
+    if (!trimmed) {
+      flush();
+      continue;
+    }
+
+    current.push(line);
+  }
+
+  flush();
+  return blocks;
+}
+
+function containsMarkdownFence(text: string): boolean {
+  return normalizeNewlines(text)
+    .split("\n")
+    .some((line) => Boolean(matchMarkdownFenceStart(line.trim())));
+}
+
 export function isInternalRewriteFollowupPrompt(text: string | null | undefined): boolean {
   if (!text?.trim()) {
     return false;
@@ -178,16 +251,13 @@ export function normalizeVisibleUserPromptText(
 
 export function sanitizeOperationalAssistantText(text: string): string | null {
   const sanitizedText = stripProposalRepairScaffolding(text);
-  const blocks = sanitizedText
-    .split(/\n{2,}/u)
-    .map((block) => block.trim())
-    .filter(Boolean);
+  const blocks = splitBlocksOutsideCodeFences(sanitizedText);
 
   if (blocks.length === 0) {
     return null;
   }
 
-  const kept = blocks.filter((block) => !isOperationalChatterBlock(block));
+  const kept = blocks.filter((block) => containsMarkdownFence(block) || !isOperationalChatterBlock(block));
   if (kept.length === 0) {
     return null;
   }

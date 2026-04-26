@@ -89,6 +89,46 @@ describe("ThreadEventReducer", () => {
     expect(waiting.at(-1)?.phase).toBe("finalizing");
   });
 
+  it("does not queue duplicate artifacts from task_complete fallback in artifact-only mode", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const patchText = "```obsidian-patch\npath: notes/current.md\nkind: update\nsummary: Repair\n\n---content\nUpdated.\n---end\n```";
+    const { reducer, queued } = createReducer(store);
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "response_item",
+        timestamp: "2026-04-09T14:00:00Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: patchText,
+        },
+      },
+      "artifact_only",
+    );
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "event_msg",
+        timestamp: "2026-04-09T14:00:01Z",
+        payload: {
+          type: "task_complete",
+          last_agent_message: patchText,
+        },
+      },
+      "artifact_only",
+    );
+
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.text).toBe(patchText);
+  });
+
   it("suppresses operational sandbox chatter from assistant messages", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

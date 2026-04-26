@@ -13,44 +13,58 @@ import type { ComposerElements, ComposerSharedState } from "./types";
 
 export class ComposerStatusControls {
   private statusMenuOwnerTabId: string | null = null;
+  private readonly handleModelButtonClick = (event: MouseEvent): void => {
+    event.stopPropagation();
+    this.showModelPicker(this.elements.modelButtonEl);
+  };
+  private readonly handleThinkingButtonClick = (event: MouseEvent): void => {
+    event.stopPropagation();
+    this.showThinkingPicker(this.elements.thinkingButtonEl);
+  };
+  private readonly handleLearningModeClick = (event: MouseEvent): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    this.toggleLearningMode();
+  };
+  private readonly handleFastModeClick = (event: MouseEvent): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    this.toggleFastMode();
+  };
+  private readonly handleYoloClick = (event: MouseEvent): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.elements.yoloControlEl.disabled) {
+      return;
+    }
+    const nextMode = this.context?.service.getPermissionMode() === "full-auto" ? "auto-edit" : "full-auto";
+    if (nextMode) {
+      void this.context?.service.setPermissionMode(nextMode);
+    }
+  };
 
   constructor(
     private readonly elements: ComposerElements,
     private readonly state: ComposerSharedState,
   ) {
-    this.elements.modelButtonEl.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.showModelPicker(this.elements.modelButtonEl);
-    });
-    this.elements.thinkingButtonEl.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.showThinkingPicker(this.elements.thinkingButtonEl);
-    });
-    this.elements.learningModeControlEl.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.toggleLearningMode();
-    });
-    this.elements.fastModeControlEl.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.toggleFastMode();
-    });
-    this.elements.yoloControlEl.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (this.elements.yoloControlEl.disabled) {
-        return;
-      }
-      const nextMode = this.context?.service.getPermissionMode() === "full-auto" ? "auto-edit" : "full-auto";
-      if (nextMode) {
-        void this.context?.service.setPermissionMode(nextMode);
-      }
-    });
+    this.elements.modelButtonEl.addEventListener("click", this.handleModelButtonClick);
+    this.elements.thinkingButtonEl.addEventListener("click", this.handleThinkingButtonClick);
+    this.elements.learningModeControlEl.addEventListener("click", this.handleLearningModeClick);
+    this.elements.fastModeControlEl.addEventListener("click", this.handleFastModeClick);
+    this.elements.yoloControlEl.addEventListener("click", this.handleYoloClick);
   }
 
   private get context() {
     return this.state.context;
+  }
+
+  dispose(): void {
+    this.elements.modelButtonEl.removeEventListener("click", this.handleModelButtonClick);
+    this.elements.thinkingButtonEl.removeEventListener("click", this.handleThinkingButtonClick);
+    this.elements.learningModeControlEl.removeEventListener("click", this.handleLearningModeClick);
+    this.elements.fastModeControlEl.removeEventListener("click", this.handleFastModeClick);
+    this.elements.yoloControlEl.removeEventListener("click", this.handleYoloClick);
+    this.closeStatusMenu();
   }
 
   private toggleFastMode(): void {

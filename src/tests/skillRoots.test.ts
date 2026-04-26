@@ -17,6 +17,22 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+async function withTempCwd<T>(callback: () => Promise<T>): Promise<T> {
+  const dir = await makeTempDir();
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  try {
+    return await callback();
+  } finally {
+    process.chdir(originalCwd);
+  }
+}
+
+async function createRelativeDirectoryWithEntries(path: string, entries: readonly string[]): Promise<void> {
+  await mkdir(path, { recursive: true });
+  await Promise.all(entries.map((entry) => mkdir(join(path, entry), { recursive: true })));
+}
+
 describe("skill root helpers", () => {
   it("expands home-relative paths and removes duplicates", () => {
     expect(
@@ -33,14 +49,82 @@ describe("skill root helpers", () => {
     expect(expandHomePath("/var/tmp/skills")).toBe("/var/tmp/skills");
   });
 
-  it("adds WSL bridge skill roots on Windows only", () => {
-    expect(getDefaultWslBridgeSkillRoots("win32")).toEqual([
-      "\\\\wsl.localhost\\Ubuntu\\home\\kenshin\\.codex\\skills",
-      "\\\\wsl.localhost\\Ubuntu\\home\\kenshin\\.agents\\skills",
-      "\\\\wsl$\\Ubuntu\\home\\kenshin\\.codex\\skills",
-      "\\\\wsl$\\Ubuntu\\home\\kenshin\\.agents\\skills",
-    ]);
+  it("adds WSL bridge skill roots from discovered UNC home directories on Windows only", async () => {
+    const originalUsername = process.env.USERNAME;
+    const originalUserProfile = process.env.USERPROFILE;
+    process.env.USERNAME = "KK118";
+    process.env.USERPROFILE = "C:\\Users\\KK118";
+    try {
+      await withTempCwd(async () => {
+        await createRelativeDirectoryWithEntries("\\\\wsl.localhost", ["Ubuntu"]);
+        await createRelativeDirectoryWithEntries("\\\\wsl$", ["Ubuntu"]);
+        await createRelativeDirectoryWithEntries("\\\\wsl.localhost\\Ubuntu\\home", ["kenshin"]);
+        await createRelativeDirectoryWithEntries("\\\\wsl$\\Ubuntu\\home", ["kenshin"]);
+
+        expect(getDefaultWslBridgeSkillRoots("win32")).toEqual([
+          "\\\\wsl.localhost\\Ubuntu\\home\\kenshin\\.codex\\skills",
+          "\\\\wsl.localhost\\Ubuntu\\home\\kenshin\\.agents\\skills",
+          "\\\\wsl$\\Ubuntu\\home\\kenshin\\.codex\\skills",
+          "\\\\wsl$\\Ubuntu\\home\\kenshin\\.agents\\skills",
+        ]);
+      });
+    } finally {
+      if (originalUsername === undefined) {
+        delete process.env.USERNAME;
+      } else {
+        process.env.USERNAME = originalUsername;
+      }
+      if (originalUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = originalUserProfile;
+      }
+    }
     expect(getDefaultWslBridgeSkillRoots("linux")).toEqual([]);
+  });
+
+  it("falls back to WSL_DISTRO_NAME probes when UNC host enumeration fails", async () => {
+    const originalDistro = process.env.WSL_DISTRO_NAME;
+    process.env.WSL_DISTRO_NAME = "CustomUbuntu";
+    try {
+      await withTempCwd(async () => {
+        await createRelativeDirectoryWithEntries("\\\\wsl.localhost\\CustomUbuntu\\home", ["kenshin"]);
+
+        expect(getDefaultWslBridgeSkillRoots("win32")).toEqual([
+          "\\\\wsl.localhost\\CustomUbuntu\\home\\kenshin\\.codex\\skills",
+          "\\\\wsl.localhost\\CustomUbuntu\\home\\kenshin\\.agents\\skills",
+        ]);
+      });
+    } finally {
+      if (originalDistro === undefined) {
+        delete process.env.WSL_DISTRO_NAME;
+      } else {
+        process.env.WSL_DISTRO_NAME = originalDistro;
+      }
+    }
+  });
+
+  it("returns no Windows WSL bridge roots when no UNC home directories can be discovered", async () => {
+    const originalUsername = process.env.USERNAME;
+    const originalUserProfile = process.env.USERPROFILE;
+    process.env.USERNAME = "KK118";
+    process.env.USERPROFILE = "C:\\Users\\KK118";
+    try {
+      await withTempCwd(async () => {
+        expect(getDefaultWslBridgeSkillRoots("win32")).toEqual([]);
+      });
+    } finally {
+      if (originalUsername === undefined) {
+        delete process.env.USERNAME;
+      } else {
+        process.env.USERNAME = originalUsername;
+      }
+      if (originalUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = originalUserProfile;
+      }
+    }
   });
 
   it("rejects extra roots outside the allowed local roots", async () => {
