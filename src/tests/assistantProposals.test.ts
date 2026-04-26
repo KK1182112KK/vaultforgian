@@ -171,11 +171,43 @@ describe("assistant proposal parsing", () => {
     });
   });
 
+  it("extracts and hides obsidian-diagram blocks", () => {
+    const parsed = extractAssistantProposals(
+      [
+        "Generated a circuit diagram.",
+        "",
+        "```obsidian-diagram",
+        JSON.stringify({
+          title: "Average Load Power",
+          alt: "A source feeding a load resistor with the RMS relation highlighted.",
+          caption: "Average power uses the RMS value across the load.",
+          targetPath: "notes/power.md",
+          insertMode: "auto",
+          svg: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><rect x="40" y="40" width="560" height="280" fill="white" stroke="black"/></svg>',
+        }),
+        "```",
+      ].join("\n"),
+    );
+
+    expect(parsed.displayText).toBe("Generated a circuit diagram.");
+    expect(parsed.diagrams).toEqual([
+      expect.objectContaining({
+        title: "Average Load Power",
+        alt: "A source feeding a load resistor with the RMS relation highlighted.",
+        caption: "Average power uses the RMS value across the load.",
+        targetPath: "notes/power.md",
+        insertMode: "auto",
+        svg: expect.stringContaining("<svg"),
+      }),
+    ]);
+  });
+
   it.each([
     ["obsidian-ops", { ops: [{ kind: "rename", path: "" }] }, "ops"],
     ["obsidian-plan", { status: "drafting" }, "plan"],
     ["obsidian-suggest", { kind: "unknown" }, "suggestion"],
     ["obsidian-study-checkpoint", { workflow: "lecture", mastered: "not an array" }, "studyCheckpoint"],
+    ["obsidian-diagram", { title: "Missing SVG", alt: "No SVG", insertMode: "auto" }, "diagrams"],
   ] as const)("marks invalid %s blocks as malformed", (blockType, payload, resultKey) => {
     const parsed = extractAssistantProposals(
       [
@@ -192,6 +224,8 @@ describe("assistant proposal parsing", () => {
     expect(parsed.hasMalformedProposal).toBe(true);
     if (resultKey === "ops") {
       expect(parsed.ops).toHaveLength(0);
+    } else if (resultKey === "diagrams") {
+      expect(parsed.diagrams).toHaveLength(0);
     } else {
       expect(parsed[resultKey]).toBeNull();
     }

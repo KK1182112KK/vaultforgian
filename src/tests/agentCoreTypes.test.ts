@@ -89,6 +89,15 @@ describe("agent core boundaries", () => {
       ops: [{ sourceIndex: 1, kind: "rename", targetPath: "Notes/A.md", destinationPath: "Notes/B.md", summary: "Rename" }],
       plan: { status: "ready_to_implement", summary: "Plan" },
       suggestion: { kind: "rewrite_followup", summary: "Rewrite", question: "Apply?" },
+      diagrams: [
+        {
+          sourceIndex: 2,
+          title: "Diagram",
+          alt: "A diagram",
+          insertMode: "auto",
+          svg: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10"></svg>',
+        },
+      ],
       studyCheckpoint: {
         workflow: "lecture",
         mastered: ["A"],
@@ -103,6 +112,7 @@ describe("agent core boundaries", () => {
     expect(artifacts.map((artifact: AgentArtifact) => artifact.kind)).toEqual([
       "obsidian-patch",
       "obsidian-ops",
+      "obsidian-diagram",
       "obsidian-plan",
       "obsidian-suggest",
       "obsidian-study-checkpoint",

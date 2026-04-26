@@ -46,4 +46,33 @@ describe("classifyTurnIntent", () => {
     expect(intent.kind).toBe("note_edit");
     expect(resolveNoteSuggestionPolicy(intent)).toBe("eligible");
   });
+
+  it("classifies study diagram generation separately from note edits", () => {
+    const intent = classifyTurnIntent({
+      prompt: "この内容を図にして",
+      composeMode: "chat",
+      allowVaultWrite: false,
+      hasNoteTarget: true,
+      hasSelection: true,
+      hasNoteSourcePack: true,
+      hasAttachmentContent: false,
+    });
+
+    expect(intent.kind).toBe("diagram_generation");
+    expect(resolveNoteSuggestionPolicy(intent)).toBe("never");
+  });
+
+  it("keeps image attachment analysis out of diagram generation", () => {
+    const intent = classifyTurnIntent({
+      prompt: "画像を添付して解析して",
+      composeMode: "chat",
+      allowVaultWrite: false,
+      hasNoteTarget: true,
+      hasSelection: false,
+      hasNoteSourcePack: false,
+      hasAttachmentContent: true,
+    });
+
+    expect(intent.kind).toBe("note_answer");
+  });
 });

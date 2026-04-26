@@ -995,6 +995,137 @@ describe("CodexService sendPrompt skill context", () => {
     expect(service.getActiveTab()?.chatSuggestion).toBeNull();
   });
 
+  it("saves generated SVG diagrams and appends them to the target note", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-diagram-append-"));
+    tempRoots.push(vaultRoot);
+
+    const writable = createWritableApp(vaultRoot, { "notes/current.md": "# Current\n\nOriginal" });
+    const service = new CodexService(writable.app, () => DEFAULT_SETTINGS, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
+
+    const assistantText = [
+      "Generated and inserted a diagram.",
+      "",
+      "```obsidian-diagram",
+      JSON.stringify({
+        title: "Average Load Power",
+        alt: "Source feeding a load resistor with average power relation.",
+        caption: "Average load power follows from the RMS voltage across the load.",
+        insertMode: "auto",
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><rect x="40" y="40" width="560" height="280" fill="white" stroke="black"/><text x="80" y="120">P = V_rms^2 / R</text></svg>',
+      }),
+      "```",
+    ].join("\n");
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-diagram-1", assistantText);
+
+    expect(writable.files.get("assets/noteforge/diagrams/average-load-power.svg")).toContain("<svg");
+    expect(writable.files.get("notes/current.md")).toContain("## Generated visuals");
+    expect(writable.files.get("notes/current.md")).toContain("![[assets/noteforge/diagrams/average-load-power.svg]]");
+    expect(writable.files.get("notes/current.md")).toContain("*Average load power follows from the RMS voltage across the load.*");
+    expect(service.getActiveTab()?.generatedDiagrams).toEqual([
+      expect.objectContaining({
+        assetPath: "assets/noteforge/diagrams/average-load-power.svg",
+        targetNotePath: "notes/current.md",
+        status: "inserted",
+      }),
+    ]);
+    expect(service.getActiveTab()?.messages.at(-1)).toMatchObject({
+      kind: "system",
+      meta: { tone: "success" },
+    });
+  });
+
+  it("inserts generated SVG diagrams after the current selection when possible", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-diagram-selection-"));
+    tempRoots.push(vaultRoot);
+
+    const writable = createWritableApp(vaultRoot, {
+      "notes/current.md": "# Current\n\nBefore\n\nSelected equation\n\nAfter",
+    });
+    const service = new CodexService(writable.app, () => DEFAULT_SETTINGS, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
+    service.store.setSelectionContext(tabId, {
+      text: "Selected equation",
+      sourcePath: "notes/current.md",
+      createdAt: Date.now(),
+    });
+
+    const assistantText = [
+      "Generated a diagram.",
+      "",
+      "```obsidian-diagram",
+      JSON.stringify({
+        title: "Signal Chain",
+        alt: "Signal chain from input to load.",
+        insertMode: "auto",
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><path d="M80 180 H560" stroke="black" fill="none"/></svg>',
+      }),
+      "```",
+    ].join("\n");
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-diagram-selection", assistantText);
+
+    expect(writable.files.get("notes/current.md")).toContain(
+      "Selected equation\n\n![[assets/noteforge/diagrams/signal-chain.svg]]\n\nAfter",
+    );
+  });
+
+  it("saves generated SVG diagrams without inserting when no note target is available", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-diagram-no-target-"));
+    tempRoots.push(vaultRoot);
+
+    const writable = createWritableApp(vaultRoot);
+    const service = new CodexService(writable.app, () => DEFAULT_SETTINGS, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const assistantText = [
+      "Generated a standalone diagram.",
+      "",
+      "```obsidian-diagram",
+      JSON.stringify({
+        title: "Standalone Concept Map",
+        alt: "Concept map with three linked ideas.",
+        insertMode: "auto",
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><circle cx="320" cy="180" r="80" fill="white" stroke="black"/></svg>',
+      }),
+      "```",
+    ].join("\n");
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-diagram-no-target", assistantText);
+
+    expect(writable.files.get("assets/noteforge/diagrams/standalone-concept-map.svg")).toContain("<svg");
+    expect(service.getActiveTab()?.generatedDiagrams?.[0]).toMatchObject({
+      assetPath: "assets/noteforge/diagrams/standalone-concept-map.svg",
+      targetNotePath: null,
+      status: "saved",
+    });
+    expect(service.getActiveTab()?.messages.at(-1)).toMatchObject({
+      kind: "system",
+      meta: { tone: "warning" },
+    });
+  });
+
   it("rescues the reported missing-note-reflection shape with a hidden repair on non-edit prompts", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-reflection-rescue-"));
     tempRoots.push(vaultRoot);

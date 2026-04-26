@@ -1,6 +1,6 @@
 import type { ComposeMode } from "../model/types";
 
-export type AgentTurnIntentKind = "smalltalk" | "answer_only" | "note_answer" | "note_edit" | "plan";
+export type AgentTurnIntentKind = "smalltalk" | "answer_only" | "note_answer" | "note_edit" | "diagram_generation" | "plan";
 export type NoteSuggestionPolicy = "never" | "eligible";
 
 export interface AgentTurnIntent {
@@ -30,6 +30,19 @@ const NOTE_ANSWER_PATTERNS = [
   /(?:要約|説明|確認|レビュー|解説|分析).{0,32}(?:ノート|メモ|資料|添付|選択範囲)/u,
 ];
 
+const DIAGRAM_GENERATION_PATTERNS = [
+  /\b(?:diagram|flowchart|concept\s+map|visualization|visualise|visualize)\b.{0,48}\b(?:make|create|generate|draw|build|insert|add)\b/iu,
+  /\b(?:make|create|generate|draw|build|insert|add)\b.{0,48}\b(?:diagram|flowchart|concept\s+map|visualization|visualise|visualize|visual)\b/iu,
+  /(?:図|図解|学習図|概念図|ダイアグラム|可視化).{0,24}(?:作|生成|描|追加|挿入|して|ほしい)/u,
+  /(?:作|生成|描|追加|挿入).{0,24}(?:図|図解|学習図|概念図|ダイアグラム|可視化)/u,
+];
+
+const IMAGE_ATTACHMENT_ANALYSIS_PATTERNS = [
+  /(?:画像|イメージ|写真).{0,16}(?:添付|貼|アップロード).{0,24}(?:解析|分析|説明|読|見)/u,
+  /\b(?:attached|uploaded)\s+(?:image|picture|photo)\b.{0,32}\b(?:analy[sz]e|explain|read|inspect|look)\b/iu,
+  /\b(?:analy[sz]e|explain|read|inspect|look)\b.{0,32}\b(?:attached|uploaded)\s+(?:image|picture|photo)\b/iu,
+];
+
 export function isSmalltalkPrompt(prompt: string): boolean {
   const text = prompt.trim();
   return Boolean(text && SMALLTALK_ONLY_PATTERNS.some((pattern) => pattern.test(text)));
@@ -40,12 +53,23 @@ function isNoteAnswerPrompt(prompt: string): boolean {
   return Boolean(text && NOTE_ANSWER_PATTERNS.some((pattern) => pattern.test(text)));
 }
 
+export function isDiagramGenerationPrompt(prompt: string): boolean {
+  const text = prompt.trim();
+  if (!text || IMAGE_ATTACHMENT_ANALYSIS_PATTERNS.some((pattern) => pattern.test(text))) {
+    return false;
+  }
+  return DIAGRAM_GENERATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function classifyTurnIntent(input: ClassifyTurnIntentInput): AgentTurnIntent {
   if (input.composeMode === "plan") {
     return { kind: "plan" };
   }
   if (isSmalltalkPrompt(input.prompt)) {
     return { kind: "smalltalk" };
+  }
+  if (isDiagramGenerationPrompt(input.prompt)) {
+    return { kind: "diagram_generation" };
   }
   if (input.allowVaultWrite) {
     return { kind: "note_edit" };

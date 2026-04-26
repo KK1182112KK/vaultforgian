@@ -12,6 +12,7 @@ import type {
   AccountUsageSummary,
   ChatMessage,
   ComposerHistorySnapshot,
+  GeneratedDiagramRecord,
   RestartDropNotice,
   RecentStudySource,
   StudyCoachState,
@@ -518,6 +519,10 @@ function clonePatchProposal(proposal: PatchProposal): PatchProposal {
   return structuredClone(proposal);
 }
 
+function cloneGeneratedDiagram(record: GeneratedDiagramRecord): GeneratedDiagramRecord {
+  return { ...record };
+}
+
 function cloneAccountUsage(accountUsage: AccountUsageSummary): AccountUsageSummary {
   const normalized = normalizeAccountUsageSummary(accountUsage);
   return {
@@ -598,6 +603,7 @@ function cloneState(state: WorkspaceState): WorkspaceState {
       pendingApprovals: tab.pendingApprovals.map((approval) => clonePendingApproval(approval)),
       toolLog: tab.toolLog.map((entry) => ({ ...entry })),
       patchBasket: tab.patchBasket.map((proposal) => clonePatchProposal(proposal)),
+      generatedDiagrams: (tab.generatedDiagrams ?? []).map((record) => cloneGeneratedDiagram(record)),
       sessionApprovals: { ...tab.sessionApprovals },
       usageSummary: cloneUsageSummary(tab.usageSummary),
       waitingState: tab.waitingState ? { ...tab.waitingState } : null,
@@ -636,6 +642,7 @@ function createTab(cwd: string, partial?: Partial<ConversationTabState>): Conver
     diffText: partial?.diffText ?? "",
     toolLog: partial?.toolLog?.map((entry) => ({ ...entry })) ?? [],
     patchBasket: partial?.patchBasket?.map((proposal) => clonePatchProposal(proposal)) ?? [],
+    generatedDiagrams: partial?.generatedDiagrams?.map((record) => cloneGeneratedDiagram(record)) ?? [],
     status: partial?.status ?? "ready",
     runtimeMode: partial?.runtimeMode ?? "normal",
     lastError: partial?.lastError ?? null,
@@ -811,6 +818,7 @@ export class AgentStore {
         diffText: tab.diffText,
         toolLog: tab.toolLog.map((entry) => ({ ...entry })),
         patchBasket: [],
+        generatedDiagrams: (tab.generatedDiagrams ?? []).map((record) => cloneGeneratedDiagram(record)),
         restartDropNotice: buildPersistedRestartDropNotice(tab),
       })),
       activeTabId: this.state.activeTabId,
@@ -1225,6 +1233,12 @@ export class AgentStore {
   setPatchBasket(tabId: string, patchBasket: PatchProposal[]): void {
     this.updateTab(tabId, (tab) => {
       tab.patchBasket = patchBasket.map((proposal) => clonePatchProposal(proposal));
+    });
+  }
+
+  addGeneratedDiagram(tabId: string, record: GeneratedDiagramRecord): void {
+    this.updateTab(tabId, (tab) => {
+      tab.generatedDiagrams = [...(tab.generatedDiagrams ?? []), cloneGeneratedDiagram(record)];
     });
   }
 

@@ -15,6 +15,7 @@ import type {
   ConversationTabState,
   ComposeMode,
   EditOutcome,
+  GeneratedDiagramRecord,
   ModelCatalogEntry,
   PendingApproval,
   PatchProposal,
@@ -99,6 +100,7 @@ import {
 } from "../util/sourceAcquisition";
 import {
   extractAssistantProposals,
+  type ParsedAssistantDiagram,
   type ParsedAssistantProposalResult,
   type ParsedAssistantPatch,
 } from "../util/assistantProposals";
@@ -118,7 +120,13 @@ import {
 } from "../util/patchPromptContract";
 import { buildUnifiedDiff } from "../util/unifiedDiff";
 import { updateUserAdaptationMemory } from "../util/userAdaptation";
-import { validateManagedNotePath } from "../util/vaultPathPolicy";
+import {
+  buildDiagramEmbedMarkdown,
+  buildGeneratedDiagramAssetPath,
+  GENERATED_DIAGRAM_FOLDER,
+  sanitizeGeneratedSvg,
+} from "../util/generatedDiagrams";
+import { validateManagedAssetPath, validateManagedNotePath } from "../util/vaultPathPolicy";
 import { AUTO_APPLY_CONSENT_VERSION } from "../util/permissionLifecycle";
 import {
   createEmptyAccountUsageSummary,
@@ -3062,6 +3070,7 @@ export class CodexService {
         customSystemPrompt: this.settingsProvider().customSystemPrompt,
         learningMode: this.findTab(tabId)?.learningMode ?? false,
         noteSuggestionPolicy,
+        diagramGeneration: turnIntent.kind === "diagram_generation",
         shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
           ? [
               ...this.settingsProvider().securityPolicy.blockedCommandsWindows,
@@ -3658,6 +3667,7 @@ export class CodexService {
     this.store.replaceProposalApprovals(tabId, messageId, approvals);
     this.maybeStoreStudyCheckpoint(tabId, parsed);
     this.maybeStorePlanExecutionSuggestion(tabId, messageId, parsed.plan);
+    await this.saveGeneratedDiagramsAndInsert(tabId, messageId, parsed.diagrams, originTurnId);
     this.maybeStoreRewriteSuggestion(tabId, messageId, parsed, patchBasket, approvals, visibility);
     await this.maybeAutoApplyArtifacts(tabId, patchBasket, approvals, originTurnId);
     this.recordAssistantEditOutcome(
@@ -3668,6 +3678,209 @@ export class CodexService {
     );
     if (!this.activeRuns.has(tabId)) {
       this.approvalCoordinator.reconcileApprovalStatus(tabId);
+    }
+  }
+
+  private async saveGeneratedDiagramsAndInsert(
+    tabId: string,
+    messageId: string,
+    diagrams: readonly ParsedAssistantDiagram[],
+    originTurnId: string | null,
+  ): Promise<void> {
+    if (diagrams.length === 0) {
+      return;
+    }
+    for (const diagram of diagrams) {
+      await this.saveGeneratedDiagramAndInsert(tabId, messageId, diagram, originTurnId);
+    }
+  }
+
+  private async saveGeneratedDiagramAndInsert(
+    tabId: string,
+    messageId: string,
+    diagram: ParsedAssistantDiagram,
+    originTurnId: string | null,
+  ): Promise<void> {
+    const now = Date.now();
+    const sanitized = sanitizeGeneratedSvg(diagram.svg);
+    const baseRecord = {
+      id: makeId("diagram"),
+      sourceMessageId: messageId,
+      createdAt: now,
+    };
+    if (!sanitized.ok) {
+      this.store.addGeneratedDiagram(tabId, {
+        ...baseRecord,
+        assetPath: "",
+        targetNotePath: null,
+        status: "failed",
+      });
+      this.store.addMessage(tabId, {
+        id: makeId("diagram-error"),
+        kind: "system",
+        text: `Generated diagram was rejected: ${sanitized.reason}.`,
+        meta: { tone: "error" },
+        createdAt: Date.now(),
+      });
+      return;
+    }
+
+    const assetPath = this.resolveAvailableDiagramAssetPath(diagram.title);
+    const validatedAssetPath = validateManagedAssetPath(this.app, assetPath);
+    if (!validatedAssetPath.ok) {
+      this.store.addGeneratedDiagram(tabId, {
+        ...baseRecord,
+        assetPath,
+        targetNotePath: null,
+        status: "failed",
+      });
+      this.store.addMessage(tabId, {
+        id: makeId("diagram-error"),
+        kind: "system",
+        text: `Generated diagram was rejected: unsafe asset path ${assetPath}.`,
+        meta: { tone: "error" },
+        createdAt: Date.now(),
+      });
+      return;
+    }
+
+    await this.ensureVaultFolderPath(GENERATED_DIAGRAM_FOLDER);
+    await this.app.vault.create(validatedAssetPath.normalizedPath, sanitized.svg);
+
+    const targetNotePath = this.resolveGeneratedDiagramTargetNotePath(tabId, diagram, originTurnId);
+    const targetFile = targetNotePath ? asVaultFileLike(this.app.vault.getAbstractFileByPath(targetNotePath)) : null;
+    const inserted =
+      targetNotePath && targetFile
+        ? await this.insertGeneratedDiagramIntoNote(tabId, targetFile, validatedAssetPath.normalizedPath, diagram.caption)
+        : false;
+    const record: GeneratedDiagramRecord = {
+      ...baseRecord,
+      assetPath: validatedAssetPath.normalizedPath,
+      targetNotePath: inserted ? targetNotePath : null,
+      status: inserted ? "inserted" : "saved",
+    };
+    this.store.addGeneratedDiagram(tabId, record);
+    this.store.addToolLog(tabId, {
+      id: makeId("tool"),
+      callId: `diagram-${messageId}-${diagram.sourceIndex}`,
+      kind: "file",
+      name: "obsidian-diagram",
+      title: inserted ? "Inserted diagram" : "Saved diagram",
+      summary: inserted
+        ? `Saved SVG and inserted into ${targetNotePath}.`
+        : `Saved SVG to ${validatedAssetPath.normalizedPath}.`,
+      argsJson: JSON.stringify({
+        title: diagram.title,
+        assetPath: validatedAssetPath.normalizedPath,
+        targetNotePath: inserted ? targetNotePath : null,
+      }),
+      createdAt: now,
+      updatedAt: Date.now(),
+      status: "completed",
+      resultText: inserted
+        ? `Generated diagram saved at ${validatedAssetPath.normalizedPath} and inserted into ${targetNotePath}.`
+        : `Generated diagram saved at ${validatedAssetPath.normalizedPath}.`,
+    });
+    this.store.addMessage(tabId, {
+      id: makeId(inserted ? "diagram-inserted" : "diagram-saved"),
+      kind: "system",
+      text: inserted
+        ? `Generated and inserted diagram: ${validatedAssetPath.normalizedPath}.`
+        : `Generated diagram saved, but no target note was available: ${validatedAssetPath.normalizedPath}.`,
+      meta: { tone: inserted ? "success" : "warning" },
+      createdAt: Date.now(),
+    });
+  }
+
+  private resolveAvailableDiagramAssetPath(title: string): string {
+    let candidate = buildGeneratedDiagramAssetPath(title);
+    if (!this.app.vault.getAbstractFileByPath(candidate)) {
+      return candidate;
+    }
+    for (let suffix = 2; suffix < 1000; suffix += 1) {
+      candidate = buildGeneratedDiagramAssetPath(title, String(suffix));
+      if (!this.app.vault.getAbstractFileByPath(candidate)) {
+        return candidate;
+      }
+    }
+    return buildGeneratedDiagramAssetPath(`${title} ${Date.now()}`);
+  }
+
+  private resolveGeneratedDiagramTargetNotePath(
+    tabId: string,
+    diagram: ParsedAssistantDiagram,
+    _originTurnId: string | null,
+  ): string | null {
+    const tab = this.findTab(tabId);
+    const activeRun = this.activeRuns.get(tabId) ?? null;
+    const candidates = [
+      diagram.targetPath ?? null,
+      activeRun?.turnContext.selectionSourcePath ?? null,
+      tab?.selectionContext?.sourcePath ?? null,
+      activeRun?.turnContext.targetNotePath ?? null,
+      tab?.targetNotePath ?? null,
+      activeRun?.turnContext.activeFilePath ?? null,
+    ];
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+      const validated = validateManagedNotePath(this.app, candidate);
+      if (!validated.ok) {
+        continue;
+      }
+      const file = asVaultFileLike(this.app.vault.getAbstractFileByPath(validated.normalizedPath));
+      if (file) {
+        return validated.normalizedPath;
+      }
+    }
+    return null;
+  }
+
+  private async insertGeneratedDiagramIntoNote(
+    tabId: string,
+    targetFile: TFile,
+    assetPath: string,
+    caption?: string,
+  ): Promise<boolean> {
+    const content = await this.app.vault.cachedRead(targetFile);
+    const insertion = buildDiagramEmbedMarkdown(assetPath, caption);
+    const tab = this.findTab(tabId);
+    const selection = tab?.selectionContext;
+    const insertAfterSelection =
+      selection?.sourcePath === targetFile.path && selection.text && content.indexOf(selection.text) >= 0
+        ? this.insertAfterUniqueSelection(content, selection.text, insertion)
+        : null;
+    const nextContent = insertAfterSelection ?? this.appendGeneratedVisual(content, insertion);
+    await this.app.vault.modify(targetFile, nextContent);
+    return true;
+  }
+
+  private insertAfterUniqueSelection(content: string, selection: string, insertion: string): string | null {
+    const firstIndex = content.indexOf(selection);
+    if (firstIndex < 0 || content.indexOf(selection, firstIndex + selection.length) >= 0) {
+      return null;
+    }
+    const insertAt = firstIndex + selection.length;
+    return `${content.slice(0, insertAt)}\n\n${insertion}${content.slice(insertAt)}`;
+  }
+
+  private appendGeneratedVisual(content: string, insertion: string): string {
+    const normalized = content.replace(/\s+$/u, "");
+    if (/^## Generated visuals\s*$/im.test(normalized)) {
+      return `${normalized}\n\n${insertion}`;
+    }
+    return `${normalized}\n\n## Generated visuals\n\n${insertion}`;
+  }
+
+  private async ensureVaultFolderPath(folderPath: string): Promise<void> {
+    const segments = folderPath.split("/").filter(Boolean);
+    let current = "";
+    for (const segment of segments) {
+      current = current ? `${current}/${segment}` : segment;
+      if (!this.app.vault.getAbstractFileByPath(current)) {
+        await this.app.vault.createFolder(current);
+      }
     }
   }
 

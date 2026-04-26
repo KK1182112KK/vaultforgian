@@ -22,6 +22,7 @@ export function buildTurnPrompt(
     shellBlocklist?: readonly string[];
     learningMode?: boolean;
     noteSuggestionPolicy?: NoteSuggestionPolicy;
+    diagramGeneration?: boolean;
   } = {},
 ): string {
   const noteSuggestionPolicy = options.noteSuggestionPolicy ?? (allowVaultWrite ? "eligible" : "never");
@@ -58,6 +59,15 @@ export function buildTurnPrompt(
             "Answer naturally and directly.",
             "Do not mention note changes, do not ask whether to apply the answer to a note, and do not emit note rewrite suggestion artifacts.",
           ].join("\n"),
+    options.diagramGeneration
+      ? [
+          "The user is asking for a study diagram. Generate exactly one safe self-contained SVG learning diagram and append it as a fenced `obsidian-diagram` JSON block after a short visible status sentence.",
+          "The `obsidian-diagram` JSON schema is: {\"title\":\"...\",\"alt\":\"...\",\"caption\":\"...\",\"targetPath\":\"optional vault-relative .md note path\",\"insertMode\":\"auto\",\"svg\":\"<svg ...>...</svg>\"}.",
+          "Use `insertMode: \"auto\"`. The plugin will save the SVG under assets/noteforge/diagrams/ and insert a wikilink into the target note.",
+          "Do not use external images, data URLs, scripts, event handlers, or foreignObject. The SVG must include width, height, and viewBox, and it must be useful as a readable study diagram.",
+          "Do not emit `obsidian-suggest` for diagram turns.",
+        ].join("\n")
+      : null,
     allowVaultWrite
       ? [
           "You are this user's Obsidian note-editing assistant. The vault is the user's knowledge base and your job is to EDIT it when they ask you to. Edits flow through the plugin's approval UI via fenced `obsidian-patch` and `obsidian-ops` blocks - NEVER by shell/apply_patch/write tools.",

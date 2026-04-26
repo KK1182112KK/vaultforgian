@@ -2,12 +2,12 @@ import type { PatchEvidenceSourceKind, PatchIntent, PatchProposalKind, StudyWork
 import { normalizePatchIntent } from "./agenticTurnPolicy";
 import { sanitizeOperationalAssistantText } from "./assistantChatter";
 
-const PROPOSAL_BLOCK_PATTERN = /```(obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint)\s*\n([\s\S]*?)```/gim;
-const PARTIAL_PROPOSAL_FENCE_PATTERN = /```(?:obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint)\b[\s\S]*$/im;
+const PROPOSAL_BLOCK_PATTERN = /```(obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint|obsidian-diagram)\s*\n([\s\S]*?)```/gim;
+const PARTIAL_PROPOSAL_FENCE_PATTERN = /```(?:obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint|obsidian-diagram)\b[\s\S]*$/im;
 const JSON_PROPOSAL_LINE_PATTERN =
-  /^\s*"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|content|text|proposedText|anchors|anchorBefore|anchorAfter|replacement|destinationPath|newPath|toPath|propertyKey|propertyValue|taskLine|taskText|checked)"\s*:/m;
+  /^\s*"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|content|text|proposedText|anchors|anchorBefore|anchorAfter|replacement|destinationPath|newPath|toPath|propertyKey|propertyValue|taskLine|taskText|checked|title|alt|caption|insertMode|svg)"\s*:/m;
 const JSON_PROPOSAL_MARKER_PATTERN =
-  /"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|anchors|anchorBefore|anchorAfter|replacement|destinationPath|propertyKey|propertyValue|taskLine|taskText|checked)"\s*:/i;
+  /"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|anchors|anchorBefore|anchorAfter|replacement|destinationPath|propertyKey|propertyValue|taskLine|taskText|checked|title|alt|caption|insertMode|svg)"\s*:/i;
 
 export interface ParsedAssistantPatchAnchor {
   anchorBefore: string;
@@ -47,6 +47,7 @@ export interface ParsedAssistantProposalResult {
   plan: ParsedAssistantPlanSignal | null;
   suggestion: ParsedAssistantSuggestionSignal | null;
   studyCheckpoint: ParsedAssistantStudyCheckpoint | null;
+  diagrams: ParsedAssistantDiagram[];
   hasProposalMarkers: boolean;
   hasMalformedProposal: boolean;
 }
@@ -75,6 +76,16 @@ export interface ParsedAssistantStudyCheckpoint {
   unclear: string[];
   nextStep: string;
   confidenceNote: string;
+}
+
+export interface ParsedAssistantDiagram {
+  sourceIndex: number;
+  title: string;
+  alt: string;
+  caption?: string;
+  targetPath?: string;
+  insertMode: "auto";
+  svg: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -529,6 +540,33 @@ function parseSuggestionSignal(raw: unknown): ParsedAssistantSuggestionSignal | 
   };
 }
 
+function parseDiagramSignal(raw: unknown, sourceIndex: number): ParsedAssistantDiagram | null {
+  const record = asRecord(raw);
+  if (!record) {
+    return null;
+  }
+  const title = normalizeWhitespace(asString(record.title) ?? "");
+  const alt = normalizeWhitespace(asString(record.alt) ?? asString(record.description) ?? "");
+  const svg = asString(record.svg) ?? "";
+  const insertMode = normalizeWhitespace(asString(record.insertMode) ?? "auto").toLowerCase();
+  if (!title || !alt || !svg.trim() || insertMode !== "auto") {
+    return null;
+  }
+  const caption = normalizeWhitespace(asString(record.caption) ?? "");
+  const targetPath = normalizeWhitespace(
+    asString(record.targetPath) ?? asString(record.notePath) ?? asString(record.path) ?? "",
+  );
+  return {
+    sourceIndex,
+    title,
+    alt,
+    caption: caption || undefined,
+    targetPath: targetPath || undefined,
+    insertMode: "auto",
+    svg,
+  };
+}
+
 function stripMalformedProposalTail(text: string): { text: string; hasMalformedProposal: boolean; hasProposalMarkers: boolean } {
   let working = text;
   let hasMalformedProposal = false;
@@ -560,6 +598,7 @@ function stripMalformedProposalTail(text: string): { text: string; hasMalformedP
 export function extractAssistantProposals(text: string): ParsedAssistantProposalResult {
   const patches: ParsedAssistantPatch[] = [];
   const ops: ParsedAssistantOp[] = [];
+  const diagrams: ParsedAssistantDiagram[] = [];
   let plan: ParsedAssistantPlanSignal | null = null;
   let suggestion: ParsedAssistantSuggestionSignal | null = null;
   let studyCheckpoint: ParsedAssistantStudyCheckpoint | null = null;
@@ -621,6 +660,13 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
           } else {
             studyCheckpoint = parsedCheckpoint;
           }
+        } else if (blockType === "obsidian-diagram") {
+          const parsedDiagram = parseDiagramSignal(parsed, blockIndex);
+          if (!parsedDiagram) {
+            hasMalformedProposal = true;
+          } else {
+            diagrams.push(parsedDiagram);
+          }
         }
       } catch {
         if (blockType === "obsidian-patch") {
@@ -652,6 +698,7 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
     plan,
     suggestion,
     studyCheckpoint,
+    diagrams,
     hasProposalMarkers: hasProposalMarkers || malformedTail.hasProposalMarkers,
     hasMalformedProposal: hasMalformedProposal || malformedTail.hasMalformedProposal,
   };

@@ -101,6 +101,38 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("Do not mention note changes");
   });
 
+  it("injects the managed SVG diagram contract only for diagram generation turns", () => {
+    const diagramPrompt = buildTurnPrompt(
+      "Turn this concept into a study diagram.",
+      createContext({
+        selection: "P = V_rms^2 / R",
+        selectionSourcePath: "Notes/Power.md",
+        targetNotePath: "Notes/Power.md",
+      }),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+      { diagramGeneration: true },
+    );
+    const normalPrompt = buildTurnPrompt(
+      "Explain this concept.",
+      createContext(),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+    );
+
+    expect(diagramPrompt).toContain("obsidian-diagram");
+    expect(diagramPrompt).toContain("safe self-contained SVG");
+    expect(diagramPrompt).toContain("assets/noteforge/diagrams/");
+    expect(diagramPrompt).toContain("Do not use external images, data URLs, scripts, event handlers, or foreignObject");
+    expect(normalPrompt).not.toContain("obsidian-diagram");
+  });
+
   it("injects requested skill guides when present", () => {
     const prompt = buildTurnPrompt(
       "Use $deep-read on this paper",

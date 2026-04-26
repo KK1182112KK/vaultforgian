@@ -1,5 +1,6 @@
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import type { App } from "obsidian";
+import { GENERATED_DIAGRAM_FOLDER } from "./generatedDiagrams";
 
 export interface ManagedVaultPathPolicyResult {
   ok: boolean;
@@ -11,6 +12,7 @@ export interface ManagedVaultPathPolicyResult {
     | "invalid_segment"
     | "hidden_segment"
     | "outside_vault"
+    | "outside_managed_assets"
     | "unsupported_extension";
 }
 
@@ -107,6 +109,46 @@ export function validateManagedFolderPath(app: App, input: string): ManagedVault
   const segmentIssue = containsInvalidSegments(segments);
   if (segmentIssue) {
     return { ok: false, normalizedPath, reason: segmentIssue };
+  }
+
+  if (isOutsideVault(basePath, segments)) {
+    return { ok: false, normalizedPath, reason: "outside_vault" };
+  }
+
+  return { ok: true, normalizedPath, reason: "empty" };
+}
+
+export function validateManagedAssetPath(app: App, input: string): ManagedVaultPathPolicyResult {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { ok: false, normalizedPath: "", reason: "empty" };
+  }
+  if (hasAbsolutePrefix(trimmed)) {
+    return { ok: false, normalizedPath: normalizeCandidatePath(trimmed), reason: "absolute" };
+  }
+
+  const normalizedPath = normalizeCandidatePath(trimmed);
+  const basePath = getVaultBasePath(app);
+  if (!basePath) {
+    return { ok: false, normalizedPath, reason: "missing_base_path" };
+  }
+  const segments = normalizedPath.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return { ok: false, normalizedPath, reason: "empty" };
+  }
+
+  const segmentIssue = containsInvalidSegments(segments);
+  if (segmentIssue) {
+    return { ok: false, normalizedPath, reason: segmentIssue };
+  }
+
+  const extension = extname(segments[segments.length - 1] ?? "").toLowerCase();
+  if (extension !== ".svg") {
+    return { ok: false, normalizedPath, reason: "unsupported_extension" };
+  }
+
+  if (normalizedPath !== GENERATED_DIAGRAM_FOLDER && !normalizedPath.startsWith(`${GENERATED_DIAGRAM_FOLDER}/`)) {
+    return { ok: false, normalizedPath, reason: "outside_managed_assets" };
   }
 
   if (isOutsideVault(basePath, segments)) {

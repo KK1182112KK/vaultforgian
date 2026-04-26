@@ -8,6 +8,7 @@ import type {
 import type {
   ParsedAssistantOp,
   ParsedAssistantPatch,
+  ParsedAssistantDiagram,
   ParsedAssistantPlanSignal,
   ParsedAssistantProposalResult,
   ParsedAssistantStudyCheckpoint,
@@ -86,14 +87,16 @@ export type AgentArtifactKind =
   | "obsidian-ops"
   | "obsidian-plan"
   | "obsidian-suggest"
-  | "obsidian-study-checkpoint";
+  | "obsidian-study-checkpoint"
+  | "obsidian-diagram";
 
 export type AgentArtifact =
   | { kind: "obsidian-patch"; payload: ParsedAssistantPatch; sourceIndex: number }
   | { kind: "obsidian-ops"; payload: ParsedAssistantOp; sourceIndex: number }
   | { kind: "obsidian-plan"; payload: ParsedAssistantPlanSignal; sourceIndex: null }
   | { kind: "obsidian-suggest"; payload: ParsedAssistantSuggestionSignal; sourceIndex: null }
-  | { kind: "obsidian-study-checkpoint"; payload: ParsedAssistantStudyCheckpoint; sourceIndex: null };
+  | { kind: "obsidian-study-checkpoint"; payload: ParsedAssistantStudyCheckpoint; sourceIndex: null }
+  | { kind: "obsidian-diagram"; payload: ParsedAssistantDiagram; sourceIndex: number };
 
 export interface AgentPermissionProfile {
   sandboxMode: "read-only" | "workspace-write";
@@ -206,6 +209,11 @@ export function createAgentArtifacts(parsed: ParsedAssistantProposalResult): Age
       kind: "obsidian-ops" as const,
       payload: op,
       sourceIndex: op.sourceIndex,
+    })),
+    ...parsed.diagrams.map((diagram) => ({
+      kind: "obsidian-diagram" as const,
+      payload: diagram,
+      sourceIndex: diagram.sourceIndex,
     })),
     parsed.plan ? { kind: "obsidian-plan" as const, payload: parsed.plan, sourceIndex: null } : null,
     parsed.suggestion ? { kind: "obsidian-suggest" as const, payload: parsed.suggestion, sourceIndex: null } : null,

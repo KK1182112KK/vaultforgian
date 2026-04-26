@@ -506,6 +506,15 @@ export interface PatchProposal {
   evidence?: PatchEvidence[];
 }
 
+export interface GeneratedDiagramRecord {
+  id: string;
+  assetPath: string;
+  targetNotePath: string | null;
+  sourceMessageId: string;
+  createdAt: number;
+  status: "saved" | "inserted" | "failed";
+}
+
 export interface RestartDropNotice {
   approvalCount: number;
   patchCount: number;
@@ -578,12 +587,14 @@ export interface PersistedTabState {
   diffText: string;
   toolLog: ToolCallRecord[];
   patchBasket: PatchProposal[];
+  generatedDiagrams?: GeneratedDiagramRecord[];
   restartDropNotice?: RestartDropNotice | null;
 }
 
 export interface RuntimeTabState {
   sessionItems: ComposerAttachment[];
   patchBasket: PatchProposal[];
+  generatedDiagrams?: GeneratedDiagramRecord[];
   pendingApprovals: PendingApproval[];
   status: AgentStatus;
   runtimeMode: RuntimeMode;
