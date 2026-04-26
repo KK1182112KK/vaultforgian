@@ -2399,12 +2399,25 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__changes-tray.is-visible {
   display: grid;
+  max-height: min(38dvh, 360px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .obsidian-codex__changes-tray-header {
+  position: sticky;
+  top: -9px;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: -9px -11px 0;
+  padding: 9px 11px 7px;
+  background:
+    linear-gradient(180deg, var(--obsidian-codex-reading-bg-soft) 74%, color-mix(in srgb, var(--obsidian-codex-reading-bg-soft) 86%, transparent) 100%);
+  border-bottom: 1px solid color-mix(in srgb, var(--obsidian-codex-reading-border) 70%, transparent);
 }
 
 .obsidian-codex__changes-tray-title {
@@ -2555,8 +2568,14 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 .obsidian-codex__change-card-issues {
   display: grid;
   gap: 4px;
+  max-height: 118px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding-left: 10px;
+  padding-right: 4px;
   border-left: 2px solid color-mix(in srgb, rgba(var(--obsidian-codex-brand-rgb), 0.2) 44%, var(--background-modifier-border) 56%);
+  scrollbar-width: thin;
 }
 
 .obsidian-codex__change-card-issue {
@@ -2578,6 +2597,10 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.obsidian-codex__change-card.has-many-issues .obsidian-codex__change-card-diff {
+  max-height: 76px;
 }
 
 .obsidian-codex__change-card-actions {
@@ -2640,6 +2663,12 @@ body.theme-dark .obsidian-codex__input-area.is-plan-mode {
 
 .obsidian-codex__change-card-btn.is-muted::before {
   background: rgba(var(--obsidian-codex-edge-rgb), 0.18);
+}
+
+@media (max-width: 720px) {
+  .obsidian-codex__changes-tray.is-visible {
+    max-height: min(32dvh, 300px);
+  }
 }
 
 .obsidian-codex__attachment-chip {

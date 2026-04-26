@@ -916,11 +916,8 @@ function buildEditStatusLine(
       if (reviewReason === "safety_risk") {
         return context.copy.workspace.editSafetyReviewStatus(targetName);
       }
-      if (reviewReason === "readability_risk") {
-        return context.copy.workspace.editReadabilityReviewStatus(targetName);
-      }
-      if (reviewReason === "auto_healed") {
-        return context.copy.workspace.editAutoHealedReviewStatus(targetName);
+      if (reviewReason === "readability_risk" || reviewReason === "auto_healed") {
+        return null;
       }
       return context.copy.workspace.editReviewRequiredStatus(targetName);
     case "proposal_only":

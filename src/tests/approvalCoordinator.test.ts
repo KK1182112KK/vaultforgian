@@ -9,7 +9,12 @@ import { getLocalizedCopy } from "../util/i18n";
 import { ApprovalCoordinator, type ApprovalCoordinatorDeps } from "../app/approvalCoordinator";
 import type { ParsedAssistantOp } from "../util/assistantProposals";
 import { PatchConflictError, hashPatchContent } from "../util/patchConflicts";
-import { CALLOUT_MATH_COLLISION_SAMPLE, CALLOUT_MATH_HEALED_SAMPLE, CALLOUT_MATH_SAMPLE } from "./fixtures/calloutMathFixture";
+import {
+  CALLOUT_MATH_COLLISION_SAMPLE,
+  CALLOUT_MATH_HEALED_SAMPLE,
+  CALLOUT_MATH_MIXED_CONTEXT_SAMPLE,
+  CALLOUT_MATH_SAMPLE,
+} from "./fixtures/calloutMathFixture";
 import type { InstalledSkillDefinition } from "../util/skillCatalog";
 
 const tempRoots: string[] = [];
@@ -375,6 +380,62 @@ describe("ApprovalCoordinator", () => {
         qualityState: "review_required",
       }),
     );
+  });
+
+  it("applies readability-risk patches when the user explicitly confirms apply", async () => {
+    const { store, files, coordinator } = createDeps({}, { "notes/source.md": "Intro\nTail" });
+    const tabId = store.getActiveTab()!.id;
+    store.setPatchBasket(tabId, [
+      {
+        id: "patch-readable-explicit",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        targetPath: "notes/source.md",
+        kind: "update",
+        baseSnapshot: "Intro\nTail",
+        proposedText: `Intro\n${CALLOUT_MATH_MIXED_CONTEXT_SAMPLE}\nTail`,
+        unifiedDiff: "@@",
+        summary: "Insert mixed-context math",
+        status: "pending",
+        qualityState: "review_required",
+        createdAt: 1,
+      },
+    ]);
+
+    await coordinator.applyPatchProposal(tabId, "patch-readable-explicit", { allowReadabilityRisk: true });
+
+    expect(files.get("notes/source.md")).toContain("Outside the callout");
+    expect(store.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
+  });
+
+  it("keeps protected safety-risk patches blocked even when explicit apply allows readability risk", async () => {
+    const { store, files, coordinator } = createDeps({}, { "notes/source.md": "# Source\n\nOriginal" });
+    const tabId = store.getActiveTab()!.id;
+    store.setPatchBasket(tabId, [
+      {
+        id: "patch-protected-full-replace",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        targetPath: "notes/source.md",
+        kind: "update",
+        intent: "full_replace",
+        baseSnapshot: "# Source\n\nOriginal",
+        proposedText: "# Rewritten",
+        unifiedDiff: "@@",
+        summary: "Rewrite the whole note",
+        status: "pending",
+        safetyIssues: [{ code: "full_replace_requires_review", detail: "explicit_full_replace" }],
+        createdAt: 1,
+      },
+    ]);
+
+    await expect(
+      coordinator.applyPatchProposal(tabId, "patch-protected-full-replace", { allowReadabilityRisk: true }),
+    ).rejects.toThrow("Blocked: this patch could remove existing note content.");
+    expect(files.get("notes/source.md")).toBe("# Source\n\nOriginal");
+    expect(store.getActiveTab()?.patchBasket[0]?.status).toBe("pending");
   });
 
   it("adds an audit breadcrumb after applying an auto-healed patch", async () => {

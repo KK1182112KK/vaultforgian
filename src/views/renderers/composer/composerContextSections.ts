@@ -1,8 +1,15 @@
 import { Notice, setIcon } from "obsidian";
 import { basename } from "node:path";
+import type { PatchQualityIssue, PatchSafetyIssue } from "../../../model/types";
+import type { LocalizedCopy } from "../../../util/i18n";
 import { PatchConflictError } from "../../../util/patchConflicts";
+import { shouldBlockExplicitPatchApply } from "../../../util/patchSafety";
 import { openPatchConflictModal } from "../../patchConflictUi";
 import type { ComposerContextSectionDeps, ComposerSectionRenderState } from "./types";
+
+const MAX_VISIBLE_QUALITY_ISSUE_ROWS = 2;
+const MAX_VISIBLE_SAFETY_ISSUE_ROWS = 4;
+const MAX_ISSUE_LINE_LABELS = 3;
 
 export class ComposerContextSections {
   constructor(private readonly deps: ComposerContextSectionDeps) {}
@@ -194,7 +201,17 @@ export class ComposerContextSections {
 
     for (const proposal of proposals) {
       const visibleEvidence = proposal.evidence?.slice(0, 3) ?? [];
-      const cardEl = changesTrayEl.createDiv({ cls: `obsidian-codex__change-card${currentNotePreview ? " is-current-note" : ""}` });
+      const qualityIssueRows = summarizeQualityIssues(context.copy, proposal.qualityIssues ?? []);
+      const safetyIssueRows = summarizeSafetyIssues(context.copy, proposal.safetyIssues ?? []);
+      const rawIssueCount = (proposal.qualityIssues?.length ?? 0) + (proposal.safetyIssues?.length ?? 0);
+      const cardEl = changesTrayEl.createDiv({
+        cls: [
+          "obsidian-codex__change-card",
+          currentNotePreview ? "is-current-note" : "",
+          rawIssueCount > 0 ? "has-issues" : "",
+          rawIssueCount > MAX_VISIBLE_QUALITY_ISSUE_ROWS ? "has-many-issues" : "",
+        ].filter(Boolean).join(" "),
+      });
       const headEl = cardEl.createDiv({ cls: "obsidian-codex__change-card-head" });
       headEl.createSpan({
         cls: "obsidian-codex__change-card-path",
@@ -241,12 +258,13 @@ export class ComposerContextSections {
               : context.copy.workspace.patchReadabilityAutoHealed,
         });
       }
-      if ((proposal.qualityIssues?.length ?? 0) > 0) {
+      if (qualityIssueRows.length > 0) {
         const issuesEl = cardEl.createDiv({ cls: "obsidian-codex__change-card-issues" });
-        for (const issue of proposal.qualityIssues ?? []) {
+        for (const issue of qualityIssueRows) {
           issuesEl.createDiv({
             cls: "obsidian-codex__change-card-issue",
-            text: context.copy.workspace.patchQualityIssue(issue.code, issue.line, issue.detail ?? null),
+            text: issue.text,
+            attr: issue.title ? { title: issue.title } : undefined,
           });
         }
       }
@@ -259,12 +277,13 @@ export class ComposerContextSections {
               : context.copy.workspace.patchSafetyReview,
         });
       }
-      if ((proposal.safetyIssues?.length ?? 0) > 0) {
+      if (safetyIssueRows.length > 0) {
         const safetyIssuesEl = cardEl.createDiv({ cls: "obsidian-codex__change-card-issues" });
-        for (const issue of proposal.safetyIssues ?? []) {
+        for (const issue of safetyIssueRows) {
           safetyIssuesEl.createDiv({
             cls: "obsidian-codex__change-card-issue",
-            text: context.copy.workspace.patchSafetyIssue(issue.code, issue.detail ?? null, issue.deletedPercent ?? null),
+            text: issue.text,
+            attr: issue.title ? { title: issue.title } : undefined,
           });
         }
       }
@@ -305,9 +324,13 @@ export class ComposerContextSections {
         text: proposal.status === "conflicted" || proposal.status === "stale" ? context.copy.workspace.retry : context.copy.workspace.apply,
       });
       applyButton.type = "button";
-      applyButton.disabled = patchActionInFlight || proposal.status === "blocked";
+      const explicitApplyBlocked = shouldBlockExplicitPatchApply(proposal);
+      applyButton.disabled = patchActionInFlight || explicitApplyBlocked;
+      if (explicitApplyBlocked) {
+        applyButton.title = context.copy.workspace.patchSafetyBlocked;
+      }
       applyButton.addEventListener("click", () => {
-        if (this.deps.state.applyingPatchIds.has(proposal.id) || proposal.status === "blocked") {
+        if (this.deps.state.applyingPatchIds.has(proposal.id) || explicitApplyBlocked) {
           return;
         }
         this.deps.state.applyingPatchIds.add(proposal.id);
@@ -386,6 +409,76 @@ export class ComposerContextSections {
       }
     }
   }
+}
+
+interface CompactIssueRow {
+  text: string;
+  title: string;
+}
+
+interface QualityIssueGroup {
+  code: PatchQualityIssue["code"];
+  detail: string | null;
+  issues: PatchQualityIssue[];
+}
+
+function summarizeQualityIssues(copy: LocalizedCopy, issues: readonly PatchQualityIssue[]): CompactIssueRow[] {
+  const grouped = new Map<string, QualityIssueGroup>();
+  for (const issue of issues) {
+    const detail = issue.detail?.trim() || null;
+    const key = `${issue.code}:${detail ?? ""}`;
+    const group = grouped.get(key) ?? {
+      code: issue.code,
+      detail,
+      issues: [],
+    };
+    group.issues.push(issue);
+    grouped.set(key, group);
+  }
+  const rows = [...grouped.values()].map((group) => {
+    const lineLabel = formatIssueLineLabel(group.issues.flatMap((issue) => issue.line ?? []));
+    return {
+      text: `${lineLabel}: ${copy.workspace.patchQualityIssueGroup(group.code, group.detail)}`,
+      title: group.issues
+        .map((issue) => copy.workspace.patchQualityIssue(issue.code, issue.line, issue.detail ?? null))
+        .join("\n"),
+    };
+  });
+  return limitIssueRows(rows, MAX_VISIBLE_QUALITY_ISSUE_ROWS);
+}
+
+function summarizeSafetyIssues(copy: LocalizedCopy, issues: readonly PatchSafetyIssue[]): CompactIssueRow[] {
+  const rows = issues.map((issue) => ({
+    text: copy.workspace.patchSafetyIssue(issue.code, issue.detail ?? null, issue.deletedPercent ?? null),
+    title: copy.workspace.patchSafetyIssue(issue.code, issue.detail ?? null, issue.deletedPercent ?? null),
+  }));
+  return limitIssueRows(rows, MAX_VISIBLE_SAFETY_ISSUE_ROWS);
+}
+
+function limitIssueRows(rows: CompactIssueRow[], maxVisibleRows: number): CompactIssueRow[] {
+  if (rows.length <= maxVisibleRows) {
+    return rows;
+  }
+  const visibleRows = rows.slice(0, Math.max(1, maxVisibleRows - 1));
+  return [
+    ...visibleRows,
+    {
+      text: `+${rows.length - visibleRows.length} more issues`,
+      title: rows.slice(visibleRows.length).map((row) => row.title || row.text).join("\n"),
+    },
+  ];
+}
+
+function formatIssueLineLabel(lines: readonly number[]): string {
+  const uniqueLines = [...new Set(lines.filter((line) => Number.isFinite(line)))].sort((left, right) => left - right);
+  if (uniqueLines.length === 0) {
+    return "Issue";
+  }
+  const visibleLines = uniqueLines.slice(0, MAX_ISSUE_LINE_LABELS).join(", ");
+  const overflow = uniqueLines.length - MAX_ISSUE_LINE_LABELS;
+  return uniqueLines.length === 1
+    ? `Line ${visibleLines}`
+    : `Lines ${visibleLines}${overflow > 0 ? ` +${overflow}` : ""}`;
 }
 
 function summarizePreviewText(text: string, lines: number, maxLength: number): string {

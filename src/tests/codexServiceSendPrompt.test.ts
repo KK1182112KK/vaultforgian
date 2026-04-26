@@ -11,6 +11,7 @@ import {
 } from "../model/types";
 import {
   CALLOUT_MATH_COLLISION_SAMPLE,
+  CALLOUT_MATH_MIXED_CONTEXT_SAMPLE,
   CALLOUT_MATH_SAMPLE,
 } from "./fixtures/calloutMathFixture";
 import { createEmptyAccountUsageSummary, createEmptyUsageSummary } from "../util/usage";
@@ -593,6 +594,100 @@ describe("CodexService sendPrompt skill context", () => {
     const prompt = runTurnSpy.mock.calls[0]?.[1];
     expect(prompt).toContain("Turn your immediately previous assistant answer in this same thread");
     expect(prompt).toContain("Here is the cleaned-up explanation.");
+  });
+
+  it("treats Japanese affirmation as accepting a pending apply-to-note suggestion", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-rewrite-followup-affirmation-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "ja",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const assistantText = [
+      "平均負荷電力の導出を短く整理できます。",
+      "",
+      "この内容を今のノートに適用しますか？",
+      "",
+      "```obsidian-suggest",
+      JSON.stringify({
+        kind: "rewrite_followup",
+        summary: "Turn the previous explanation into a concise note patch.",
+        question: "この内容を今のノートに適用しますか？",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-affirmation-1",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-affirmation-1", assistantText);
+
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    await service.sendPrompt(tabId, "はい", { file: null, editor: null });
+
+    expect(runTurnSpy).toHaveBeenCalledTimes(1);
+    expect(runTurnSpy.mock.calls[0]?.[1]).toContain("Turn your immediately previous assistant answer");
+    expect(runTurnSpy.mock.calls[0]?.[1]).not.toBe("はい");
+    const userMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "user") ?? [];
+    expect(userMessages.at(-1)?.text).toBe("ノートに適用");
+    expect(userMessages.at(-1)?.meta?.internalPromptKind).toBe("rewrite_followup");
+  });
+
+  it("applies the only pending patch when the user sends an affirmative reply", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-pending-patch-affirmation-"));
+    tempRoots.push(vaultRoot);
+
+    const writable = createWritableApp(vaultRoot, { "notes/current.md": "# Current\n\nOriginal" });
+    const service = new CodexService(writable.app, () => DEFAULT_SETTINGS, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.setPatchBasket(tabId, [
+      {
+        id: "patch-affirm-1",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        targetPath: "notes/current.md",
+        kind: "update",
+        baseSnapshot: "# Current\n\nOriginal",
+        proposedText: "# Current\n\nOriginal\n\nAdded line.",
+        unifiedDiff: "@@",
+        summary: "Add one line.",
+        status: "pending",
+        createdAt: Date.now(),
+      },
+    ]);
+
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    await service.sendPrompt(tabId, "yes", { file: null, editor: null });
+
+    expect(runTurnSpy).not.toHaveBeenCalled();
+    expect(writable.files.get("notes/current.md")).toBe("# Current\n\nOriginal\n\nAdded line.");
+    expect(service.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
   });
 
   it("marks suggestion-only note edit replies as proposal_only with the resolved target path", async () => {
@@ -2587,6 +2682,88 @@ describe("CodexService sendPrompt skill context", () => {
     const assistantMessage = service.getActiveTab()?.messages.find((message) => message.kind === "assistant");
     expect(assistantMessage?.meta?.editOutcome).toBe("review_required");
     expect(assistantMessage?.meta?.editReviewReason).toBe("auto_healed");
+  }, 10000);
+
+  it("keeps readability-risk patches pending in full-auto but applies them after explicit affirmation", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-readability-explicit-apply-"));
+    tempRoots.push(vaultRoot);
+
+    const settings: PluginSettings = {
+      ...DEFAULT_SETTINGS,
+      permissionMode: "full-auto",
+    };
+    const writable = createWritableApp(vaultRoot, { "notes/current.md": "# Current\n\nOriginal" });
+    const service = new CodexService(writable.app, () => settings, () => "en", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onEvent: (event: unknown) => void }).onEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: [
+            "Prepared the note change.",
+            "",
+            "```obsidian-patch",
+            "path: notes/current.md",
+            "kind: update",
+            "operation: augment",
+            "summary: Add mixed-context callout math",
+            "",
+            "---anchorBefore",
+            "# Current",
+            "",
+            "Original",
+            "---anchorAfter",
+            "",
+            "---replacement",
+            "",
+            "",
+            CALLOUT_MATH_MIXED_CONTEXT_SAMPLE,
+            "---end",
+            "```",
+          ].join("\n"),
+        },
+      });
+      return { threadId: "thread-readability-explicit-1" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Improve this note.",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      true,
+      "draft",
+    );
+
+    expect(writable.files.get("notes/current.md")).toBe("# Current\n\nOriginal");
+    expect(service.getActiveTab()?.patchBasket[0]).toEqual(
+      expect.objectContaining({
+        qualityState: "review_required",
+        status: "pending",
+      }),
+    );
+
+    await service.sendPrompt(tabId, "yes", { file: null, editor: null });
+
+    expect(writable.files.get("notes/current.md")).toContain("Outside the callout");
+    expect(service.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
+    expect(service.getActiveTab()?.messages.some((message) => message.text.startsWith("Review needed:"))).toBe(false);
   }, 10000);
 
   it("blocks unsafe content-only updates and keeps the existing note unchanged when repair finds no anchors", async () => {

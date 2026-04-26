@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PatchProposal, StudyRecipe, WorkspaceState } from "../../model/types";
 import { getLocalizedCopy } from "../../util/i18n";
@@ -1426,8 +1428,8 @@ describe("Panel Studio composer flow", () => {
     harness.renderAll();
     await tick();
 
-    expect(harness.composerRoot.textContent).toContain("Review required: Markdown structure may reduce note readability.");
-    expect(harness.composerRoot.textContent).toContain("Line 4: replace standalone `$` display-math delimiters with `$$`.");
+    expect(harness.composerRoot.textContent).toContain("Review required: Markdown readability risk.");
+    expect(harness.composerRoot.textContent).toContain("Line 4: Use `$$` for display-math delimiter lines.");
   });
 
   it("shows the auto-healed warning copy for normalized patches waiting for review", async () => {
@@ -1483,6 +1485,64 @@ describe("Panel Studio composer flow", () => {
     const buttons = Array.from(harness.composerRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn"));
     expect(buttons.map((button) => button.textContent)).toEqual(["Open", "Reject", "Apply"]);
     expect(buttons.find((button) => button.textContent === "Apply")?.disabled).toBe(true);
+  });
+
+  it("summarizes many patch issues compactly while keeping patch actions reachable", async () => {
+    const harness = createHarness();
+    const proposal: PatchProposal = {
+      id: "patch-many-issues-1",
+      threadId: null,
+      sourceMessageId: "assistant-many-issues",
+      originTurnId: "turn-many-issues",
+      targetPath: "courses/lecture-15.md",
+      kind: "update",
+      baseSnapshot: "# Before",
+      proposedText: "# After",
+      unifiedDiff: "@@ -1 +1 @@",
+      summary: "Add derivation with callout math.",
+      status: "pending",
+      createdAt: 4,
+      qualityState: "review_required",
+      qualityIssues: [
+        ...Array.from({ length: 7 }, (_, index) => ({
+          code: "mixed_display_math_context" as const,
+          line: 107 + index * 10,
+          detail: "quote_1->plain",
+        })),
+        { code: "math_delimiter_marker_collision", line: 102, detail: "quoted:> - BJT の small-signal" },
+        { code: "display_math_same_line_delimiter", line: 102, detail: "> $$> - BJT の small-signal" },
+        { code: "unmatched_display_math", line: 214, detail: "plain" },
+        { code: "adjacent_block_spacing", line: 220, detail: "missing_blank_line_after_math_block" },
+        { code: "display_math_single_dollar", line: 230, detail: null },
+      ],
+    };
+    harness.service.getTabPatchBasket = () => [proposal];
+    harness.renderAll();
+    await tick();
+
+    const issueRows = Array.from(harness.composerRoot.querySelectorAll<HTMLElement>(".obsidian-codex__change-card-issue"));
+    expect(issueRows).toHaveLength(2);
+    expect(issueRows[0]?.textContent).toContain("Lines 107, 117, 127 +4");
+    expect(issueRows[0]?.textContent).toContain("Keep math delimiters in the same callout/quote context.");
+    expect(issueRows[0]?.title).toContain("Line 107");
+    expect(issueRows[1]?.textContent).toBe("+5 more issues");
+
+    const buttons = Array.from(harness.composerRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn"));
+    expect(buttons.map((button) => button.textContent)).toEqual(["Open", "Reject", "Apply"]);
+  });
+
+  it("keeps the changes tray and issue list internally scrollable through CSS", () => {
+    const css = readFileSync(join(process.cwd(), "src/styles/40-cards-and-hub-details.css"), "utf8");
+
+    expect(css).toContain(".obsidian-codex__changes-tray.is-visible");
+    expect(css).toContain("max-height: min(38dvh, 360px)");
+    expect(css).toContain("overflow-y: auto");
+    expect(css).toContain("overscroll-behavior: contain");
+    expect(css).toContain(".obsidian-codex__changes-tray-header");
+    expect(css).toContain("position: sticky");
+    expect(css).toContain(".obsidian-codex__change-card-issues");
+    expect(css).toContain("max-height: 118px");
+    expect(css).toContain("max-height: 76px");
   });
 
   it("disables the patch apply button while the apply action is in flight", async () => {

@@ -21,6 +21,7 @@ import {
   assessPatchReadability,
   PatchReadabilityError,
 } from "../util/patchReadability";
+import { shouldBlockExplicitPatchApply } from "../util/patchSafety";
 import { buildUnifiedDiff } from "../util/unifiedDiff";
 import { validateManagedFolderPath, validateManagedNotePath } from "../util/vaultPathPolicy";
 
@@ -28,6 +29,9 @@ export type ToolDecision = "approve" | "approve_session" | "deny" | "abort";
 export type ApprovalResult = "applied" | "denied" | "aborted" | "failed" | "ignored";
 type AbortReason = "user_interrupt" | "approval_abort" | "tab_close" | "plugin_unload" | "runtime_abort";
 export type PatchOverwriteResult = "applied" | "changed";
+export interface PatchApplyOptions {
+  allowReadabilityRisk?: boolean;
+}
 
 interface VaultTaskMatchResult {
   lineIndex: number;
@@ -240,6 +244,7 @@ export class ApprovalCoordinator {
     patchId: string,
     proposal: ConversationTabState["patchBasket"][number],
     nextText: string,
+    options: PatchApplyOptions = {},
   ): string {
     const normalizedText = normalizeProposalText(nextText);
     const readability = assessPatchReadability(normalizedText);
@@ -251,14 +256,8 @@ export class ApprovalCoordinator {
       qualityIssues: readability.qualityIssues.map((issue) => ({ ...issue })),
       healedByPlugin: readability.healedByPlugin,
     }));
-    if (readability.qualityState === "review_required") {
+    if (readability.qualityState === "review_required" && !options.allowReadabilityRisk) {
       const message = this.deps.getLocalizedCopy().service.patchNeedsReview(proposal.targetPath);
-      this.deps.store.addMessage(tabId, {
-        id: makeId("patch-readability-review-needed"),
-        kind: "system",
-        text: message,
-        createdAt: Date.now(),
-      });
       throw new PatchReadabilityError(message, proposal.targetPath);
     }
     return readability.text;
@@ -463,7 +462,7 @@ export class ApprovalCoordinator {
     }
   }
 
-  async applyPatchProposal(tabId: string, patchId: string): Promise<void> {
+  async applyPatchProposal(tabId: string, patchId: string, options: PatchApplyOptions = {}): Promise<void> {
     const patchActionKey = buildPatchActionKey(tabId, patchId);
     if (this.patchApplyActionsInFlight.has(patchActionKey)) {
       return;
@@ -473,7 +472,7 @@ export class ApprovalCoordinator {
     if (!tab || !proposal) {
       return;
     }
-    if (proposal.status === "blocked") {
+    if (shouldBlockExplicitPatchApply(proposal)) {
       throw new Error(this.deps.getLocalizedCopy().workspace.patchSafetyBlocked);
     }
     this.patchApplyActionsInFlight.add(patchActionKey);
@@ -489,7 +488,7 @@ export class ApprovalCoordinator {
           this.markPatchConflict(tabId, patchId);
           throw this.buildPatchConflictError(tabId, proposal, "target_exists", currentContent, currentContent);
         }
-        textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, proposal.proposedText);
+        textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, proposal.proposedText, options);
         if (!file) {
           await this.ensureParentFolder(targetPath);
           await this.deps.app.vault.create(targetPath, textToWrite);
@@ -528,7 +527,7 @@ export class ApprovalCoordinator {
             throw this.buildPatchConflictError(tabId, proposal, "content_changed", currentContent, currentContent);
           }
         }
-        textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, textToWrite);
+        textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, textToWrite, options);
         await this.deps.app.vault.modify(file, textToWrite);
       }
 
@@ -550,6 +549,9 @@ export class ApprovalCoordinator {
     if (!tab || !proposal) {
       return "applied";
     }
+    if (shouldBlockExplicitPatchApply(proposal)) {
+      throw new Error(this.deps.getLocalizedCopy().workspace.patchSafetyBlocked);
+    }
     const targetPath = this.assertManagedNotePath(proposal.targetPath, (path) => this.getUnsafeNotePathMessage(path));
     const abstractFile = asFileLike(this.deps.app.vault.getAbstractFileByPath(targetPath));
     const file = abstractFile;
@@ -557,7 +559,9 @@ export class ApprovalCoordinator {
     if (!force && expectedCurrentContentHash !== null && expectedCurrentContentHash !== hashPatchContent(currentContent)) {
       return "changed";
     }
-    const textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, proposal.proposedText);
+    const textToWrite = this.ensureReadablePatchBeforeWrite(tabId, patchId, proposal, proposal.proposedText, {
+      allowReadabilityRisk: true,
+    });
 
     if (proposal.kind === "create") {
       if (!file) {

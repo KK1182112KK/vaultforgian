@@ -193,6 +193,7 @@ export interface LocalizedCopy {
     patchReadabilityAutoHealed: string;
     patchReadabilityAppliedAfterHeal: (name: string | null) => string;
     patchQualityIssue: (code: PatchQualityIssueCode, line?: number | null, detail?: string | null) => string;
+    patchQualityIssueGroup: (code: PatchQualityIssueCode, detail?: string | null) => string;
     patchSafetyBlocked: string;
     patchSafetyReview: string;
     patchSafetyIssue: (code: PatchSafetyIssueCode, detail?: string | null, deletedPercent?: number | null) => string;
@@ -376,6 +377,52 @@ function formatJapanesePatchQualityIssue(code: PatchQualityIssueCode, line?: num
       return `${prefix}callout header も \`>\` で quote し、callout block に含めてください。`;
     default:
       return `${prefix}適用前に Markdown 構造を確認してください。`;
+  }
+}
+
+function formatEnglishPatchQualityIssueGroup(code: PatchQualityIssueCode, detail?: string | null): string {
+  switch (code) {
+    case "display_math_single_dollar":
+      return "Use `$$` for display-math delimiter lines.";
+    case "math_delimiter_marker_collision":
+      return "Separate math delimiters from block markers.";
+    case "unmatched_display_math":
+      return "Close the display-math block with a matching delimiter.";
+    case "adjacent_block_spacing":
+      return detail === "missing_blank_line_before_math_block"
+        ? "Add blank lines before display-math blocks."
+        : "Add blank lines after display-math blocks.";
+    case "mixed_display_math_context":
+      return "Keep math delimiters in the same callout/quote context.";
+    case "display_math_same_line_delimiter":
+      return "Use standalone `$$` lines for multi-line display math.";
+    case "unquoted_callout_header":
+      return "Quote callout headers with `>`.";
+    default:
+      return "Review the Markdown structure before applying.";
+  }
+}
+
+function formatJapanesePatchQualityIssueGroup(code: PatchQualityIssueCode, detail?: string | null): string {
+  switch (code) {
+    case "display_math_single_dollar":
+      return "display math の区切りは `$$` にしてください。";
+    case "math_delimiter_marker_collision":
+      return "math delimiter と block marker を分けてください。";
+    case "unmatched_display_math":
+      return "display math block を対応する区切りで閉じてください。";
+    case "adjacent_block_spacing":
+      return detail === "missing_blank_line_before_math_block"
+        ? "display math block の前に空行を入れてください。"
+        : "display math block の後に空行を入れてください。";
+    case "mixed_display_math_context":
+      return "math delimiter を同じ callout / quote 文脈にそろえてください。";
+    case "display_math_same_line_delimiter":
+      return "複数行の式は単独の `$$` 行で囲ってください。";
+    case "unquoted_callout_header":
+      return "callout header を `>` で quote してください。";
+    default:
+      return "適用前に Markdown 構造を確認してください。";
   }
 }
 
@@ -621,10 +668,11 @@ const EN_COPY: LocalizedCopy = {
     reflectInNoteQuestion: "Want me to apply this to the note now?",
     evidence: "Evidence",
     webBackedPatch: "Web-backed",
-    patchReadabilityReview: "Review required: Markdown structure may reduce note readability.",
+    patchReadabilityReview: "Review required: Markdown readability risk.",
     patchReadabilityAutoHealed: "Plugin normalized Markdown structure. Review it before applying.",
     patchReadabilityAppliedAfterHeal: (name) => `Applied after the plugin normalized Markdown structure: ${name ?? "note"}.`,
     patchQualityIssue: (code, line, detail) => formatEnglishPatchQualityIssue(code, line, detail),
+    patchQualityIssueGroup: (code, detail) => formatEnglishPatchQualityIssueGroup(code, detail),
     patchSafetyBlocked: "Blocked: this patch could remove existing note content.",
     patchSafetyReview: "Review required: this patch changes or removes protected note content.",
     patchSafetyIssue: (code, detail, deletedPercent) => formatEnglishPatchSafetyIssue(code, detail, deletedPercent),
@@ -959,10 +1007,11 @@ const JA_COPY: LocalizedCopy = {
     reflectInNoteQuestion: "この内容を今のノートに適用しますか？",
     evidence: "根拠",
     webBackedPatch: "Web根拠",
-    patchReadabilityReview: "確認必須: Markdown 構造に可読性リスクがあります。",
+    patchReadabilityReview: "確認必須: Markdown の可読性リスクがあります。",
     patchReadabilityAutoHealed: "plugin が Markdown 構造を自動補正しました。適用前に確認してください。",
     patchReadabilityAppliedAfterHeal: (name) => `plugin が Markdown 構造を補正したうえで反映しました: ${name ?? "ノート"}。`,
     patchQualityIssue: (code, line, detail) => formatJapanesePatchQualityIssue(code, line, detail),
+    patchQualityIssueGroup: (code, detail) => formatJapanesePatchQualityIssueGroup(code, detail),
     patchSafetyBlocked: "ブロック: この patch は既存ノート本文を削除する可能性があります。",
     patchSafetyReview: "確認必須: この patch は保護対象のノート本文を変更または削除します。",
     patchSafetyIssue: (code, detail, deletedPercent) => formatJapanesePatchSafetyIssue(code, detail, deletedPercent),

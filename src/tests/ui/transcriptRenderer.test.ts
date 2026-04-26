@@ -1017,7 +1017,7 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Review needed: source.md.");
   });
 
-  it("shows readability-specific review copy when the patch is held for markdown risk", () => {
+  it("does not prepend readability-specific review copy when the tray already shows markdown risk", () => {
     const state = createState();
     state.tabs[0]!.messages = [
       {
@@ -1037,12 +1037,12 @@ describe("TranscriptRenderer avatar safety", () => {
 
     renderer.render(createContext(state));
 
-    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain(
-      "Readability review needed: source.md.",
-    );
+    const text = root.querySelector(".obsidian-codex__message-markdown")?.textContent ?? "";
+    expect(text).toContain("I tightened the section wording and cleaned up the heading hierarchy.");
+    expect(text).not.toContain("Readability review needed: source.md.");
   });
 
-  it("shows auto-healed review copy when the plugin normalized markdown before holding the patch", () => {
+  it("does not prepend auto-healed review copy when the tray already shows markdown risk", () => {
     const state = createState();
     state.tabs[0]!.messages = [
       {
@@ -1062,9 +1062,9 @@ describe("TranscriptRenderer avatar safety", () => {
 
     renderer.render(createContext(state));
 
-    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain(
-      "Auto-healed structure: review source.md before applying.",
-    );
+    const text = root.querySelector(".obsidian-codex__message-markdown")?.textContent ?? "";
+    expect(text).toContain("I normalized the structure and held the patch for review.");
+    expect(text).not.toContain("Auto-healed structure: review source.md before applying.");
   });
 
   it("invalidates the transcript when the active tab suggestion is dismissed", () => {

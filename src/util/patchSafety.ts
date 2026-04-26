@@ -44,6 +44,17 @@ export function hasRepairablePatchSafetyIssue(proposal: Pick<PatchProposal, "saf
   return Boolean(proposal.safetyIssues?.some((issue) => issue.code === "unsafe_full_update"));
 }
 
+export function shouldBlockExplicitPatchApply(
+  proposal: Pick<PatchProposal, "status" | "intent" | "safetyIssues">,
+): boolean {
+  return (
+    proposal.status === "blocked" ||
+    proposal.intent === "delete" ||
+    proposal.intent === "full_replace" ||
+    (proposal.safetyIssues?.length ?? 0) > 0
+  );
+}
+
 export function assessPatchSafety(input: PatchSafetyInput): PatchSafetyAssessment {
   if (input.kind !== "update" || input.baseText === null) {
     return { safetyIssues: [], blocked: false };

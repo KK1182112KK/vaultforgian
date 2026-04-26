@@ -332,6 +332,21 @@ const PATCH_PROMISE_PATTERNS: RegExp[] = [
   /\brewrit(?:e|ten)\b/i,
 ];
 
+const LOCAL_APPLY_CONFIRMATION_PATTERNS: RegExp[] = [
+  /^(?:はい|うん|了解|承知|お願い(?:します)?|おねがい(?:します)?|ok|okay|yes|y|yep|sure)$/iu,
+  /^(?:はい|うん|了解|承知)[、,\s]*(?:お願い(?:します)?|おねがい(?:します)?|反映(?:して|してください|して下さい)?|適用(?:して|してください|して下さい)?)$/iu,
+  /^(?:反映|適用)(?:して|してください|して下さい|お願いします|おねがいします)?$/iu,
+  /^(?:apply(?: it| that| the patch)?|go ahead(?: and apply(?: it| the patch)?)?)$/iu,
+];
+
+function matchesLocalApplyConfirmation(input: string): boolean {
+  const normalized = input
+    .trim()
+    .replace(/[。.!！?？]+$/u, "")
+    .trim();
+  return Boolean(normalized && LOCAL_APPLY_CONFIRMATION_PATTERNS.some((pattern) => pattern.test(normalized)));
+}
+
 const STRONG_NOTE_REFLECTION_PATTERNS: RegExp[] = [
   /changes proposed below\.?$/im,
   /\bwant me to apply this to the note now\??$/im,
@@ -2815,6 +2830,10 @@ export class CodexService {
     if (initialTab.status === "busy" || initialTab.status === "waiting_approval" || this.pendingPromptSends.has(tabId)) {
       throw new Error(this.getLocalizedCopy().service.tabAlreadyRunning);
     }
+    if (await this.maybeHandleLocalApplyConfirmation(tabId, normalizedInput, context)) {
+      this.store.setDraft(tabId, "");
+      return;
+    }
     this.pendingPromptSends.add(tabId);
     let scheduledRun = false;
 
@@ -3033,7 +3052,7 @@ export class CodexService {
   }
 
   async applyPatchProposal(tabId: string, patchId: string): Promise<void> {
-    await this.approvalCoordinator.applyPatchProposal(tabId, patchId);
+    await this.approvalCoordinator.applyPatchProposal(tabId, patchId, { allowReadabilityRisk: true });
   }
 
   async overwritePatchProposal(
@@ -3070,7 +3089,7 @@ export class CodexService {
       throw new Error(this.getLocalizedCopy().notices.noPendingPatch);
     }
     try {
-      await this.approvalCoordinator.applyPatchProposal(tabId, proposal.id);
+      await this.approvalCoordinator.applyPatchProposal(tabId, proposal.id, { allowReadabilityRisk: true });
     } catch (error) {
       if (error instanceof PatchConflictError) {
         openPatchConflictModal(this.app, this, this.getLocalizedCopy().workspace, error);
@@ -3081,6 +3100,33 @@ export class CodexService {
       }
       throw error;
     }
+  }
+
+  private async maybeHandleLocalApplyConfirmation(
+    tabId: string,
+    input: string,
+    context?: SendPromptContext,
+  ): Promise<boolean> {
+    if (!matchesLocalApplyConfirmation(input)) {
+      return false;
+    }
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return false;
+    }
+    const suggestion = tab.chatSuggestion;
+    if (suggestion?.kind === "rewrite_followup" && suggestion.status === "pending") {
+      await this.respondToRewriteSuggestion(tabId, "rewrite_note", context);
+      return true;
+    }
+    const pendingPatchCount = tab.patchBasket.filter(
+      (entry) => entry.status === "pending" || entry.status === "conflicted",
+    ).length;
+    if (pendingPatchCount > 0) {
+      await this.applyLatestPendingPatch(tabId);
+      return true;
+    }
+    return false;
   }
 
   private async runTurn(
@@ -4393,12 +4439,6 @@ export class CodexService {
           continue;
         }
         if (error instanceof PatchReadabilityError) {
-          this.store.addMessage(tabId, {
-            id: makeId("patch-readability-review-needed"),
-            kind: "system",
-            text: error.message,
-            createdAt: Date.now(),
-          });
           continue;
         }
         throw error;
