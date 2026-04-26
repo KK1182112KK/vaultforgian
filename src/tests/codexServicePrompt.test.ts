@@ -254,7 +254,7 @@ describe("buildTurnPrompt", () => {
   it("uses study-coach guidance when learning mode is active for an explanation turn", () => {
     const prompt = buildTurnPrompt(
       "Explain Fourier transforms to me.",
-      createContext(),
+      createContext({ studyWorkflow: "review" }),
       "normal",
       [],
       "chat",
@@ -275,7 +275,7 @@ describe("buildTurnPrompt", () => {
   it("lets direct-answer requests bypass the coaching preamble for that turn", () => {
     const prompt = buildTurnPrompt(
       "Just give me the answer: what is a Laplace transform?",
-      createContext(),
+      createContext({ studyWorkflow: "review" }),
       "normal",
       [],
       "chat",

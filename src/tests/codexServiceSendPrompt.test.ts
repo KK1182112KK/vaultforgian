@@ -353,6 +353,14 @@ describe("CodexService sendPrompt skill context", () => {
       model: "gpt-5.4",
       reasoningEffort: "xhigh",
       fastMode: false,
+      contextBundle: expect.objectContaining({
+        vaultRoot,
+        activeNote: expect.objectContaining({ path: "notes/current.md" }),
+        targetNote: expect.objectContaining({ path: "notes/current.md" }),
+      }),
+      capabilities: expect.arrayContaining([
+        expect.objectContaining({ trigger: "/note", kind: "slash" }),
+      ]),
     });
     const request = runCodexStreamSpy.mock.calls[0]?.[0] as {
       onJsonEvent?: unknown;

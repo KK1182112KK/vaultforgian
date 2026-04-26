@@ -5,68 +5,7 @@ import {
   buildPatchMathFormattingRules,
   buildQuotedPatchMathFormattingRules,
 } from "../util/patchPromptContract";
-import { allowsVaultWrite as promptAllowsVaultWrite } from "../util/vaultEdit";
-
-const DIRECT_ANSWER_PATTERNS: readonly RegExp[] = [
-  /\bjust give me the answer\b/i,
-  /\bjust tell me\b/i,
-  /\bdirect answer\b/i,
-  /\banswer first\b/i,
-  /\bskip the questions\b/i,
-  /\bno hints\b/i,
-  /\bshow me the solution\b/i,
-  /答えだけ/,
-  /先に答え/,
-  /そのまま答え/,
-  /質問しないで/,
-  /ヒントはいらない/,
-  /解答だけ/,
-  /結論から/,
-];
-
-const EXPLANATION_PATTERNS: readonly RegExp[] = [
-  /\bexplain\b/i,
-  /\bteach me\b/i,
-  /\bhelp me understand\b/i,
-  /\bwalk me through\b/i,
-  /\bstudy\b/i,
-  /\blearn\b/i,
-  /\breview\b/i,
-  /\bwhat is\b/i,
-  /\bhow does\b/i,
-  /\bwhy\b/i,
-  /説明/,
-  /教えて/,
-  /理解/,
-  /勉強/,
-  /復習/,
-  /なぜ/,
-  /どうして/,
-  /とは/,
-  /解説/,
-];
-
-function matchesAnyPattern(value: string, patterns: readonly RegExp[]): boolean {
-  return patterns.some((pattern) => pattern.test(value));
-}
-
-function shouldUseLearningMode(
-  prompt: string,
-  context: TurnContextSnapshot,
-  composeMode: ComposeMode,
-  allowVaultWrite: boolean,
-): boolean {
-  if (composeMode !== "chat" || allowVaultWrite) {
-    return false;
-  }
-  if (promptAllowsVaultWrite(prompt)) {
-    return false;
-  }
-  if (context.studyWorkflow) {
-    return true;
-  }
-  return matchesAnyPattern(prompt, EXPLANATION_PATTERNS);
-}
+import { buildStudyLayerPromptOverlay } from "../agent/study/studyLayer";
 
 export function buildTurnPrompt(
   prompt: string,
@@ -83,6 +22,15 @@ export function buildTurnPrompt(
     learningMode?: boolean;
   } = {},
 ): string {
+  const studyOverlay = buildStudyLayerPromptOverlay({
+    prompt,
+    context,
+    mode,
+    skillNames,
+    composeMode,
+    allowVaultWrite,
+    learningMode: Boolean(options.learningMode),
+  });
   const instructions = [
     "You are Codex embedded in an Obsidian vault.",
     "Prefer concise, practical markdown answers.",
@@ -97,7 +45,7 @@ export function buildTurnPrompt(
       ? 'Planmode is active for this turn. Treat this as a specification interview. Ask exactly one high-impact clarifying question at a time until the request is decision-complete, then summarize the agreed plan. When the plan is ready to implement, append a fenced `obsidian-plan` JSON block with {"status":"ready_to_implement","summary":"..."} after the visible summary. Do not edit files, do not apply patches, and do not make lasting workspace changes.'
       : [
           "Chat mode is active for this turn.",
-          "If you are giving a study/explanation answer about a note, lecture, paper, or homework AND you are not emitting an `obsidian-patch`, `obsidian-ops`, or `obsidian-plan` block, start the visible answer with one short status line saying the note was not changed yet, then end with one short question asking whether to apply it to the note now.",
+          "If you are giving an explanation answer about a note or attached material AND you are not emitting an `obsidian-patch`, `obsidian-ops`, or `obsidian-plan` block, start the visible answer with one short status line saying the note was not changed yet, then end with one short question asking whether to apply it to the note now.",
           "After that visible question, append a fenced `obsidian-suggest` JSON block with `{\"kind\":\"rewrite_followup\",\"summary\":\"...\",\"question\":\"...\"}` so the plugin can show the rewrite CTA.",
           "Use the user's language for that visible question. Skip this suggestion block only when the user explicitly says not to edit or not to suggest note changes.",
         ].join("\n"),
@@ -142,15 +90,12 @@ export function buildTurnPrompt(
     `Vault root: ${context.vaultRoot}`,
     `Active note path: ${context.activeFilePath ?? "none"}`,
     `Session target note path: ${context.targetNotePath ?? "none"}`,
-    `Active study workflow: ${context.studyWorkflow ?? "none"}`,
-    `Study coach carry-forward: ${context.studyCoachText ? "attached" : "none"}`,
+    ...studyOverlay.statusLines,
     `User adaptation memory: ${context.userAdaptationText ? "attached" : "none"}`,
     `Conversation carry-forward summary: ${context.conversationSummaryText ? "attached" : "none"}`,
     `Source acquisition mode: ${context.sourceAcquisitionMode}`,
     `Source acquisition contract: ${context.sourceAcquisitionContractText ? "attached" : "none"}`,
-    `Paper-study runtime overlay: ${context.paperStudyRuntimeOverlayText ? "attached" : "none"}`,
     `Requested skill guides: ${context.skillGuideText ? "attached" : "none"}`,
-    `Paper-study guidance: ${context.paperStudyGuideText ? "attached" : "none"}`,
     `Explicit mentions: ${context.mentionContextText ? "attached" : "none"}`,
     `Selection snapshot: ${context.selection ? `attached from ${context.selectionSourcePath ?? "the current note"}` : "none"}`,
     `Vault note source pack: ${context.noteSourcePackText ? "attached" : "none"}`,
@@ -168,28 +113,7 @@ export function buildTurnPrompt(
     instructions.push("Do not propose or rely on shell commands matching those blocked patterns.");
   }
 
-  const learningModeActive = Boolean(options.learningMode) && shouldUseLearningMode(prompt, context, composeMode, allowVaultWrite);
-  if (learningModeActive) {
-    const directAnswerRequested = matchesAnyPattern(prompt, DIRECT_ANSWER_PATTERNS);
-    if (directAnswerRequested) {
-      instructions.push(
-        "Learning mode is active for this tab. Use a study-coach response structure for study and explanation turns. Because the user explicitly asked for the direct answer in this turn, Give the direct answer first.",
-      );
-      instructions.push(
-        "After the direct answer, still include one short understanding-check question, name one likely point of confusion, suggest the next study step, and append a fenced `obsidian-study-checkpoint` JSON block after the visible answer. Use this literal fence label: ```obsidian-study-checkpoint",
-      );
-    } else {
-      instructions.push(
-        "Learning mode is active for this tab. Use a study-coach response structure for study and explanation turns: lead with the key explanation, include one short understanding-check question, name a likely point of confusion, and end with the next study step.",
-      );
-      instructions.push(
-        "After the visible answer, append a fenced `obsidian-study-checkpoint` JSON block with keys `workflow`, `mastered`, `unclear`, `next_step`, and `confidence_note`. Keep the checkpoint factual and concise so the plugin can carry it forward into the next turn. Use this literal fence label: ```obsidian-study-checkpoint",
-      );
-      instructions.push(
-        "Do not force this study-coach contract onto note-editing, patch-generation, implementation, or operational tasks.",
-      );
-    }
-  }
+  instructions.push(...studyOverlay.instructions);
 
   if (context.pluginFeatureText) {
     instructions.push("A plugin feature guide is attached for this turn. Answer plugin-UI questions from that guide first.");
@@ -201,14 +125,6 @@ export function buildTurnPrompt(
   if (mode === "skill" && skillNames.length > 0) {
     instructions.push(`Explicit skill references present: ${skillNames.map((name) => `$${name}`).join(", ")}`);
     instructions.push("Honor the explicit $skill references present in the user request.");
-  }
-
-  if (context.paperStudyRuntimeOverlayText) {
-    instructions.push(
-      "A paper-study runtime overlay is attached for this turn. It overrides attached skill guides and any source-bundle/path hints in the user request.",
-    );
-    instructions.push("Do not perform a second local PDF ingestion pass when the attached source text is already present.");
-    instructions.push("Do not call shell or file-reading tools for source acquisition in this turn.");
   }
 
   if (context.sourceAcquisitionContractText) {
@@ -230,24 +146,12 @@ export function buildTurnPrompt(
     instructions.push("Use the attached conversation summary as prior thread context for this fresh thread.");
   }
 
-  if (learningModeActive && context.studyCoachText) {
-    instructions.push("A study coach carry-forward summary is attached for this turn.");
-    instructions.push("Use it to continue from the learner's latest recap, unresolved weak point, and next study step.");
-  }
-
   if (context.userAdaptationText) {
     instructions.push("A user adaptation memory summary is attached for this turn.");
     instructions.push(
       "Use it as a lightweight personalization hint for explanation depth, note-structuring preferences, and panel-specific habits.",
     );
     instructions.push("Do not quote it back to the user and do not treat it as a hard rule when the current request conflicts.");
-  }
-
-  if (context.paperStudyGuideText) {
-    instructions.push("A paper-study guide is attached for this turn. Follow it before falling back to generic paper-reading instructions.");
-    instructions.push(
-      "When attached paper text is present, do not fall back to generic 'paste the abstract' or 'local read failed' instructions.",
-    );
   }
 
   if (context.attachmentContentText) {
@@ -276,14 +180,11 @@ export function buildTurnPrompt(
   return [
     instructions.join("\n"),
     context.sourceAcquisitionContractText,
-    learningModeActive ? context.studyCoachText ?? null : null,
     context.userAdaptationText,
     context.conversationSummaryText,
-    context.workflowText,
     context.pluginFeatureText,
-    context.paperStudyRuntimeOverlayText,
+    ...studyOverlay.blocks,
     context.skillGuideText,
-    context.paperStudyGuideText,
     context.mentionContextText,
     selectionBlock,
     context.noteSourcePackText,

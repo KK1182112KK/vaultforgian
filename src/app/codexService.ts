@@ -60,14 +60,10 @@ import {
 } from "../util/reasoning";
 import { getPermissionModeProfile, type NoteApplyPolicy, type PermissionMode } from "../util/permissionMode";
 import {
-  buildAttachmentContentPackResult,
-  buildAttachmentPromptManifest,
   buildAttachmentSummaryText,
   cleanupComposerAttachments,
   DEFAULT_ATTACHMENT_PROMPT,
   DEFAULT_SELECTION_AND_ATTACHMENT_PROMPT,
-  PAPER_STUDY_ATTACHMENT_CONTENT_MAX_CHARS,
-  PAPER_STUDY_ATTACHMENT_CONTENT_MAX_CHARS_PER_FILE,
   normalizeComposerAttachments,
   resolveComposerAttachmentStageRoot,
   stageComposerAttachment,
@@ -85,9 +81,9 @@ import {
 import { getDefaultWslBridgeSkillRoots, normalizeConfiguredSkillRoots } from "../util/skillRoots";
 import { parseEnvironmentEntries } from "../util/pluginSettings";
 import { extractSkillReferences } from "../util/skillRouting";
-import { getSlashCommandCatalog, type SlashCommandDefinition } from "../util/slashCommandCatalog";
+import type { SlashCommandDefinition } from "../util/slashCommandCatalog";
 import { expandSlashCommand } from "../util/slashCommands";
-import { buildRequestedSkillGuideText, resolveRequestedSkillDefinitions } from "../util/skillGuides";
+import { resolveRequestedSkillDefinitions } from "../util/skillGuides";
 import { collectTurnRequestedSkillRefs } from "../util/turnSkillSelection";
 import {
   DEFAULT_WSL_FALLBACK_LAUNCHER_PARTS,
@@ -96,13 +92,10 @@ import {
 } from "../util/runtimeFallback";
 import { containsFuturePatchPromise, normalizeVisibleUserPromptText, sanitizeOperationalAssistantText } from "../util/assistantChatter";
 import { classifyAgenticTurnIntent, resolvePatchIntent } from "../util/agenticTurnPolicy";
-import { buildPaperStudyRuntimeOverlayText } from "../util/paperStudyRuntimeOverlay";
 import {
-  buildSourceAcquisitionContractText,
   buildVaultNoteSourcePackText,
   dedupeNoteFiles,
   extractSourcePackPriorityTerms,
-  type SourceAcquisitionMode,
 } from "../util/sourceAcquisition";
 import {
   extractAssistantProposals,
@@ -124,7 +117,7 @@ import {
   buildQuotedPatchMathFormattingRules,
 } from "../util/patchPromptContract";
 import { buildUnifiedDiff } from "../util/unifiedDiff";
-import { buildUserAdaptationMemoryText, updateUserAdaptationMemory } from "../util/userAdaptation";
+import { updateUserAdaptationMemory } from "../util/userAdaptation";
 import { validateManagedNotePath } from "../util/vaultPathPolicy";
 import { AUTO_APPLY_CONSENT_VERSION } from "../util/permissionLifecycle";
 import {
@@ -148,19 +141,16 @@ import {
 import { allowsVaultWrite } from "../util/vaultEdit";
 import { pickWaitingCopy } from "../util/waiting";
 import {
-  buildStudyRecipeChatPrompt,
   buildStudyRecipeMentionContext,
   type StudyRecipePreflight,
 } from "../util/studyRecipes";
 import {
   buildStudyWorkflowDraft,
-  buildStudyWorkflowRuntimeBrief,
   getStudyRecipeWorkflowLabel,
   getStudyWorkflowDefinition,
   type StudyWorkflowPromptContext,
 } from "../util/studyWorkflows";
-import { buildPaperStudyGuideText, shouldAttachPaperStudyGuide } from "../util/studyTurnGuides";
-import { buildPluginFeatureGuideText } from "../util/pluginFeatureGuides";
+import { shouldAttachPaperStudyGuide } from "../util/studyTurnGuides";
 import { shouldSuppressImmediateDuplicateUserPrompt } from "../util/messageDedup";
 import { getRecoveredDraftValue } from "../util/draftRecovery";
 import {
@@ -184,8 +174,22 @@ import {
   CodexRuntimeAdapter,
   getCodexWatchdogStageFromError,
   getThreadIdFromCodexError,
-  type CodexRuntimeAdapterRequest,
 } from "./codexRuntimeAdapter";
+import { AgentTurnRunner } from "../agent/core/agentTurnRunner";
+import { CodexCliAgentRuntime } from "../agent/core/codexAgentRuntime";
+import {
+  agentContextBundleFromTurnContext,
+  type AgentCapability,
+  type AgentContextBundle,
+  type AgentRuntimeCallbacks,
+  type AgentTurnRequest,
+} from "../agent/core/types";
+import {
+  agentCapabilitiesToSlashCommands,
+  buildAgentCapabilityCatalog,
+} from "../agent/core/agentCapabilityCatalog";
+import { AgentArtifactRouter } from "../agent/core/agentArtifactRouter";
+import { AgentContextAssembler } from "../agent/core/agentContextAssembler";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -455,12 +459,15 @@ export class CodexService {
   private readonly pendingTurns = new Map<string, PendingTurnState>();
   private readonly sessionFileCache = new Map<string, string>();
   private readonly pendingPromptSends = new Set<string>();
+  private readonly latestContextBundles = new Map<string, AgentContextBundle>();
   private readonly saveListeners: Array<() => void> = [];
   private readonly studyPanels: StudyPanelCoordinator;
   private readonly threadEventReducer: ThreadEventReducer;
   private readonly approvalCoordinator: ApprovalCoordinator;
   private readonly usageSync: UsageSyncCoordinator;
-  private readonly runtimeAdapter: CodexRuntimeAdapter;
+  private readonly turnRunner: AgentTurnRunner;
+  private readonly artifactRouter: AgentArtifactRouter;
+  private readonly contextAssembler: AgentContextAssembler;
   private lastResolvedSessionSearchRoots: string[] = [CODEX_SESSION_ROOT];
   private wslBridgeSessionRootsPromise: Promise<string[]> | null = null;
   private saveQueued = false;
@@ -544,7 +551,26 @@ export class CodexService {
         this.updateAccountUsageFromSummary(summary, threadId, source, observedAt ?? checkedAt, checkedAt);
       },
     });
-    this.runtimeAdapter = new CodexRuntimeAdapter({
+    this.artifactRouter = new AgentArtifactRouter();
+    this.contextAssembler = new AgentContextAssembler({
+      getLocale: () => this.getLocale(),
+      getLocalizedCopy: () => this.getLocalizedCopy(),
+      findDailyNotePath: async () => (await this.findDailyNoteFile())?.path ?? null,
+      findTab: (tabId) => this.findTab(tabId),
+      resolveTargetNotePath: (tabId) => this.resolveTargetNotePath(tabId),
+      getActivePanelId: (tabId) => this.getActivePanelId(tabId),
+      getHubPanels: () => this.getHubPanels(),
+      getStudyHubState: () => this.getStudyHubState(),
+      buildWorkflowPromptContext: (tabId, workflow, currentFilePath) =>
+        this.buildWorkflowPromptContext(tabId, workflow, currentFilePath),
+      captureContextPackText: (tabId, excludedPaths) => this.captureContextPackText(tabId, excludedPaths),
+      captureVaultNoteSourcePackText: (activeFile, targetNotePath, selectionSourcePath, prompt) =>
+        this.captureVaultNoteSourcePackText(activeFile, targetNotePath, selectionSourcePath, prompt),
+      resolveVaultRoot: () => this.resolveVaultRoot(),
+      buildStudyCoachCarryForwardText: (tab) => this.buildStudyCoachCarryForwardText(tab as ConversationTabState | null),
+      getUserAdaptationMemory: () => this.store.getState().userAdaptationMemory ?? null,
+    });
+    const runtimeAdapter = new CodexRuntimeAdapter({
       getConfiguredCommandText: () => this.getConfiguredCommandText(),
       getLocale: () => this.getLocale(),
       getProcessEnv: () => this.resolveProcessEnv(),
@@ -560,6 +586,7 @@ export class CodexService {
         }
       },
     });
+    this.turnRunner = new AgentTurnRunner({ runtime: new CodexCliAgentRuntime(runtimeAdapter) });
     this.saveListeners.push(
       this.store.subscribe(() => {
         void this.persistWorkspace();
@@ -907,66 +934,17 @@ export class CodexService {
     return true;
   }
 
+  getAgentCapabilities(): AgentCapability[] {
+    return buildAgentCapabilityCatalog({
+      locale: this.getLocale(),
+      customPrompts: this.customPromptCatalog,
+      installedSkills: this.installedSkillCatalog,
+      studyRecipes: this.getStudyRecipes(),
+    });
+  }
+
   getSlashCommandCatalog(): SlashCommandDefinition[] {
-    const catalog = [...getSlashCommandCatalog(this.getLocale())];
-    const seen = new Set(catalog.map((entry) => entry.command.toLowerCase()));
-    for (const prompt of this.customPromptCatalog) {
-      if (!seen.has(prompt.command.toLowerCase())) {
-        catalog.push({
-          command: prompt.command,
-          label: prompt.label,
-          description: prompt.description,
-          source: "custom_prompt",
-          mode: "prompt",
-        });
-        seen.add(prompt.command.toLowerCase());
-      }
-      for (const alias of prompt.aliases) {
-        if (seen.has(alias.toLowerCase())) {
-          continue;
-        }
-        catalog.push({
-          command: alias,
-          label: prompt.label,
-          description: prompt.description,
-          source: "custom_prompt",
-          mode: "prompt",
-        });
-        seen.add(alias.toLowerCase());
-      }
-    }
-    for (const skill of this.installedSkillCatalog) {
-      const command = `/${skill.name}`;
-      if (seen.has(command.toLowerCase())) {
-        continue;
-      }
-      catalog.push({
-        command,
-        label: skill.name,
-        description: skill.description,
-        source: "skill_alias",
-        mode: "skill_alias",
-        skillName: skill.name,
-      });
-      seen.add(command.toLowerCase());
-    }
-    for (const recipe of this.getStudyRecipes()) {
-      if (seen.has(recipe.commandAlias.toLowerCase())) {
-        continue;
-      }
-      catalog.push({
-        command: recipe.commandAlias,
-        label: recipe.title,
-        description: recipe.description,
-        source: "study_recipe",
-        mode: "study_recipe",
-        recipeId: recipe.id,
-        recipePrompt: buildStudyRecipeChatPrompt(recipe, this.getLocale()),
-        studyWorkflow: recipe.workflow === "custom" ? undefined : recipe.workflow,
-      });
-      seen.add(recipe.commandAlias.toLowerCase());
-    }
-    return catalog;
+    return agentCapabilitiesToSlashCommands(this.getAgentCapabilities());
   }
 
   getUserOwnedInstalledSkills(): InstalledSkillDefinition[] {
@@ -2799,6 +2777,9 @@ export class CodexService {
         mentionResolution.explicitTargetNotePath,
         skillNames,
         resolvedSkillDefinitions,
+        mentionResolution.skillNames,
+        mentionResolution.sourcePathHints,
+        mentionResolution.workingDirectoryHint,
       );
       if (paperStudyGuideNeeded) {
         if (contextSnapshot.attachmentMissingSourceNames.length > 0 || contextSnapshot.attachmentMissingPdfTextNames.length > 0) {
@@ -3061,29 +3042,45 @@ export class CodexService {
       const handleJsonEvent = (event: JsonRecord) => {
         terminalError = this.threadEventReducer.handleThreadEvent(tabId, event, assistantOutputVisibility) ?? terminalError;
       };
+      const runtimePrompt = buildTurnPrompt(prompt, turnContext, mode, skillNames, composeMode, allowVaultWrite, this.getNoteApplyPolicy(composeMode), {
+        preferredName: this.settingsProvider().preferredName,
+        customSystemPrompt: this.settingsProvider().customSystemPrompt,
+        learningMode: this.findTab(tabId)?.learningMode ?? false,
+        shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
+          ? [
+              ...this.settingsProvider().securityPolicy.blockedCommandsWindows,
+              ...this.settingsProvider().securityPolicy.blockedCommandsUnix,
+            ]
+          : [],
+      });
+      const previousContextBundle = this.latestContextBundles.get(tabId);
+      const contextBundle = agentContextBundleFromTurnContext(turnContext, {
+        attachments: previousContextBundle?.attachments.items ?? [],
+        mentionSkillNames: previousContextBundle?.mentions.skillNames ?? [],
+        mentionSourcePathHints: previousContextBundle?.mentions.sourcePathHints ?? [],
+        explicitTargetNotePath: previousContextBundle?.mentions.explicitTargetNotePath ?? null,
+        workingDirectoryHint: previousContextBundle?.mentions.workingDirectoryHint ?? null,
+      });
       const { threadId } = await this.runCodexStream({
-        prompt: buildTurnPrompt(prompt, turnContext, mode, skillNames, composeMode, allowVaultWrite, this.getNoteApplyPolicy(composeMode), {
-          preferredName: this.settingsProvider().preferredName,
-          customSystemPrompt: this.settingsProvider().customSystemPrompt,
-          learningMode: this.findTab(tabId)?.learningMode ?? false,
-          shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
-            ? [
-                ...this.settingsProvider().securityPolicy.blockedCommandsWindows,
-                ...this.settingsProvider().securityPolicy.blockedCommandsUnix,
-              ]
-            : [],
-        }),
+        visiblePrompt: this.getCurrentTurnUserPromptMessage(tabId)?.text ?? prompt,
+        executionPrompt: prompt,
+        prompt: runtimePrompt,
+        mode,
+        composeMode,
         tabId,
         threadId: this.shouldStartFreshThread(tabId) ? null : this.findTab(tabId)?.codexThreadId ?? null,
         workingDirectory,
         runtime,
         executablePath,
         launcherOverrideParts,
+        permissionProfile,
         sandboxMode: permissionProfile.sandboxMode,
         approvalPolicy: permissionProfile.approvalPolicy,
         images,
         model,
         reasoningEffort,
+        contextBundle,
+        capabilities: this.getAgentCapabilities(),
         fastMode,
         signal: controller.signal,
         watchdogRecoveryAttempted,
@@ -3456,9 +3453,20 @@ export class CodexService {
   }
 
   private async runCodexStream(
-    request: CodexRuntimeAdapterRequest & { onEvent?: (event: JsonRecord) => void },
+    request: AgentTurnRequest &
+      AgentRuntimeCallbacks & {
+        sandboxMode?: "read-only" | "workspace-write";
+        approvalPolicy?: "untrusted" | "on-failure" | "never";
+        onEvent?: (event: JsonRecord) => void;
+      },
   ): Promise<{ threadId: string | null }> {
-    return await this.runtimeAdapter.run(request);
+    return await this.turnRunner.run(request, {
+      onJsonEvent: request.onJsonEvent,
+      onSessionId: request.onSessionId,
+      onLiveness: request.onLiveness,
+      onMeaningfulProgress: request.onMeaningfulProgress,
+      onWatchdogStageChange: request.onWatchdogStageChange,
+    });
   }
 
   private async resolveRequestedSkills(prompt: string): Promise<string[]> {
@@ -3609,7 +3617,14 @@ export class CodexService {
     }
     const originTurnId = this.pendingTurns.get(tabId)?.turnId ?? null;
 
-    const parsed = extractAssistantProposals(text);
+    const routed = await this.artifactRouter.routeAssistantText({
+      tabId,
+      messageId,
+      text,
+      visibility,
+      originTurnId,
+    });
+    const parsed = routed.parsed;
     if (parsed.patches.length > 0 && this.activeRuns.has(tabId)) {
       this.store.setWaitingState(tabId, {
         phase: "tools",
@@ -4988,114 +5003,26 @@ export class CodexService {
     explicitTargetNotePath: string | null,
     skillNames: readonly string[],
     resolvedSkillDefinitions: readonly InstalledSkillDefinition[],
+    mentionSkillNames: readonly string[] = [],
+    mentionSourcePathHints: readonly string[] = [],
+    workingDirectoryHint: string | null = null,
   ): Promise<TurnContextSnapshot> {
-    const dailyNoteFile = await this.findDailyNoteFile();
-    const dailyNotePath = dailyNoteFile?.path ?? null;
-    const tab = this.findTab(tabId);
-    const selectionContext = slashCommand === "/selection" ? null : tab?.selectionContext ?? null;
-    const selection = selectionContext?.text ?? null;
-    const targetNotePath = resolveEditTarget({
-      explicitTargetPath: explicitTargetNotePath,
-      selectionSourcePath: selectionContext?.sourcePath ?? null,
-      activeFilePath: file?.path ?? null,
-      sessionTargetPath: this.resolveTargetNotePath(tabId),
-    }).path;
-    const studyWorkflow = tab?.studyWorkflow ?? null;
-    const activePanelId = tab?.activeStudyRecipeId ?? this.getActivePanelId(tabId);
-    const workflowContext = this.buildWorkflowPromptContext(tabId, studyWorkflow, file?.path ?? null);
-    const pluginFeatureText = buildPluginFeatureGuideText({
-      prompt,
-      locale: this.getLocale(),
-      copy: this.getLocalizedCopy(),
-      panels: this.getHubPanels(),
-      activePanelId,
-      isCollapsed: this.getStudyHubState().isCollapsed,
-      targetNotePath,
-    });
-    const excludedContextPaths = [
-      slashCommand === "/note" ? file?.path ?? null : null,
-      slashCommand === "/daily" ? dailyNotePath : null,
-    ].filter((entry): entry is string => Boolean(entry));
-    const contextPackText = await this.captureContextPackText(tabId, excludedContextPaths);
-    const noteSourcePackText = await this.captureVaultNoteSourcePackText(
+    const assembly = await this.contextAssembler.assembleTurnContext({
+      tabId,
       file,
-      targetNotePath,
-      selectionContext?.sourcePath ?? file?.path ?? null,
       prompt,
-    );
-    const attachmentManifestText = buildAttachmentPromptManifest(attachments);
-    const paperStudyTurn = shouldAttachPaperStudyGuide({
-      locale: this.getLocale(),
-      studyWorkflow,
-      skillNames,
-      attachmentKinds: attachments.map((attachment) => attachment.kind),
-    });
-    const attachmentContentPack = await buildAttachmentContentPackResult(this.resolveVaultRoot(), attachments, paperStudyTurn
-      ? {
-          maxChars: PAPER_STUDY_ATTACHMENT_CONTENT_MAX_CHARS,
-          maxCharsPerFile: PAPER_STUDY_ATTACHMENT_CONTENT_MAX_CHARS_PER_FILE,
-        }
-      : undefined);
-    const attachmentContentText = attachmentContentPack.text;
-    const studyCoachText = this.buildStudyCoachCarryForwardText(tab);
-    const conversationSummaryText =
-      tab?.lineage.pendingThreadReset && tab.summary?.text.trim()
-        ? ["Conversation carry-forward summary", tab.summary.text.trim()].join("\n\n")
-        : null;
-    const sourceAcquisitionMode: SourceAcquisitionMode = attachmentContentText
-      ? "paper_attachment"
-      : noteSourcePackText
-        ? "vault_note"
-        : mentionContextText?.includes("Mentioned external directory") || mentionContextText?.includes("Mentioned external directory (provenance)")
-          ? "external_bundle"
-          : "workspace_generic";
-    const sourceAcquisitionContractText = buildSourceAcquisitionContractText({
-      locale: this.getLocale(),
-      mode: sourceAcquisitionMode,
-      hasSourcePackage: Boolean(attachmentContentText || noteSourcePackText),
-    });
-    const paperStudyRuntimeOverlayText = buildPaperStudyRuntimeOverlayText({
-      locale: this.getLocale(),
-      studyWorkflow,
-      skillNames,
-      hasAttachmentContent: Boolean(attachmentContentText),
-    });
-    const skillGuideText = await buildRequestedSkillGuideText(skillNames, resolvedSkillDefinitions, {
-      paperStudyAttachmentTurn: Boolean(attachmentContentText) && paperStudyTurn,
-    });
-    const paperStudyGuideText = buildPaperStudyGuideText({
-      locale: this.getLocale(),
-      studyWorkflow,
-      skillNames,
-      attachmentKinds: attachments.map((attachment) => attachment.kind),
-    });
-    const userAdaptationText = buildUserAdaptationMemoryText(this.store.getState().userAdaptationMemory ?? null, activePanelId);
-    return {
-      activeFilePath: file?.path ?? null,
-      targetNotePath,
-      studyWorkflow,
-      studyCoachText,
-      userAdaptationText,
-      conversationSummaryText,
-      sourceAcquisitionMode,
-      sourceAcquisitionContractText,
-      workflowText: studyWorkflow ? buildStudyWorkflowRuntimeBrief(studyWorkflow, workflowContext, this.getLocale()) : null,
-      pluginFeatureText,
-      paperStudyRuntimeOverlayText,
-      skillGuideText,
-      paperStudyGuideText,
+      slashCommand,
+      attachments,
       mentionContextText,
-      selection: selection || null,
-      selectionSourcePath: selectionContext?.sourcePath ?? file?.path ?? null,
-      vaultRoot: this.resolveVaultRoot(),
-      dailyNotePath,
-      contextPackText,
-      attachmentManifestText,
-      attachmentContentText,
-      noteSourcePackText,
-      attachmentMissingPdfTextNames: attachmentContentPack.missingPdfTextAttachmentNames,
-      attachmentMissingSourceNames: attachmentContentPack.missingSourceAttachmentNames,
-    };
+      explicitTargetNotePath,
+      mentionSkillNames,
+      mentionSourcePathHints,
+      workingDirectoryHint,
+      skillNames,
+      resolvedSkillDefinitions,
+    });
+    this.latestContextBundles.set(tabId, assembly.bundle);
+    return assembly.context;
   }
 
   private buildWorkflowPromptContext(
