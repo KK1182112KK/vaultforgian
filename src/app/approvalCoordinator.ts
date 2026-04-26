@@ -164,6 +164,17 @@ function buildPatchActionKey(tabId: string, patchId: string): string {
   return `${tabId}:${patchId}`;
 }
 
+function systemToneMeta(tone: "success" | "warning" | "error"): { tone: string } {
+  return { tone };
+}
+
+function buildBatchApprovalTone(applied: number, failed: number): "success" | "error" | null {
+  if (failed > 0) {
+    return "error";
+  }
+  return applied > 0 ? "success" : null;
+}
+
 function isVaultOpProposal(payload: PendingApproval["toolPayload"]): payload is VaultOpProposal {
   return Boolean(
     payload &&
@@ -235,6 +246,7 @@ export class ApprovalCoordinator {
       id: makeId("unsafe-vault-op"),
       kind: "system",
       text: this.getUnsafeVaultOpMessage(path),
+      meta: systemToneMeta("error"),
       createdAt: Date.now(),
     });
   }
@@ -375,6 +387,7 @@ export class ApprovalCoordinator {
           id: makeId("approval-ok"),
           kind: "system",
           text: this.deps.getLocalizedCopy().service.approvalApplied(approval.title),
+          meta: systemToneMeta("success"),
           createdAt: Date.now(),
         });
         this.reconcileApprovalStatus(tabId);
@@ -398,6 +411,7 @@ export class ApprovalCoordinator {
           id: makeId("approval-error"),
           kind: "system",
           text: `${approval.title} failed: ${message}`,
+          meta: systemToneMeta("error"),
           createdAt: Date.now(),
         });
         this.deps.store.removeApproval(approvalId);
@@ -449,10 +463,12 @@ export class ApprovalCoordinator {
         }
       }
 
+      const tone = buildBatchApprovalTone(applied, failed);
       this.deps.store.addMessage(tabId, {
         id: makeId("approval-batch"),
         kind: "system",
         text: this.deps.getLocalizedCopy().service.batchApprovalFinished(applied, denied, failed),
+        meta: tone ? systemToneMeta(tone) : undefined,
         createdAt: Date.now(),
       });
       this.reconcileApprovalStatus(tabId);

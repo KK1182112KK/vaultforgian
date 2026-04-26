@@ -136,6 +136,27 @@ describe("ApprovalCoordinator", () => {
     expect(tab?.toolLog).toHaveLength(0);
   });
 
+  it("marks blocked vault operation notices as error system messages", async () => {
+    const { store, coordinator } = createDeps({}, { "notes/source.md": "# Source" });
+    const tabId = store.getActiveTab()!.id;
+    const ops: ParsedAssistantOp[] = [
+      {
+        sourceIndex: 0,
+        kind: "rename",
+        targetPath: "notes/source.md",
+        destinationPath: "../archive/source-renamed.md",
+        summary: "Rename note outside the vault",
+      },
+    ];
+
+    const approvals = await coordinator.buildVaultOpApprovals(tabId, "assistant-unsafe", ops, true);
+    const message = store.getActiveTab()?.messages.at(-1);
+
+    expect(approvals).toHaveLength(0);
+    expect(message?.text).toContain("Blocked unsafe");
+    expect(message?.meta?.tone).toBe("error");
+  });
+
   it("applies a patch proposal", async () => {
     const { store, files, coordinator } = createDeps({}, { "notes/source.md": "old" });
     const tabId = store.getActiveTab()!.id;
@@ -564,6 +585,7 @@ describe("ApprovalCoordinator", () => {
     expect(updated).toContain("## Learned execution refinements");
     expect(updated).toContain("Keep structural edits concise.");
     expect(store.getActiveTab()?.pendingApprovals).toHaveLength(0);
+    expect(store.getActiveTab()?.messages.at(-1)?.meta?.tone).toBe("success");
   });
 
   it("includes skill-update approvals in batch approval actions", async () => {
@@ -620,6 +642,58 @@ describe("ApprovalCoordinator", () => {
 
     expect(await readFile(skillPath, "utf8")).toContain("Prefer precise evidence.");
     expect(store.getActiveTab()?.pendingApprovals).toHaveLength(0);
+    expect(store.getActiveTab()?.messages.at(-1)?.meta?.tone).toBe("success");
+  });
+
+  it("marks batch approval summaries with failures as error system messages", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-skill-update-batch-failure-"));
+    tempRoots.push(tempRoot);
+    const skillPath = join(tempRoot, "skills", "deep-read", "SKILL.md");
+    await mkdir(join(tempRoot, "skills", "deep-read"), { recursive: true });
+    await writeFile(skillPath, "# Deep Read\n\nOriginal body.\n", "utf8");
+
+    const { store, coordinator } = createDeps({
+      getUserOwnedInstalledSkills: () => [],
+    });
+    const tabId = store.getActiveTab()!.id;
+    store.setApprovals(tabId, [
+      {
+        id: "approval-skill-failing-batch",
+        tabId,
+        callId: "call-skill-failing-batch",
+        toolName: "skill_update" as never,
+        title: "Update skill: deep-read",
+        description: skillPath,
+        details: "Learned refinement",
+        diffText: "@@",
+        createdAt: 1,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        transport: "plugin_proposal",
+        decisionTarget: skillPath,
+        scopeEligible: false,
+        scope: "write",
+        toolPayload: {
+          skillName: "deep-read",
+          skillPath,
+          baseContent: "# Deep Read\n\nOriginal body.\n",
+          baseContentHash: hashPatchContent("# Deep Read\n\nOriginal body.\n"),
+          nextContent: "# Deep Read\n\nUpdated body.\n",
+          feedbackSummary: "Learned refinement",
+          attribution: {
+            prompt: "Improve this note.",
+            summary: "Applied a note cleanup.",
+            targetNotePath: "notes/source.md",
+            panelId: null,
+          },
+        } as never,
+      },
+    ]);
+
+    await coordinator.respondToAllApprovals(tabId, "approve");
+
+    expect(store.getActiveTab()?.messages.at(-1)?.text).toContain("failed: 1");
+    expect(store.getActiveTab()?.messages.at(-1)?.meta?.tone).toBe("error");
   });
 
   it("rejects skill-update approvals for paths outside the current user-owned skill catalog", async () => {
@@ -672,6 +746,7 @@ describe("ApprovalCoordinator", () => {
     expect(result).toBe("failed");
     expect(await readFile(skillPath, "utf8")).toBe("# Deep Read\n\nOriginal body.\n");
     expect(store.getActiveTab()?.messages.at(-1)?.text).toContain("Skill update blocked");
+    expect(store.getActiveTab()?.messages.at(-1)?.meta?.tone).toBe("error");
   });
 
   it("rejects skill-update approvals when the skill name/path pair no longer matches the current catalog", async () => {

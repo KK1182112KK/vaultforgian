@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Notice } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalResult } from "../../app/approvalCoordinator";
@@ -816,6 +818,38 @@ describe("TranscriptRenderer avatar safety", () => {
     const content = root.querySelector(".obsidian-codex__message-content--system") as HTMLElement | null;
     expect(content?.classList.contains("is-success")).toBe(true);
     expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Successfully patched notes/source.md.");
+  });
+
+  it("maps system message tones to explicit visual classes and leaves untoned messages neutral", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      { id: "m1", kind: "system", text: "Informational note.", createdAt: 1 },
+      { id: "m2", kind: "system", text: "Saved successfully.", createdAt: 2, meta: { tone: "success" } },
+      { id: "m3", kind: "system", text: "Review before applying.", createdAt: 3, meta: { tone: "warning" } },
+      { id: "m4", kind: "system", text: "Failed to apply.", createdAt: 4, meta: { tone: "error" } },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    const contents = Array.from(root.querySelectorAll(".obsidian-codex__message-content--system"));
+    expect(contents[0]?.classList.contains("is-success")).toBe(false);
+    expect(contents[0]?.classList.contains("is-warning")).toBe(false);
+    expect(contents[0]?.classList.contains("is-error")).toBe(false);
+    expect(contents[1]?.classList.contains("is-success")).toBe(true);
+    expect(contents[2]?.classList.contains("is-warning")).toBe(true);
+    expect(contents[3]?.classList.contains("is-error")).toBe(true);
+  });
+
+  it("keeps untoned system message CSS neutral instead of using the error color", () => {
+    const css = readFileSync(join(process.cwd(), "src/styles/10-layout.css"), "utf8");
+    const baseBlock = css.match(/\.obsidian-codex__message-content--system\s*\{[^}]+\}/u)?.[0] ?? "";
+
+    expect(baseBlock).not.toContain("var(--text-error)");
+    expect(baseBlock).not.toContain("rgba(220, 53, 69");
+    expect(css).toContain(".obsidian-codex__message-content--system.is-error");
+    expect(css).toContain(".obsidian-codex__message-content--system.is-warning");
   });
 
   it("renders rewrite-followup suggestions with the reflect CTA and fallback question", () => {

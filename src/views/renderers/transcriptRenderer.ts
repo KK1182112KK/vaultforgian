@@ -326,7 +326,7 @@ export class TranscriptRenderer {
     const copy = context.copy;
     const isSelectionContext = message.meta?.selectionContext === true;
     const isAttachmentSummary = message.meta?.attachmentSummary === true;
-    const isSuccessSystemMessage = message.kind === "system" && message.meta?.tone === "success";
+    const systemTone = message.kind === "system" ? getSystemMessageTone(message.meta) : null;
     const msgEl = this.root.createDiv({
       cls: `obsidian-codex__message obsidian-codex__message-${message.kind}${isSelectionContext ? " obsidian-codex__message-selection" : ""}`,
     });
@@ -342,7 +342,7 @@ export class TranscriptRenderer {
         `${message.pending ? " is-pending" : ""}` +
         `${isSelectionContext ? " is-selection-context" : ""}` +
         `${isAttachmentSummary ? " is-attachment-summary" : ""}` +
-        `${isSuccessSystemMessage ? " is-success" : ""}`,
+        `${systemTone ? ` is-${systemTone}` : ""}`,
     });
     const bodyEl = contentEl.createDiv({ cls: "obsidian-codex__message-body" });
     if (isSelectionContext) {
@@ -826,6 +826,11 @@ export class TranscriptRenderer {
       });
     });
   }
+}
+
+function getSystemMessageTone(meta: ChatMessage["meta"] | null | undefined): "success" | "warning" | "error" | null {
+  const tone = typeof meta?.tone === "string" ? meta.tone : null;
+  return tone === "success" || tone === "warning" || tone === "error" ? tone : null;
 }
 
 function createTranscriptMessageSignature(message: ChatMessage): string {

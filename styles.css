@@ -793,15 +793,27 @@ body.theme-light .obsidian-codex {
 
 .obsidian-codex__message-content--system {
   width: 100%;
-  color: var(--text-error);
-  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(220, 53, 69, 0.12) 18%);
-  border-color: color-mix(in srgb, var(--background-modifier-border) 66%, rgba(220, 53, 69, 0.34) 34%);
+  color: var(--obsidian-codex-text-soft);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 92%, rgba(var(--obsidian-codex-edge-rgb), 0.04) 8%);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 82%, rgba(var(--obsidian-codex-edge-rgb), 0.12) 18%);
 }
 
 .obsidian-codex__message-content--system.is-success {
   color: color-mix(in srgb, var(--text-success, #2f9e44) 82%, var(--text-normal) 18%);
   background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 86%, rgba(47, 158, 68, 0.12) 14%);
   border-color: color-mix(in srgb, var(--background-modifier-border) 68%, rgba(47, 158, 68, 0.3) 32%);
+}
+
+.obsidian-codex__message-content--system.is-warning {
+  color: color-mix(in srgb, var(--text-warning, #d97706) 84%, var(--text-normal) 16%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 86%, rgba(217, 119, 6, 0.12) 14%);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 68%, rgba(217, 119, 6, 0.3) 32%);
+}
+
+.obsidian-codex__message-content--system.is-error {
+  color: var(--text-error);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(220, 53, 69, 0.12) 18%);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 66%, rgba(220, 53, 69, 0.34) 34%);
 }
 
 .obsidian-codex__message-content--waiting {

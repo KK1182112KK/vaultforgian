@@ -1474,6 +1474,7 @@ export class CodexService {
         id: makeId("error"),
         kind: "system",
         text: message,
+        meta: { tone: "error" },
         createdAt: Date.now(),
       });
     }
@@ -3268,6 +3269,7 @@ export class CodexService {
           id: makeId("error"),
           kind: "system",
           text: terminalError,
+          meta: { tone: "error" },
           createdAt: Date.now(),
         });
         this.completePendingTurn(tabId, "error");
@@ -3370,6 +3372,7 @@ export class CodexService {
             id: makeId("error"),
             kind: "system",
             text: repairFailedMessage,
+            meta: { tone: "error" },
             createdAt: Date.now(),
           });
           this.completePendingTurn(tabId, "error");
@@ -3414,6 +3417,7 @@ export class CodexService {
           id: makeId("error"),
           kind: "system",
           text: emptyReplyMessage,
+          meta: { tone: "error" },
           createdAt: Date.now(),
         });
         this.completePendingTurn(tabId, "error");
@@ -3433,6 +3437,7 @@ export class CodexService {
           id: makeId("error"),
           kind: "system",
           text: repairFailedMessage,
+          meta: { tone: "error" },
           createdAt: Date.now(),
         });
         this.completePendingTurn(tabId, "error");
@@ -3544,6 +3549,7 @@ export class CodexService {
         id: makeId("error"),
         kind: "system",
         text: normalizedMessage,
+        meta: { tone: "error" },
         createdAt: Date.now(),
       });
       this.completePendingTurn(tabId, "error");
@@ -4415,6 +4421,7 @@ export class CodexService {
         id: makeId("auto-apply-guard"),
         kind: "system",
         text: message,
+        meta: { tone: "warning" },
         createdAt: Date.now(),
       });
       new Notice(message);
@@ -4434,6 +4441,7 @@ export class CodexService {
             id: makeId("patch-review-needed"),
             kind: "system",
             text: this.getLocalizedCopy().service.patchNeedsReview(error.details.targetPath),
+            meta: { tone: "warning" },
             createdAt: Date.now(),
           });
           continue;
@@ -4605,6 +4613,7 @@ export class CodexService {
             id: makeId("proposal-error"),
             kind: "system",
             text: this.getLocalizedCopy().service.proposalProcessingFailed(getErrorMessage(error)),
+            meta: { tone: "error" },
             createdAt: Date.now(),
           });
         }
@@ -4637,6 +4646,7 @@ export class CodexService {
         id: makeId("unsafe-patch-path"),
         kind: "system",
         text: this.getLocalizedCopy().service.unsafeNotePathBlocked(rawTargetPath),
+        meta: { tone: "error" },
         createdAt: Date.now(),
       });
       return null;

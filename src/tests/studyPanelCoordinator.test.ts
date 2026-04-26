@@ -258,6 +258,24 @@ describe("StudyPanelCoordinator", () => {
     const tab = store.getState().tabs.find((entry) => entry.id === tabId);
     expect(updated?.promptTemplate).toBe("Rewrite this lecture into a drill sheet");
     expect(tab?.chatSuggestion).toBeNull();
+    expect(tab?.messages.at(-1)?.meta?.tone).toBe("success");
+  });
+
+  it("marks saved recipe messages as success", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    store.setTabStudyWorkflow(tabId, "lecture");
+    const coordinator = createCoordinator(store);
+    const preview = coordinator.previewStudyRecipeSave(tabId, "Practice lecture recall");
+
+    coordinator.saveStudyRecipe(preview);
+
+    const message = store.getState().tabs.find((entry) => entry.id === tabId)?.messages.at(-1);
+    expect(message?.text).toContain("saved");
+    expect(message?.meta?.tone).toBe("success");
   });
 
   it("redirects promoted skill drafts into the managed vault skill root instead of overwriting external installed skills", async () => {
@@ -314,6 +332,7 @@ describe("StudyPanelCoordinator", () => {
     expect(await readFile(join(vaultRoot, ".codex", "skills", "lecture", "SKILL.md"), "utf8")).toContain(
       "# Local lecture skill",
     );
+    expect(store.getActiveTab()?.messages.at(-1)?.meta?.tone).toBe("success");
   });
 
   it("creates new hub panels as blank custom panels", () => {

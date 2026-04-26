@@ -58,6 +58,10 @@ const COMPLETION_KEYWORDS = [
   "保存した",
 ];
 
+function systemToneMeta(tone: "success" | "warning" | "error"): { tone: string } {
+  return { tone };
+}
+
 export interface StudyRecipeSavePreview {
   candidate: StudyRecipe;
   existingRecipe: StudyRecipe | null;
@@ -379,6 +383,7 @@ export class StudyPanelCoordinator {
         id: makeId("study-recipe-save"),
         kind: "system",
         text: this.deps.getLocalizedCopy().service.studyRecipeSaved(preview.candidate.title, preview.candidate.commandAlias),
+        meta: systemToneMeta("success"),
         createdAt: Date.now(),
       });
     }
@@ -431,6 +436,7 @@ export class StudyPanelCoordinator {
         id: makeId("study-recipe-skill"),
         kind: "system",
         text: this.deps.getLocalizedCopy().service.studyRecipeSkillSaved(review.recipe.title, review.skillName),
+        meta: systemToneMeta("success"),
         createdAt: Date.now(),
       });
     }
@@ -562,6 +568,7 @@ export class StudyPanelCoordinator {
           id: makeId("panel-update"),
           kind: "system",
           text: copy.service.panelUpdated(updated.title),
+          meta: systemToneMeta("success"),
           createdAt: Date.now(),
         });
       } else if (action === "save_panel_copy") {
@@ -570,6 +577,7 @@ export class StudyPanelCoordinator {
           id: makeId("panel-copy"),
           kind: "system",
           text: copy.service.panelCopied(created.title),
+          meta: systemToneMeta("success"),
           createdAt: Date.now(),
         });
       } else if (action === "update_skill") {
@@ -578,6 +586,7 @@ export class StudyPanelCoordinator {
           id: makeId("panel-skill"),
           kind: "system",
           text: copy.service.panelSkillUpdated(suggestion.panelTitle, skillName),
+          meta: systemToneMeta("success"),
           createdAt: Date.now(),
         });
       }
@@ -587,6 +596,7 @@ export class StudyPanelCoordinator {
         id: makeId("chat-suggestion-error"),
         kind: "system",
         text: getErrorMessage(error),
+        meta: systemToneMeta("error"),
         createdAt: Date.now(),
       });
     }
