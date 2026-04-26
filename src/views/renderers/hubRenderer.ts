@@ -28,6 +28,31 @@ export function createHubRendererEphemeralState(): HubRendererEphemeralState {
   };
 }
 
+export type HubPanelDraftValidation = "missing_required" | null;
+
+export function validateHubPanelDraft(draft: HubPanelDraft): HubPanelDraftValidation {
+  return draft.title.trim() && draft.promptTemplate.trim() ? null : "missing_required";
+}
+
+function normalizeDraftText(value: string): string {
+  return value.trim();
+}
+
+function areSkillListsEqual(left: readonly string[], right: readonly string[]): boolean {
+  const normalizedLeft = [...new Set(left.map((entry) => entry.trim()).filter(Boolean))].sort();
+  const normalizedRight = [...new Set(right.map((entry) => entry.trim()).filter(Boolean))].sort();
+  return normalizedLeft.length === normalizedRight.length && normalizedLeft.every((entry, index) => entry === normalizedRight[index]);
+}
+
+function isPanelDraftChanged(panel: StudyRecipe, draft: HubPanelDraft): boolean {
+  return (
+    normalizeDraftText(panel.title) !== normalizeDraftText(draft.title) ||
+    normalizeDraftText(panel.description) !== normalizeDraftText(draft.description) ||
+    normalizeDraftText(panel.promptTemplate) !== normalizeDraftText(draft.promptTemplate) ||
+    !areSkillListsEqual(panel.linkedSkillNames, draft.linkedSkillNames)
+  );
+}
+
 export class HubRenderer {
   private static readonly PANEL_SELECTOR = ".obsidian-codex__hub-panel";
   private static readonly NEW_PANEL_DRAFT_ID = "__new-panel-draft__";
@@ -184,13 +209,17 @@ export class HubRenderer {
     }
 
     const actionsEl = bodyEl.createDiv({ cls: "obsidian-codex__ingest-hub-incubator-actions" });
+    const isPanelLimitReached = panels.length >= 6;
     const addButton = actionsEl.createEl("button", {
       cls: "obsidian-codex__change-card-btn",
       text: copy.workspace.addPanel,
     });
     addButton.type = "button";
     addButton.dataset.smoke = "panel-studio-add";
-    addButton.disabled = panels.length >= 6;
+    addButton.disabled = isPanelLimitReached;
+    if (isPanelLimitReached) {
+      addButton.title = copy.service.panelLimitReached(6);
+    }
     addButton.addEventListener("click", () => {
       this.openCreatePanelPopover();
       this.callbacks.requestRender();
@@ -261,9 +290,10 @@ export class HubRenderer {
     }
 
     const headActionsEl = headEl.createDiv({ cls: "obsidian-codex__hub-panel-head-actions" });
+    const editActionLabel = isEditing ? copy.workspace.savePanel : copy.workspace.editPanel;
     const editButton = headActionsEl.createEl("button", {
       cls: "obsidian-codex__header-btn obsidian-codex__hub-panel-edit-btn",
-      attr: { type: "button", "aria-label": copy.workspace.editPanel },
+      attr: { type: "button", "aria-label": editActionLabel, title: editActionLabel },
     });
     editButton.dataset.smoke = "panel-edit-toggle";
     setIcon(editButton, isEditing ? "check" : "pencil");
@@ -283,6 +313,9 @@ export class HubRenderer {
         }
         return;
       }
+      if (!this.confirmDiscardActivePanelEdit(panel.id, context)) {
+        return;
+      }
       this.beginEditingPanel(panel);
       this.callbacks.requestRender();
     });
@@ -296,6 +329,9 @@ export class HubRenderer {
       cancelButton.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (!this.confirmDiscardPanelEdit(panel, context)) {
+          return;
+        }
         this.editingPanelId = null;
         this.panelDrafts.delete(panel.id);
         this.pendingFocusTitlePanelId = null;
@@ -314,6 +350,9 @@ export class HubRenderer {
       legacyDeleteButton.type = "button";
       legacyDeleteButton.dataset.smoke = "panel-edit-delete";
       legacyDeleteButton.addEventListener("click", () => {
+        if (!this.confirmDiscardPanelEdit(panel, context)) {
+          return;
+        }
         this.removePanel(panel.id, this.getPanelDisplayTitle(panel.title, copy.workspace.untitledPanel), context);
       });
       return;
@@ -344,6 +383,8 @@ export class HubRenderer {
       }`,
     });
     skillsButton.type = "button";
+    skillsButton.title = copy.workspace.panelSkills;
+    skillsButton.setAttribute("aria-haspopup", "dialog");
     skillsButton.dataset.smoke = "panel-skill-toggle";
     skillsButton.ariaExpanded = String(isSkillsOpen);
     skillsButton.createSpan({ text: `${copy.workspace.panelSkills} ${linkedSkillCount}` });
@@ -378,6 +419,8 @@ export class HubRenderer {
       cls: `obsidian-codex__hub-panel-skill-drawer${drawerSkills.length === 0 ? " is-empty" : ""}`,
     });
     drawerEl.dataset.smoke = "panel-skill-popover";
+    drawerEl.setAttribute("role", "dialog");
+    drawerEl.setAttribute("aria-label", copy.workspace.panelSkills);
     drawerEl.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") {
         return;
@@ -631,6 +674,10 @@ export class HubRenderer {
   private saveCreatePanel(context: WorkspaceRenderContext): void {
     try {
       const draft = this.getOrCreateNewPanelDraft();
+      if (validateHubPanelDraft(draft) === "missing_required") {
+        new Notice(context.copy.workspace.panelDraftEmpty);
+        return;
+      }
       const panel = context.service.createHubPanel(draft);
       this.pendingScrollTargetPanelId = panel.id;
       this.closeCreatePanelPopover();
@@ -670,6 +717,29 @@ export class HubRenderer {
 
   private confirmDiscardNewPanel(context: WorkspaceRenderContext): boolean {
     return typeof globalThis.confirm === "function" ? globalThis.confirm(context.copy.workspace.discardNewPanelConfirm) : true;
+  }
+
+  private confirmDiscardActivePanelEdit(nextPanelId: string | null, context: WorkspaceRenderContext): boolean {
+    const currentPanelId = this.editingPanelId;
+    if (!currentPanelId || currentPanelId === nextPanelId) {
+      return true;
+    }
+    const currentPanel = context.service.getHubPanels().find((panel) => panel.id === currentPanelId) ?? null;
+    if (!currentPanel || this.confirmDiscardPanelEdit(currentPanel, context)) {
+      this.panelDrafts.delete(currentPanelId);
+      this.editingPanelId = null;
+      this.pendingFocusTitlePanelId = null;
+      return true;
+    }
+    return false;
+  }
+
+  private confirmDiscardPanelEdit(panel: StudyRecipe, context: WorkspaceRenderContext): boolean {
+    const draft = this.panelDrafts.get(panel.id);
+    if (!draft || !isPanelDraftChanged(panel, draft)) {
+      return true;
+    }
+    return typeof globalThis.confirm === "function" ? globalThis.confirm(context.copy.workspace.discardPanelEditConfirm) : true;
   }
 
   private restoreHubBodyState(bodyEl: HTMLDivElement): void {
@@ -843,10 +913,6 @@ export class HubRenderer {
           ? [...new Set([...selectedSkillNames, skill.name])]
           : selectedSkillNames.filter((entry) => entry !== skill.name);
         this.selectedDrawerSkillNames.set(panelId, next);
-        const nextTabId = tabId ?? context.service.getActiveTab()?.id ?? null;
-        if (nextTabId) {
-          context.service.commitHubPanelSkillSelection(nextTabId, panelId, next);
-        }
         this.callbacks.requestRender();
       });
 

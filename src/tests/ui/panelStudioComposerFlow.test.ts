@@ -694,12 +694,18 @@ describe("Panel Studio composer flow", () => {
     const harness = createHarness();
     await tick();
 
+    const editButton = harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]');
     expect(harness.hubRoot.querySelector('[aria-label="Delete panel"]')).toBeNull();
     expect(harness.hubRoot.querySelectorAll('[data-smoke="panel-edit-toggle"]')).toHaveLength(1);
+    expect(editButton?.getAttribute("aria-label")).toBe("Edit panel");
+    expect(editButton?.title).toBe("Edit panel");
 
-    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]')?.click();
+    editButton?.click();
     await tick();
 
+    const saveButton = harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]');
+    expect(saveButton?.getAttribute("aria-label")).toBe("Save panel");
+    expect(saveButton?.title).toBe("Save panel");
     expect(harness.hubRoot.querySelector('[data-smoke="panel-edit-delete"]')).not.toBeNull();
   });
 
@@ -764,6 +770,21 @@ describe("Panel Studio composer flow", () => {
     expect(harness.hubRoot.textContent).toContain("Exam drill");
   });
 
+  it("keeps an empty new-panel draft open instead of creating a blank panel", async () => {
+    const harness = createHarness();
+    await tick();
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-studio-add"]')?.click();
+    await tick();
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-create-save"]')?.click();
+    await tick();
+
+    expect(harness.service.createHubPanel).not.toHaveBeenCalled();
+    expect(harness.hubRoot.querySelector('[data-smoke="panel-create-popover"]')).not.toBeNull();
+    expect(Notice.messages).toContain("Add a panel title and prompt before saving.");
+  });
+
   it("keeps the new-panel popover open when panel creation fails", async () => {
     const harness = createHarness({ createHubPanelError: "Create failed" });
     await tick();
@@ -774,6 +795,9 @@ describe("Panel Studio composer flow", () => {
     const titleInput = harness.hubRoot.querySelector<HTMLInputElement>('[data-smoke="panel-create-title"]')!;
     titleInput.value = "Exam drill";
     titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+    const promptInput = Array.from(harness.hubRoot.querySelectorAll<HTMLTextAreaElement>('[data-smoke="panel-create-popover"] textarea'))[1]!;
+    promptInput.value = "Turn these notes into an exam drill.";
+    promptInput.dispatchEvent(new Event("input", { bubbles: true }));
 
     harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-create-save"]')?.click();
     await tick();
@@ -811,6 +835,32 @@ describe("Panel Studio composer flow", () => {
 
     expect(harness.hubRoot.querySelector('[data-smoke="panel-create-popover"]')).toBeNull();
     expect(harness.service.createHubPanel).not.toHaveBeenCalled();
+  });
+
+  it("confirms before discarding dirty inline panel edits", async () => {
+    const harness = createHarness();
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirmSpy);
+    await tick();
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]')?.click();
+    await tick();
+
+    const titleInput = harness.hubRoot.querySelector<HTMLInputElement>(".obsidian-codex__panel-edit-input-title")!;
+    titleInput.value = "Dirty edit";
+    titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[aria-label="Cancel editing"]')?.click();
+    await tick();
+
+    expect(confirmSpy).toHaveBeenCalledWith("Discard unsaved panel edits?");
+    expect(harness.hubRoot.querySelector(".obsidian-codex__hub-panel.is-editing")).not.toBeNull();
+
+    confirmSpy.mockReturnValueOnce(true);
+    harness.hubRoot.querySelector<HTMLButtonElement>('[aria-label="Cancel editing"]')?.click();
+    await tick();
+
+    expect(harness.hubRoot.querySelector(".obsidian-codex__hub-panel.is-editing")).toBeNull();
   });
 
   it("preserves the new-panel popup draft across Hub renderer reconstruction", async () => {
@@ -1032,6 +1082,39 @@ describe("Panel Studio composer flow", () => {
     const rerenderedBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
     expect(rerenderedBody).not.toBeNull();
     expect(rerenderedBody!.scrollTop).toBe(180);
+  });
+
+  it("keeps drawer checkbox changes local until Use selected is pressed", async () => {
+    const harness = createHarness();
+    await tick();
+
+    const toggleButton = harness.hubRoot.querySelector<HTMLButtonElement>(".obsidian-codex__hub-panel-skill-toggle");
+    expect(toggleButton).not.toBeNull();
+    toggleButton?.click();
+    await tick();
+
+    const checkbox = Array.from(harness.hubRoot.querySelectorAll<HTMLInputElement>(".obsidian-codex__hub-panel-skill-checkbox")).find(
+      (input) => input.getAttribute("aria-label") === "lecture-read",
+    );
+    expect(checkbox).not.toBeNull();
+    checkbox!.checked = true;
+    checkbox!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+
+    expect(harness.service.commitHubPanelSkillSelection).not.toHaveBeenCalled();
+    expect(harness.service.seedHubPanelSkills).not.toHaveBeenCalled();
+    expect(harness.activeTab.activeStudySkillNames).toEqual([]);
+
+    const useSelectedButton = Array.from(harness.hubRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn")).find(
+      (button) => button.textContent?.trim() === "Use selected",
+    );
+    expect(useSelectedButton).not.toBeNull();
+    expect(useSelectedButton?.disabled).toBe(false);
+    useSelectedButton?.click();
+    await tick();
+
+    expect(harness.service.seedHubPanelSkills).toHaveBeenCalledWith("tab-1", "panel-1", ["lecture-read"], null);
+    expect(harness.activeTab.activeStudySkillNames).toEqual(["lecture-read"]);
   });
 
   it("closes the skills popover after seeding a single linked skill", async () => {
@@ -1797,7 +1880,7 @@ describe("Panel Studio composer flow", () => {
     expect(input.value).toBe("keep this draft");
   });
 
-  it("reaches effectiveSkillsCsv when only the panel checkbox is selected", async () => {
+  it("reaches effectiveSkillsCsv after selected panel skills are applied", async () => {
     const harness = createHarness();
     await tick();
 
@@ -1812,6 +1895,13 @@ describe("Panel Studio composer flow", () => {
     expect(checkbox).not.toBeNull();
     checkbox!.checked = true;
     checkbox!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+
+    const useSelectedButton = Array.from(harness.hubRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn")).find(
+      (button) => button.textContent?.trim() === "Use selected",
+    );
+    expect(useSelectedButton).not.toBeNull();
+    useSelectedButton?.click();
     await tick();
 
     harness.activeTab.draft = "Explain this paper carefully.";

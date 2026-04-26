@@ -70,6 +70,8 @@ describe("plugin feature guides", () => {
     expect(guide).toContain("対象ノート: Week1.md");
     expect(guide).toContain("Prompt を入れる");
     expect(guide).toContain("Skills");
+    expect(guide).toContain("floating popup");
+    expect(guide).not.toContain("追加直後に編集状態で開きます");
     expect(guide).toContain("自動送信はされません");
     expect(guide).toContain("/recipe-signals-lecture");
   });

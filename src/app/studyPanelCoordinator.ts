@@ -40,26 +40,36 @@ export const DEFAULT_LINKED_PANEL_SKILLS: Record<StudyWorkflowKind, string[]> = 
 const MANAGED_SKILL_ROOT_SEGMENTS = [".codex", "skills"] as const;
 const MANAGED_SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 
-const COMPLETION_KEYWORDS = [
-  "done",
-  "finished",
-  "applied",
-  "updated",
-  "complete",
-  "completed",
-  "saved",
-  "worked",
-  "できた",
-  "やった",
-  "適用した",
-  "更新した",
-  "終わった",
-  "完了した",
-  "保存した",
-];
-
 function systemToneMeta(tone: "success" | "warning" | "error"): { tone: string } {
   return { tone };
+}
+
+const PANEL_COMPLETION_ACKNOWLEDGEMENT_PATTERNS: RegExp[] = [
+  /^(?:done|all done|finished|complete|completed|applied|updated|saved|worked|that worked|looks good)$/u,
+  /^(?:できた|できました|完了|完了した|完了しました|終わった|終わりました|やった|適用した|適用しました|更新した|更新しました|保存した|保存しました)$/u,
+];
+
+function normalizePanelCompletionInput(input: string): string {
+  return input
+    .trim()
+    .replace(/[。.!！?？]+$/u, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/gu, " ");
+}
+
+export function isPanelCompletionAcknowledgement(input: string): boolean {
+  const normalized = normalizePanelCompletionInput(input);
+  if (!normalized || normalized.length > 32) {
+    return false;
+  }
+  return PANEL_COMPLETION_ACKNOWLEDGEMENT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export type PanelCompletionSuggestionAction = "update_panel" | "save_panel_copy" | "update_skill" | "dismiss";
+
+export function resolvePanelCompletionDefaultAction(_suggestion: ChatSuggestion): PanelCompletionSuggestionAction {
+  return "update_panel";
 }
 
 export interface StudyRecipeSavePreview {
@@ -168,38 +178,6 @@ function tokenizeForSimilarity(value: string): string[] {
     .split(/[^a-z0-9]+/u)
     .map((token) => token.trim())
     .filter((token) => token.length >= 3);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function isAsciiKeyword(keyword: string): boolean {
-  return /^[a-z0-9]+(?:\s+[a-z0-9]+)*$/u.test(keyword);
-}
-
-function buildAsciiKeywordSource(keyword: string): string {
-  return keyword
-    .trim()
-    .split(/\s+/u)
-    .map((part) => escapeRegExp(part))
-    .join("\\s+");
-}
-
-function containsCompletionKeyword(input: string): boolean {
-  const normalized = input.trim().toLowerCase();
-  return COMPLETION_KEYWORDS.some((keyword) => {
-    if (!isAsciiKeyword(keyword)) {
-      return normalized.includes(keyword);
-    }
-    const source = buildAsciiKeywordSource(keyword);
-    const keywordPattern = new RegExp(`\\b${source}\\b`, "u");
-    if (!keywordPattern.test(normalized)) {
-      return false;
-    }
-    const negatedPattern = new RegExp(`\\b(?:not|never|no)\\s+${source}\\b`, "u");
-    return !negatedPattern.test(normalized);
-  });
 }
 
 function getErrorMessage(value: unknown): string {
@@ -503,7 +481,7 @@ export class StudyPanelCoordinator {
     if (!tab || !origin || !origin.awaitingCompletionSignal || tab.chatSuggestion?.status === "pending") {
       return false;
     }
-    if (!containsCompletionKeyword(input)) {
+    if (!isPanelCompletionAcknowledgement(input)) {
       return false;
     }
 
@@ -600,6 +578,16 @@ export class StudyPanelCoordinator {
         createdAt: Date.now(),
       });
     }
+  }
+
+  async respondToDefaultPanelCompletionSuggestion(tabId: string): Promise<boolean> {
+    const tab = this.deps.findTab(tabId);
+    const suggestion = tab?.chatSuggestion;
+    if (!tab || !suggestion || suggestion.status !== "pending" || !isPanelCompletionSuggestion(suggestion)) {
+      return false;
+    }
+    await this.respondToChatSuggestion(tabId, resolvePanelCompletionDefaultAction(suggestion));
+    return true;
   }
 
   requireStudyRecipe(recipeId: string): StudyRecipe {

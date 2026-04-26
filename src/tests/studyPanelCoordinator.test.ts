@@ -199,7 +199,37 @@ describe("StudyPanelCoordinator", () => {
     expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "not finished yet")).toBe(false);
     expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "unfinished draft")).toBe(false);
     expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "this is incomplete")).toBe(false);
+    expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "complete the square for this problem")).toBe(false);
+    expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "show me a worked example")).toBe(false);
+    expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "保存したい内容はこれです")).toBe(false);
     expect(store.getActiveTab()?.chatSuggestion).toBeNull();
+  });
+
+  it("treats short Japanese completion acknowledgements as panel completion", () => {
+    for (const phrase of ["完了", "できた"]) {
+      const store = new AgentStore(null, "/vault", true);
+      const tabId = store.getActiveTab()?.id;
+      if (!tabId) {
+        throw new Error("Missing tab");
+      }
+      const panel = createPanel("panel-1", "Summarize this lecture");
+      store.setStudyRecipes([panel]);
+      store.setActiveStudyPanel(tabId, panel.id, []);
+      store.setTabStudyWorkflow(tabId, "lecture");
+
+      const coordinator = createCoordinator(store);
+      coordinator.capturePanelSessionOrigin(tabId, "Rewrite this lecture into a drill sheet");
+      store.addMessage(tabId, {
+        id: "assistant-1",
+        kind: "assistant",
+        text: "Here is the revised drill sheet.",
+        createdAt: 10,
+      });
+      coordinator.armPanelCompletionSignal(tabId);
+
+      expect(coordinator.maybeHandlePanelCompletionSignal(tabId, phrase)).toBe(true);
+      expect(store.getActiveTab()?.chatSuggestion?.status).toBe("pending");
+    }
   });
 
   it("uses the untitled fallback in completion suggestions for blank panel titles", () => {

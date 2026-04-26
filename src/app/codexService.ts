@@ -3120,6 +3120,9 @@ export class CodexService {
       await this.respondToRewriteSuggestion(tabId, "rewrite_note", context);
       return true;
     }
+    if (suggestion?.kind === "panel_completion" && suggestion.status === "pending") {
+      return await this.studyPanels.respondToDefaultPanelCompletionSuggestion(tabId);
+    }
     const pendingPatchCount = tab.patchBasket.filter(
       (entry) => entry.status === "pending" || entry.status === "conflicted",
     ).length;

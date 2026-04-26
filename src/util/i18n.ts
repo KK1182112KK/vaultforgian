@@ -172,10 +172,13 @@ export interface LocalizedCopy {
     panelDescriptionPlaceholder: string;
     panelPromptPlaceholder: string;
     editPanel: string;
+    savePanel: string;
     cancelEdit: string;
     deletePanel: string;
     deletePanelConfirm: (title: string) => string;
     discardNewPanelConfirm: string;
+    discardPanelEditConfirm: string;
+    panelDraftEmpty: string;
     linkedSkills: string;
     availableSkills: string;
     noLinkedSkills: string;
@@ -651,10 +654,13 @@ const EN_COPY: LocalizedCopy = {
     panelDescriptionPlaceholder: "When to use this panel and what it should help with.",
     panelPromptPlaceholder: "Ask about your lecture, paper, homework, notes, or any workflow you want this panel to run.",
     editPanel: "Edit panel",
+    savePanel: "Save panel",
     cancelEdit: "Cancel editing",
     deletePanel: "Delete panel",
     deletePanelConfirm: (title) => `Delete the panel "${title}"?`,
     discardNewPanelConfirm: "Discard this new panel draft?",
+    discardPanelEditConfirm: "Discard unsaved panel edits?",
+    panelDraftEmpty: "Add a panel title and prompt before saving.",
     linkedSkills: "Linked skills",
     availableSkills: "Available skills",
     noLinkedSkills: "No linked skills yet.",
@@ -773,9 +779,9 @@ const EN_COPY: LocalizedCopy = {
     studyRecipeSaved: (title, alias) => `Study recipe saved: ${title} · ${alias}.`,
     studyRecipeSkillSaved: (title, skillName) => `Skill saved from ${title}: $${skillName}.`,
     panelNothingToSave: (title) => `The ${title} panel already matches this flow, so there is nothing new to save.`,
-    panelSavePrompt: (title) => `This looked like a completed ${title} pass. Do you want me to update the panel or save a new variant?`,
+    panelSavePrompt: (title) => `This looked like a completed ${title} pass. Use the buttons below to update the panel or save a new variant.`,
     panelSavePromptWithSkill: (title, skillName) =>
-      `This looked like a completed ${title} pass. Do you want me to update the panel or refresh $${skillName}?`,
+      `This looked like a completed ${title} pass. Use the buttons below to update the panel, save a new variant, or refresh $${skillName}.`,
     panelSuggestionDismissed: (title) => `Skipped saving changes for ${title}.`,
     panelUpdated: (title) => `Updated panel: ${title}.`,
     panelCopied: (title) => `Saved a new panel: ${title}.`,
@@ -990,10 +996,13 @@ const JA_COPY: LocalizedCopy = {
     panelDescriptionPlaceholder: "この panel を何のために使うか、いつ使うかを書いてください。",
     panelPromptPlaceholder: "講義、論文、宿題、ノート、またはこの panel で回したい workflow への依頼を書いてください。",
     editPanel: "Panel を編集",
+    savePanel: "Panel を保存",
     cancelEdit: "編集を取り消す",
     deletePanel: "Panel を削除",
     deletePanelConfirm: (title) => `「${title}」panel を削除しますか。`,
     discardNewPanelConfirm: "この新しい panel の下書きを破棄しますか。",
+    discardPanelEditConfirm: "保存していない panel 編集を破棄しますか。",
+    panelDraftEmpty: "保存前に panel のタイトルと prompt を入力してください。",
     linkedSkills: "紐づけた skills",
     availableSkills: "持っている skills",
     noLinkedSkills: "まだ紐づけた skill はありません。",
@@ -1112,9 +1121,9 @@ const JA_COPY: LocalizedCopy = {
     studyRecipeSaved: (title, alias) => `Study recipe を保存しました: ${title} · ${alias}。`,
     studyRecipeSkillSaved: (title, skillName) => `${title} から skill を保存しました: $${skillName}。`,
     panelNothingToSave: (title) => `${title} panel はすでに現在の流れと一致しているので、新しく保存する差分はありません。`,
-    panelSavePrompt: (title) => `${title} panel の流れが完了したようです。panel を更新するか、新しい variant として保存しますか。`,
+    panelSavePrompt: (title) => `${title} panel の流れが完了したようです。下のボタンから panel 更新または新しい variant 保存を選べます。`,
     panelSavePromptWithSkill: (title, skillName) =>
-      `${title} panel の流れが完了したようです。panel を更新するか、$${skillName} を更新しますか。`,
+      `${title} panel の流れが完了したようです。下のボタンから panel 更新、新しい variant 保存、または $${skillName} 更新を選べます。`,
     panelSuggestionDismissed: (title) => `${title} の保存提案を見送りました。`,
     panelUpdated: (title) => `Panel を更新しました: ${title}。`,
     panelCopied: (title) => `新しい panel を保存しました: ${title}。`,

@@ -690,6 +690,54 @@ describe("CodexService sendPrompt skill context", () => {
     expect(service.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
   });
 
+  it("treats affirmative replies to Panel Studio suggestions as local panel updates", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-panel-affirmation-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "ja",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const panel = createPanel("panel-1", ["note-refiner"]);
+    service.store.setStudyRecipes([panel]);
+    service.store.setChatSuggestion(tabId, {
+      id: "panel-suggestion-1",
+      kind: "panel_completion",
+      status: "pending",
+      messageId: "assistant-panel-suggestion",
+      panelId: panel.id,
+      panelTitle: panel.title,
+      promptSnapshot: "Explain this paper with a short exam checklist.",
+      matchedSkillName: "note-refiner",
+      canUpdatePanel: true,
+      canSaveCopy: true,
+      planSummary: null,
+      planStatus: null,
+      createdAt: Date.now(),
+    });
+
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    await service.sendPrompt(tabId, "はい", { file: null, editor: null });
+    await tick();
+
+    expect(runTurnSpy).not.toHaveBeenCalled();
+    expect(service.getStudyRecipes()[0]?.promptTemplate).toBe("Explain this paper with a short exam checklist.");
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+    expect(service.getActiveTab()?.messages.at(-1)?.text).toContain("Panel");
+    expect(service.getActiveTab()?.messages.at(-1)?.meta?.tone).toBe("success");
+  });
+
   it("marks suggestion-only note edit replies as proposal_only with the resolved target path", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-edit-outcome-proposal-"));
     tempRoots.push(vaultRoot);
