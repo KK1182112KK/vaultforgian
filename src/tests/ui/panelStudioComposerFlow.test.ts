@@ -485,7 +485,7 @@ function createMultiTabComposerHarness() {
   const secondTab = structuredClone(state.tabs[0]!);
   secondTab.id = "tab-2";
   secondTab.title = "Chat 2";
-  secondTab.model = "gpt-5.3-codex";
+  secondTab.model = "gpt-5.4";
   secondTab.reasoningEffort = "low";
   state.tabs = [state.tabs[0]!, secondTab];
   state.activeTabId = "tab-1";
@@ -494,6 +494,12 @@ function createMultiTabComposerHarness() {
       slug: "gpt-5.5",
       displayName: "GPT-5.5",
       defaultReasoningLevel: "high",
+      supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
+    },
+    {
+      slug: "gpt-5.4",
+      displayName: "GPT-5.4",
+      defaultReasoningLevel: "medium",
       supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
     },
     {
@@ -1286,7 +1292,7 @@ describe("Panel Studio composer flow", () => {
     await tick();
 
     const detachedOption = Array.from(harness.composerRoot.querySelectorAll<HTMLDivElement>(".obsidian-codex__status-menu-item")).find((item) =>
-      item.textContent?.includes("GPT-5.3"),
+      item.textContent?.includes("GPT-5.4"),
     );
     expect(detachedOption).not.toBeNull();
 

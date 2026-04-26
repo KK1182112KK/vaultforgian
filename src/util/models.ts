@@ -8,8 +8,8 @@ import {
 } from "./reasoning";
 
 const GPT_53_MODEL = "gpt-5.3-codex";
-const GPT_52_MODEL = "gpt-5.2";
-const PICKER_MODELS = [DEFAULT_PRIMARY_MODEL, GPT_53_MODEL, GPT_52_MODEL] as const;
+const GPT_54_MODEL = "gpt-5.4";
+const PICKER_MODELS = [DEFAULT_PRIMARY_MODEL, GPT_54_MODEL, GPT_53_MODEL] as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
@@ -28,14 +28,14 @@ function normalizePickerModelSlug(slug: string): string {
   if (!trimmed) {
     return "";
   }
-  if (/^gpt-5\.(?:5|4)(?:$|-)/i.test(trimmed)) {
+  if (/^gpt-5\.5(?:$|-)/i.test(trimmed)) {
     return DEFAULT_PRIMARY_MODEL;
+  }
+  if (/^gpt-5\.4(?:$|-)/i.test(trimmed)) {
+    return GPT_54_MODEL;
   }
   if (/^gpt-5\.3(?:$|-)/i.test(trimmed)) {
     return GPT_53_MODEL;
-  }
-  if (/^gpt-5\.2(?:$|-)/i.test(trimmed)) {
-    return GPT_52_MODEL;
   }
   return trimmed;
 }
@@ -87,14 +87,14 @@ export function getFallbackModelCatalog(): ModelCatalogEntry[] {
       supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
     },
     {
-      slug: GPT_53_MODEL,
-      displayName: GPT_53_MODEL,
+      slug: GPT_54_MODEL,
+      displayName: GPT_54_MODEL,
       defaultReasoningLevel: "medium",
       supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
     },
     {
-      slug: GPT_52_MODEL,
-      displayName: GPT_52_MODEL,
+      slug: GPT_53_MODEL,
+      displayName: GPT_53_MODEL,
       defaultReasoningLevel: "medium",
       supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
     },
