@@ -278,6 +278,96 @@ describe("CodexService sendPrompt skill context", () => {
     });
   });
 
+  it("passes the resolved turn configuration through the runtime adapter boundary", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-runtime-boundary-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      const callbacks = request as {
+        onJsonEvent: (event: unknown) => void;
+        onSessionId: (threadId: string) => void;
+        onLiveness: (observedAt: number) => void;
+        onMeaningfulProgress: (observedAt: number) => void;
+      };
+      callbacks.onSessionId("thread-runtime-boundary");
+      callbacks.onLiveness(100);
+      callbacks.onMeaningfulProgress(120);
+      callbacks.onJsonEvent({ type: "thread.started", thread_id: "thread-runtime-boundary" });
+      callbacks.onJsonEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "Runtime boundary OK.",
+        },
+      });
+      return { threadId: "thread-runtime-boundary" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Explain this note.",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [join(vaultRoot, "figure.png")],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "Explain this note.",
+      false,
+      false,
+      "turn-runtime-boundary",
+      "user-runtime-boundary",
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(1);
+    expect(runCodexStreamSpy.mock.calls[0]?.[0]).toMatchObject({
+      tabId,
+      threadId: null,
+      workingDirectory: vaultRoot,
+      runtime: "native",
+      executablePath: "codex",
+      sandboxMode: "read-only",
+      approvalPolicy: "untrusted",
+      images: [join(vaultRoot, "figure.png")],
+      model: "gpt-5.4",
+      reasoningEffort: "xhigh",
+      fastMode: false,
+    });
+    const request = runCodexStreamSpy.mock.calls[0]?.[0] as {
+      onJsonEvent?: unknown;
+      onSessionId?: unknown;
+      onLiveness?: unknown;
+      onMeaningfulProgress?: unknown;
+    };
+    expect(typeof request.onJsonEvent).toBe("function");
+    expect(typeof request.onSessionId).toBe("function");
+    expect(typeof request.onLiveness).toBe("function");
+    expect(typeof request.onMeaningfulProgress).toBe("function");
+    expect(service.getActiveTab()?.codexThreadId).toBe("thread-runtime-boundary");
+    expect(service.getActiveTab()?.messages.some((message) => message.kind === "assistant" && message.text.includes("Runtime boundary OK"))).toBe(true);
+  });
+
   it("hydrates panel-selected skills before building the turn context", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-sendprompt-"));
     tempRoots.push(vaultRoot);
