@@ -40,7 +40,7 @@ function createState(): WorkspaceState {
         lastResponseId: null,
         sessionItems: [],
         codexThreadId: null,
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         reasoningEffort: "high",
         usageSummary: {
           lastTurn: null,
@@ -310,7 +310,7 @@ describe("workspace view models", () => {
       "en",
       workspaceCopy as never,
     );
-    expect(result.modelLabel).toBe("GPT-5.4");
+    expect(result.modelLabel).toBe("GPT-5.5");
     expect(result.streaming).toBe(true);
     expect(result.fastModeActive).toBe(true);
     expect(result.yoloActive).toBe(true);

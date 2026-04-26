@@ -22,6 +22,9 @@ export function displayEffortLabel(value: string, locale: SupportedLocale): stri
 }
 
 export function compactModelLabel(slug: string, fallback: string): string {
+  if (/^gpt-5\.5$/i.test(slug)) {
+    return "GPT-5.5";
+  }
   if (/^gpt-5\.4$/i.test(slug)) {
     return "GPT-5.4";
   }

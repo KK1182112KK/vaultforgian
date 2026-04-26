@@ -43,7 +43,7 @@ function createState(): WorkspaceState {
         lastResponseId: null,
         sessionItems: [],
         codexThreadId: null,
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         reasoningEffort: "high",
         usageSummary: {
           lastTurn: null,
@@ -73,8 +73,8 @@ function createState(): WorkspaceState {
     authState: "ready",
     availableModels: [
       {
-        slug: "gpt-5.4",
-        displayName: "GPT-5.4",
+        slug: "gpt-5.5",
+        displayName: "GPT-5.5",
         defaultReasoningLevel: "high",
         supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
       },
@@ -485,20 +485,20 @@ function createMultiTabComposerHarness() {
   const secondTab = structuredClone(state.tabs[0]!);
   secondTab.id = "tab-2";
   secondTab.title = "Chat 2";
-  secondTab.model = "gpt-5.4-mini";
+  secondTab.model = "gpt-5.3-codex";
   secondTab.reasoningEffort = "low";
   state.tabs = [state.tabs[0]!, secondTab];
   state.activeTabId = "tab-1";
   state.availableModels = [
     {
-      slug: "gpt-5.4",
-      displayName: "GPT-5.4",
+      slug: "gpt-5.5",
+      displayName: "GPT-5.5",
       defaultReasoningLevel: "high",
       supportedReasoningLevels: ["low", "medium", "high", "xhigh"],
     },
     {
-      slug: "gpt-5.4-mini",
-      displayName: "GPT-5.4 Mini",
+      slug: "gpt-5.3-codex",
+      displayName: "GPT-5.3",
       defaultReasoningLevel: "medium",
       supportedReasoningLevels: ["low", "medium", "high"],
     },
@@ -1286,7 +1286,7 @@ describe("Panel Studio composer flow", () => {
     await tick();
 
     const detachedOption = Array.from(harness.composerRoot.querySelectorAll<HTMLDivElement>(".obsidian-codex__status-menu-item")).find((item) =>
-      item.textContent?.includes("GPT-5.4 Mini"),
+      item.textContent?.includes("GPT-5.3"),
     );
     expect(detachedOption).not.toBeNull();
 
@@ -1295,7 +1295,7 @@ describe("Panel Studio composer flow", () => {
     detachedOption?.click();
 
     expect(harness.service.setTabModel).not.toHaveBeenCalled();
-    expect(harness.state.tabs.find((tab) => tab.id === "tab-1")?.model).toBe("gpt-5.4");
+    expect(harness.state.tabs.find((tab) => tab.id === "tab-1")?.model).toBe("gpt-5.5");
   });
 
   it("renders tab badges above the composer when the placement is set to composer", async () => {

@@ -28,7 +28,7 @@ function normalizePickerModelSlug(slug: string): string {
   if (!trimmed) {
     return "";
   }
-  if (/^gpt-5\.4(?:$|-)/i.test(trimmed)) {
+  if (/^gpt-5\.(?:5|4)(?:$|-)/i.test(trimmed)) {
     return DEFAULT_PRIMARY_MODEL;
   }
   if (/^gpt-5\.3(?:$|-)/i.test(trimmed)) {

@@ -13,8 +13,8 @@ describe("model catalog helpers", () => {
       JSON.stringify({
         models: [
           {
-            slug: "gpt-5.4",
-            display_name: "gpt-5.4",
+            slug: "gpt-5.5",
+            display_name: "GPT-5.5",
             default_reasoning_level: "medium",
             supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "xhigh" }],
             visibility: "list",
@@ -37,7 +37,7 @@ describe("model catalog helpers", () => {
       }),
     );
 
-    expect(catalog.some((entry) => entry.slug === "gpt-5.4")).toBe(true);
+    expect(catalog.some((entry) => entry.slug === "gpt-5.5")).toBe(true);
     expect(catalog.some((entry) => entry.slug === "gpt-5.1-codex")).toBe(false);
     expect(getSupportedReasoningEffortsForModel(catalog, "gpt-5.1-codex")).toEqual(["low", "medium", "high"]);
     expect(getDefaultReasoningEffortForModel(catalog, "gpt-5.2")).toBe("medium");
@@ -62,10 +62,17 @@ describe("model catalog helpers", () => {
     expect(resolveReasoningEffortForModel(catalog, "gpt-5.1-codex", "high")).toBe("high");
   });
 
-  it("shows only GPT-5.4, GPT-5.3, and GPT-5.2 in the picker", () => {
+  it("shows only GPT-5.5, GPT-5.3, and GPT-5.2 in the picker", () => {
     const catalog = parseModelCatalog(
       JSON.stringify({
         models: [
+          {
+            slug: "gpt-5.5",
+            display_name: "GPT-5.5",
+            default_reasoning_level: "medium",
+            supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "xhigh" }],
+            visibility: "list",
+          },
           {
             slug: "gpt-5.4",
             display_name: "gpt-5.4",
@@ -105,11 +112,12 @@ describe("model catalog helpers", () => {
       }),
     );
 
-    expect(catalog.map((entry) => entry.slug)).toEqual(["gpt-5.4", "gpt-5.3-codex", "gpt-5.2"]);
-    expect(coerceModelForPicker(catalog, "gpt-5.4")).toBe("gpt-5.4");
-    expect(coerceModelForPicker(catalog, "gpt-5.4-mini")).toBe("gpt-5.4");
+    expect(catalog.map((entry) => entry.slug)).toEqual(["gpt-5.5", "gpt-5.3-codex", "gpt-5.2"]);
+    expect(coerceModelForPicker(catalog, "gpt-5.5")).toBe("gpt-5.5");
+    expect(coerceModelForPicker(catalog, "gpt-5.4")).toBe("gpt-5.5");
+    expect(coerceModelForPicker(catalog, "gpt-5.4-mini")).toBe("gpt-5.5");
     expect(coerceModelForPicker(catalog, "gpt-5.3-codex")).toBe("gpt-5.3-codex");
     expect(coerceModelForPicker(catalog, "gpt-5.2-codex")).toBe("gpt-5.2");
-    expect(coerceModelForPicker(catalog, "gpt-5.1-codex")).toBe("gpt-5.4");
+    expect(coerceModelForPicker(catalog, "gpt-5.1-codex")).toBe("gpt-5.5");
   });
 });

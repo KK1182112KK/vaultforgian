@@ -2,7 +2,7 @@ import type { ReasoningEffort } from "../util/reasoning";
 import type { PermissionMode } from "../util/permissionMode";
 import type { SourceAcquisitionMode } from "../util/sourceAcquisition";
 
-export const DEFAULT_PRIMARY_MODEL = "gpt-5.4";
+export const DEFAULT_PRIMARY_MODEL = "gpt-5.5";
 export const DEFAULT_MINI_MODEL = "gpt-5.4-mini";
 export type UiLanguageSetting = "app" | "en" | "ja";
 export type CodexRuntime = "native" | "wsl";
