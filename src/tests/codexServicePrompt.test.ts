@@ -99,6 +99,8 @@ describe("buildTurnPrompt", () => {
     expect(prompt).not.toContain("obsidian-suggest");
     expect(prompt).not.toContain("note was not changed yet");
     expect(prompt).toContain("Do not mention note changes");
+    expect(prompt).toContain("Do not narrate internal skill selection");
+    expect(prompt).toContain("Do not narrate MCP/tool plumbing");
   });
 
   it("injects the managed SVG diagram contract only for diagram generation turns", () => {

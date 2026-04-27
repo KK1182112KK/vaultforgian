@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage, PendingApproval, ToolCallRecord, WaitingState } from "../model/types";
-import { buildTranscriptEntries, hasRunningTranscriptActivity, shouldRenderWaitingEntry } from "../util/transcriptEntries";
+import {
+  buildTranscriptEntries,
+  hasRunningTranscriptActivity,
+  shouldRenderActivity,
+  shouldRenderWaitingEntry,
+} from "../util/transcriptEntries";
 
 describe("transcript entry helpers", () => {
   const messages: ChatMessage[] = [
@@ -92,6 +97,59 @@ describe("transcript entry helpers", () => {
   it("can hide selected activity kinds without changing message ordering", () => {
     const entries = buildTranscriptEntries(messages, true, toolLog, approvals, waitingState, "busy", ["shell"]);
     expect(entries.map((entry) => entry.type)).toEqual(["message", "approval", "message"]);
+  });
+
+  it("hides generic mcp plumbing activity and keeps waiting visible when it is the only running activity", () => {
+    const genericMcp: ToolCallRecord = {
+      id: "mcp-1",
+      callId: "mcp-1",
+      kind: "mcp",
+      name: "mcp_tool",
+      title: "mcp_tool",
+      summary: "mcp_tool",
+      argsJson: "{}",
+      createdAt: 15,
+      updatedAt: 15,
+      status: "running",
+    };
+
+    expect(shouldRenderActivity(genericMcp)).toBe(false);
+    expect(shouldRenderWaitingEntry("busy", waitingState, [genericMcp], [])).toBe(true);
+
+    const entries = buildTranscriptEntries(messages, true, [genericMcp], [], waitingState, "busy");
+    expect(entries.some((entry) => entry.type === "activity")).toBe(false);
+    expect(entries.at(-1)?.type).toBe("waiting");
+  });
+
+  it("keeps meaningful and failed mcp activity visible", () => {
+    const meaningfulMcp: ToolCallRecord = {
+      id: "mcp-meaningful",
+      callId: "mcp-meaningful",
+      kind: "mcp",
+      name: "vault_search",
+      title: "vault_search",
+      summary: "Found 3 matching notes",
+      argsJson: "{}",
+      createdAt: 15,
+      updatedAt: 15,
+      status: "completed",
+    };
+    const failedGenericMcp: ToolCallRecord = {
+      id: "mcp-failed",
+      callId: "mcp-failed",
+      kind: "mcp",
+      name: "mcp_tool",
+      title: "mcp_tool",
+      summary: "mcp_tool",
+      argsJson: "{}",
+      createdAt: 16,
+      updatedAt: 16,
+      status: "failed",
+      resultText: "Permission denied",
+    };
+
+    expect(shouldRenderActivity(meaningfulMcp)).toBe(true);
+    expect(shouldRenderActivity(failedGenericMcp)).toBe(true);
   });
 
   it("appends a waiting row when no activity is available", () => {

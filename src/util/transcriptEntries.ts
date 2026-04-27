@@ -18,8 +18,38 @@ function entryPriority(entry: TranscriptEntry): number {
   return 2;
 }
 
-export function hasRunningTranscriptActivity(toolLog: readonly ToolCallRecord[], pendingApprovals: readonly PendingApproval[]): boolean {
-  return toolLog.some((entry) => entry.status === "running") || pendingApprovals.length > 0;
+function normalizeActivityToken(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function isGenericMcpActivity(activity: ToolCallRecord): boolean {
+  if (activity.kind !== "mcp" && activity.kind !== "tool") {
+    return false;
+  }
+  const name = normalizeActivityToken(activity.name);
+  const title = normalizeActivityToken(activity.title);
+  if (name !== "mcp_tool" && title !== "mcp_tool" && name !== "mcp" && title !== "mcp") {
+    return false;
+  }
+  const visibleTokens = [activity.name, activity.title, activity.summary, activity.resultText]
+    .map(normalizeActivityToken)
+    .filter(Boolean);
+  return visibleTokens.length > 0 && visibleTokens.every((token) => token === "mcp_tool" || token === "mcp");
+}
+
+export function shouldRenderActivity(activity: ToolCallRecord): boolean {
+  if (activity.status === "failed") {
+    return true;
+  }
+  return !isGenericMcpActivity(activity);
+}
+
+export function hasRunningTranscriptActivity(
+  toolLog: readonly ToolCallRecord[],
+  pendingApprovals: readonly PendingApproval[],
+  hiddenActivityKinds: readonly ToolActivityKind[] = [],
+): boolean {
+  return toolLog.some((entry) => entry.status === "running" && !hiddenActivityKinds.includes(entry.kind) && shouldRenderActivity(entry)) || pendingApprovals.length > 0;
 }
 
 export function shouldRenderWaitingEntry(
@@ -35,8 +65,7 @@ export function shouldRenderWaitingEntry(
   if (waitingState.phase !== "tools") {
     return true;
   }
-  const visibleToolLog = toolLog.filter((entry) => !hiddenActivityKinds.includes(entry.kind));
-  return !hasRunningTranscriptActivity(visibleToolLog, pendingApprovals);
+  return !hasRunningTranscriptActivity(toolLog, pendingApprovals, hiddenActivityKinds);
 }
 
 export function buildTranscriptEntries(
@@ -62,7 +91,7 @@ export function buildTranscriptEntries(
   }
 
   for (const activity of toolLog) {
-    if (hiddenActivityKinds.includes(activity.kind)) {
+    if (hiddenActivityKinds.includes(activity.kind) || !shouldRenderActivity(activity)) {
       continue;
     }
     entries.push({

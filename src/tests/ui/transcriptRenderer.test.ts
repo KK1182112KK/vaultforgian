@@ -276,6 +276,36 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(avatar?.dataset.hasImage).toBe("true");
   });
 
+  it("hides generic mcp plumbing activity while keeping the waiting row visible", () => {
+    const state = createState();
+    state.tabs[0]!.status = "busy";
+    state.tabs[0]!.waitingState = {
+      phase: "tools",
+      text: "Using tools",
+    };
+    state.tabs[0]!.toolLog = [
+      {
+        id: "mcp-1",
+        callId: "mcp-1",
+        kind: "mcp",
+        name: "mcp_tool",
+        title: "mcp_tool",
+        summary: "mcp_tool",
+        argsJson: "{}",
+        createdAt: 1,
+        updatedAt: 1,
+        status: "running",
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-activity")).toBeNull();
+    expect(root.querySelector(".obsidian-codex__waiting-copy")?.textContent).toContain("Using tools");
+  });
+
   it("shows the batch review controls for skill-update approvals", () => {
     const state = createState();
     state.tabs[0]!.pendingApprovals = [

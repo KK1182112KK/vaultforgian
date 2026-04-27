@@ -72,6 +72,11 @@ const FUTURE_PATCH_PROMISE_PATTERNS = [
 ];
 
 const INTERNAL_PROCESS_CHATTER_PATTERNS = [
+  /\bsuperpowers:[\w:-]+\s+applies here because\b/iu,
+  /\bapplies here because it is defined to run at conversation start\b/iu,
+  /\bI(?:'|’)?m loading only that skill(?:'|’)?s instructions\b/iu,
+  /\bthen I(?:'|’)?ll answer directly\b/iu,
+  /\bdefined to run at conversation start\b/iu,
   /conversation start rules/iu,
   /related skill guides?/iu,
   /checking?.{0,32}skill guides?/iu,

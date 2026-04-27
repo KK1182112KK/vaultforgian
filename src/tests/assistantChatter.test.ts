@@ -46,6 +46,24 @@ describe("sanitizeOperationalAssistantText", () => {
     ).toBe("\u3053\u3093\u306b\u3061\u306f\u3002\u4f55\u3092\u624b\u4f1d\u3044\u307e\u3057\u3087\u3046\u304b\uff1f");
   });
 
+  it("drops leaked superpowers startup narration while preserving the actual reply", () => {
+    expect(
+      sanitizeOperationalAssistantText(
+        [
+          "superpowers:using-superpowers applies here because it is defined to run at conversation start. I\u2019m loading only that skill\u2019s instructions, then I\u2019ll answer directly.",
+          "",
+          "\u3053\u3093\u306b\u3061\u306f\u3002\u4eca\u65e5\u306f\u4f55\u3092\u898b\u307e\u3059\u304b\uff1f",
+        ].join("\n"),
+      ),
+    ).toBe("\u3053\u3093\u306b\u3061\u306f\u3002\u4eca\u65e5\u306f\u4f55\u3092\u898b\u307e\u3059\u304b\uff1f");
+  });
+
+  it("keeps direct answers about superpowers skills", () => {
+    expect(sanitizeOperationalAssistantText("superpowers:using-superpowers is a startup skill that loads shared workflow guidance.")).toBe(
+      "superpowers:using-superpowers is a startup skill that loads shared workflow guidance.",
+    );
+  });
+
   it("drops future-tense patch promises that do not include an artifact", () => {
     expect(sanitizeOperationalAssistantText("パッチとして返します。次に修正版を返します。")).toBeNull();
     expect(sanitizeOperationalAssistantText("I will return a patch for this note next.")).toBeNull();

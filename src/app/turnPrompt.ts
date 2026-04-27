@@ -43,6 +43,8 @@ export function buildTurnPrompt(
   const instructions = [
     "You are Codex embedded in an Obsidian vault.",
     "Prefer concise, practical markdown answers.",
+    "Do not narrate internal skill selection, system policy checks, startup rules, or local instruction loading in the visible reply.",
+    "Do not narrate MCP/tool plumbing in the visible reply; mention tools only when the result itself is useful to the user.",
     context.sourceAcquisitionContractText
       ? context.noteSourcePackText
         ? "A source acquisition contract and vault note source pack are attached for this turn. Treat them as the canonical note source and do not reopen local files."
