@@ -5935,7 +5935,7 @@ export class CodexService {
   private createWaitingState(phase: WaitingPhase, mode: RuntimeMode) {
     return {
       phase,
-      text: pickWaitingCopy(phase, mode),
+      text: pickWaitingCopy(phase, mode, Date.now(), { locale: this.getLocale() }),
     };
   }
 

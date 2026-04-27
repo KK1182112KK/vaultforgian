@@ -7,27 +7,51 @@ export interface WaitingCopyOptions {
   locale?: "en" | "ja" | null;
 }
 
-const WAITING_COPY: Record<WaitingPhase, string[]> = {
-  boot: [
-    "入口を見つけています",
-    "手がかりを集めています",
-    "文脈をほどいています",
-  ],
-  reasoning: [
-    "考えを組み替えています",
-    "論点を並べ替えています",
-    "答えの骨組みを作っています",
-  ],
-  tools: [
-    "Vault を見にいっています",
-    "必要な材料を拾っています",
-    "変更点を整えています",
-  ],
-  finalizing: [
-    "返答を仕上げています",
-    "最後の一文を磨いています",
-    "着地を整えています",
-  ],
+const WAITING_COPY: Record<"en" | "ja", Record<WaitingPhase, string[]>> = {
+  en: {
+    boot: [
+      "Finding the entry point",
+      "Gathering clues",
+      "Untangling the context",
+    ],
+    reasoning: [
+      "Reshaping the answer",
+      "Sorting the key points",
+      "Building the response",
+    ],
+    tools: [
+      "Checking the vault",
+      "Collecting the needed context",
+      "Preparing the changes",
+    ],
+    finalizing: [
+      "Finishing the reply",
+      "Polishing the final line",
+      "Wrapping up",
+    ],
+  },
+  ja: {
+    boot: [
+      "入口を見つけています",
+      "手がかりを集めています",
+      "文脈をほどいています",
+    ],
+    reasoning: [
+      "考えを組み替えています",
+      "論点を並べ替えています",
+      "答えの骨組みを作っています",
+    ],
+    tools: [
+      "Vault を見にいっています",
+      "必要な材料を拾っています",
+      "変更点を整えています",
+    ],
+    finalizing: [
+      "返答を仕上げています",
+      "最後の一文を磨いています",
+      "着地を整えています",
+    ],
+  },
 };
 
 const FOCUSED_WAITING_COPY: Record<WaitingFocus, Record<"en" | "ja", string>> = {
@@ -66,9 +90,10 @@ export function pickWaitingCopy(
   if (phase === "tools" && options.focus) {
     return FOCUSED_WAITING_COPY[options.focus][options.locale === "en" ? "en" : "ja"];
   }
-  const phrases = WAITING_COPY[phase];
-  const prefix = mode === "skill" && phase === "tools" ? "skill を呼び出しています" : "";
+  const locale = options.locale === "en" ? "en" : "ja";
+  const phrases = WAITING_COPY[locale][phase];
+  const prefix = mode === "skill" && phase === "tools" ? (locale === "en" ? "Calling skill" : "skill を呼び出しています") : "";
   const seed = hash(`${phase}:${mode}:${entropy}`);
-  const phrase = phrases[seed % phrases.length] ?? phrases[0] ?? "考えています";
+  const phrase = phrases[seed % phrases.length] ?? phrases[0] ?? (locale === "en" ? "Thinking" : "考えています");
   return prefix ? `${prefix} · ${phrase}` : phrase;
 }
