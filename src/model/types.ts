@@ -329,6 +329,64 @@ export interface StudyCheckpoint {
   confidenceNote: string;
 }
 
+export type StudyContractWorkflowKind = StudyWorkflowKind | "general";
+export type StudyContractConceptStatus = "introduced" | "weak" | "understood" | "review";
+
+export interface StudyContractConcept {
+  label: string;
+  status: StudyContractConceptStatus;
+  evidence: string | null;
+}
+
+export interface StudyTurnContract {
+  objective: string;
+  sources: string[];
+  concepts: StudyContractConcept[];
+  likelyStuckPoints: string[];
+  checkQuestion: string;
+  nextAction: string;
+  nextProblems: string[];
+  confidenceNote: string;
+  workflow: StudyContractWorkflowKind;
+}
+
+export interface StudyMemoryWeakConcept {
+  conceptLabel: string;
+  evidence: string;
+  lastStuckPoint: string;
+  nextQuestion: string;
+  workflow: StudyContractWorkflowKind;
+  updatedAt: number;
+}
+
+export interface StudyMemoryUnderstoodConcept {
+  conceptLabel: string;
+  evidence: string;
+  workflow: StudyContractWorkflowKind;
+  updatedAt: number;
+}
+
+export interface StudyNextProblem {
+  prompt: string;
+  workflow: StudyContractWorkflowKind;
+  source: string | null;
+  createdAt: number;
+}
+
+export interface StudyStuckPoint {
+  conceptLabel: string;
+  detail: string;
+  workflow: StudyContractWorkflowKind;
+  createdAt: number;
+}
+
+export interface UserStudyMemory {
+  weakConcepts: StudyMemoryWeakConcept[];
+  understoodConcepts: StudyMemoryUnderstoodConcept[];
+  nextProblems: StudyNextProblem[];
+  recentStuckPoints: StudyStuckPoint[];
+}
+
 export interface StudyWeakPoint {
   conceptLabel: string;
   workflow: StudyWorkflowKind;
@@ -342,6 +400,9 @@ export interface StudyCoachState {
   latestRecap: StudyCheckpoint | null;
   weakPointLedger: StudyWeakPoint[];
   lastCheckpointAt: number | null;
+  latestContract?: StudyTurnContract | null;
+  lastStuckPoint?: StudyStuckPoint | null;
+  nextProblems?: StudyNextProblem[];
 }
 
 export interface UserAdaptationProfile {
@@ -364,6 +425,7 @@ export interface PanelAdaptationOverlay {
 export interface UserAdaptationMemory {
   globalProfile: UserAdaptationProfile | null;
   panelOverlays: Record<string, PanelAdaptationOverlay>;
+  studyMemory?: UserStudyMemory | null;
 }
 
 export interface StudyRecipeContextContract {

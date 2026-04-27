@@ -26,7 +26,11 @@ import type {
   PluginSettings,
   RuntimeMode,
   SelectionContext,
+  StudyContractWorkflowKind,
+  StudyNextProblem,
   StudyWorkflowKind,
+  StudyStuckPoint,
+  StudyTurnContract,
   TurnContextSnapshot,
   WaitingPhase,
 } from "../model/types";
@@ -119,7 +123,11 @@ import {
   buildQuotedPatchMathFormattingRules,
 } from "../util/patchPromptContract";
 import { buildUnifiedDiff } from "../util/unifiedDiff";
-import { updateUserAdaptationMemory } from "../util/userAdaptation";
+import {
+  buildStudyMemoryCarryForwardText,
+  mergeStudyContractIntoUserAdaptationMemory,
+  updateUserAdaptationMemory,
+} from "../util/userAdaptation";
 import {
   buildDiagramEmbedMarkdown,
   buildGeneratedDiagramAssetPath,
@@ -1112,6 +1120,7 @@ export class CodexService {
         ? this.getHubPanels().find((panel) => panel.id === tab.activeStudyRecipeId)?.title.trim() || null
         : null;
     const latestRecap = tab.studyCoachState?.latestRecap ?? null;
+    const latestContract = tab.studyCoachState?.latestContract ?? null;
     const unresolvedWeakPoints = (tab.studyCoachState?.weakPointLedger ?? []).filter((entry) => !entry.resolved).slice(0, 3);
     const userPrompts = tab.messages
       .map((message) =>
@@ -1147,6 +1156,11 @@ export class CodexService {
       latestRecap?.unclear.length ? `- Still unclear: ${latestRecap.unclear.join(" / ")}` : null,
       latestRecap?.nextStep ? `- Next study step: ${latestRecap.nextStep}` : null,
       latestRecap?.confidenceNote ? `- Confidence note: ${latestRecap.confidenceNote}` : null,
+      latestContract?.objective ? `- Latest study objective: ${latestContract.objective}` : null,
+      tab.studyCoachState?.lastStuckPoint?.detail ? `- Last stuck point: ${tab.studyCoachState.lastStuckPoint.detail}` : null,
+      tab.studyCoachState?.nextProblems?.length
+        ? `- Next problems: ${tab.studyCoachState.nextProblems.slice(0, 3).map((entry) => entry.prompt).join(" / ")}`
+        : null,
       unresolvedWeakPoints.length > 0 ? (locale === "ja" ? "Open weak points:" : "Open weak points:") : null,
       ...unresolvedWeakPoints.map((entry) => `- ${entry.conceptLabel}: ${entry.explanationSummary}`),
       userPrompts.length > 0 ? (locale === "ja" ? "Recent user requests:" : "Recent user requests:") : null,
@@ -1158,15 +1172,19 @@ export class CodexService {
   }
 
   private buildStudyCoachCarryForwardText(tab: ConversationTabState | null): string | null {
-    if (!tab?.learningMode) {
+    if (!tab) {
+      return null;
+    }
+    const shouldAttach = tab.learningMode || Boolean(tab.studyWorkflow) || tab.activeStudySkillNames.length > 0;
+    if (!shouldAttach) {
       return null;
     }
     const locale = this.getLocale();
     const studyCoachState = tab.studyCoachState;
-    const workflowKind = tab.studyWorkflow ?? studyCoachState?.latestRecap?.workflow ?? null;
-    const lines: string[] = ["Study coach carry-forward:"];
+    const workflowKind = tab.studyWorkflow ?? studyCoachState?.latestContract?.workflow ?? studyCoachState?.latestRecap?.workflow ?? null;
+    const lines: string[] = ["Study memory carry-forward:"];
 
-    if (workflowKind) {
+    if (workflowKind && workflowKind !== "general") {
       const definition = getStudyWorkflowDefinition(workflowKind, locale);
       const coachContract = definition.coachContract ?? [];
       if (coachContract.length > 0) {
@@ -1175,10 +1193,18 @@ export class CodexService {
       }
     }
 
+    const userStudyMemoryText = buildStudyMemoryCarryForwardText(this.store.getState().userAdaptationMemory ?? null);
+    if (userStudyMemoryText) {
+      lines.push(...userStudyMemoryText.split("\n").filter((line) => line.trim() && line.trim() !== "Study memory carry-forward:"));
+    }
+
     if (!studyCoachState) {
       return lines.length > 1 ? lines.join("\n") : null;
     }
 
+    if (studyCoachState.latestContract?.objective) {
+      lines.push(`- Latest objective: ${studyCoachState.latestContract.objective}`);
+    }
     if (studyCoachState.latestRecap?.mastered.length) {
       lines.push(`- Latest recap: ${studyCoachState.latestRecap.mastered.join(" / ")}`);
     }
@@ -1194,6 +1220,12 @@ export class CodexService {
     }
     if (studyCoachState.latestRecap?.unclear.length) {
       lines.push(`- Current unclear points: ${studyCoachState.latestRecap.unclear.join(" / ")}`);
+    }
+    if (studyCoachState.lastStuckPoint) {
+      lines.push(`- Previous stuck point: ${studyCoachState.lastStuckPoint.detail}`);
+    }
+    if (studyCoachState.nextProblems?.length) {
+      lines.push(`- Next problems: ${studyCoachState.nextProblems.slice(0, 3).map((entry) => entry.prompt).join(" / ")}`);
     }
 
     return lines.length > 1 ? lines.join("\n") : null;
@@ -3665,7 +3697,7 @@ export class CodexService {
 
     const approvals = await this.approvalCoordinator.buildVaultOpApprovals(tabId, messageId, parsed.ops, true, originTurnId);
     this.store.replaceProposalApprovals(tabId, messageId, approvals);
-    this.maybeStoreStudyCheckpoint(tabId, parsed);
+    this.maybeStoreStudyLearningArtifacts(tabId, parsed);
     this.maybeStorePlanExecutionSuggestion(tabId, messageId, parsed.plan);
     await this.saveGeneratedDiagramsAndInsert(tabId, messageId, parsed.diagrams, originTurnId);
     this.maybeStoreRewriteSuggestion(tabId, messageId, parsed, patchBasket, approvals, visibility);
@@ -4312,12 +4344,114 @@ export class CodexService {
     });
   }
 
-  private maybeStoreStudyCheckpoint(tabId: string, parsed: ParsedAssistantProposalResult): void {
+  private maybeStoreStudyLearningArtifacts(tabId: string, parsed: ParsedAssistantProposalResult): void {
     const tab = this.findTab(tabId);
-    if (!tab || !tab.learningMode || !parsed.studyCheckpoint) {
+    if (!tab) {
       return;
     }
-    this.store.setStudyCoachState(tabId, this.mergeStudyCheckpointIntoCoachState(tab, parsed.studyCheckpoint));
+    const contract = parsed.studyContract ?? (parsed.studyCheckpoint ? this.studyCheckpointToContract(parsed.studyCheckpoint) : null);
+    if (!contract) {
+      return;
+    }
+    this.store.setStudyCoachState(tabId, this.mergeStudyContractIntoCoachState(tab, contract));
+    const nextMemory = mergeStudyContractIntoUserAdaptationMemory(
+      this.store.getState().userAdaptationMemory ?? null,
+      contract,
+      Date.now(),
+    );
+    this.store.setUserAdaptationMemory(nextMemory);
+  }
+
+  private studyCheckpointToContract(
+    checkpoint: NonNullable<ParsedAssistantProposalResult["studyCheckpoint"]>,
+  ): StudyTurnContract {
+    return {
+      objective: `Continue the ${checkpoint.workflow} study turn.`,
+      sources: ["assistant study checkpoint"],
+      concepts: [
+        ...checkpoint.mastered.map((label) => ({
+          label,
+          status: "understood" as const,
+          evidence: checkpoint.confidenceNote,
+        })),
+        ...checkpoint.unclear.map((label) => ({
+          label,
+          status: "weak" as const,
+          evidence: checkpoint.confidenceNote,
+        })),
+      ],
+      likelyStuckPoints: [...checkpoint.unclear],
+      checkQuestion: checkpoint.nextStep,
+      nextAction: checkpoint.nextStep,
+      nextProblems: checkpoint.nextStep ? [checkpoint.nextStep] : [],
+      confidenceNote: checkpoint.confidenceNote,
+      workflow: checkpoint.workflow,
+    };
+  }
+
+  private resolveContractWorkflow(tab: ConversationTabState, workflow: StudyContractWorkflowKind): StudyWorkflowKind {
+    if (workflow === "lecture" || workflow === "review" || workflow === "paper" || workflow === "homework") {
+      return workflow;
+    }
+    return tab.studyWorkflow ?? tab.studyCoachState?.latestRecap?.workflow ?? "review";
+  }
+
+  private studyContractToCheckpoint(tab: ConversationTabState, contract: StudyTurnContract): NonNullable<ParsedAssistantProposalResult["studyCheckpoint"]> {
+    const mastered = contract.concepts
+      .filter((concept) => concept.status === "understood")
+      .map((concept) => concept.label)
+      .filter(Boolean);
+    const unclear = contract.concepts
+      .filter((concept) => concept.status === "weak")
+      .map((concept) => concept.label)
+      .filter(Boolean);
+    return {
+      workflow: this.resolveContractWorkflow(tab, contract.workflow),
+      mastered,
+      unclear,
+      nextStep: contract.checkQuestion || contract.nextAction,
+      confidenceNote: contract.confidenceNote,
+    };
+  }
+
+  private mergeStudyContractIntoCoachState(tab: ConversationTabState, contract: StudyTurnContract): ConversationTabState["studyCoachState"] {
+    const now = Date.now();
+    const checkpoint = this.studyContractToCheckpoint(tab, contract);
+    const base = this.mergeStudyCheckpointIntoCoachState(tab, checkpoint) ?? {
+      latestRecap: null,
+      weakPointLedger: [],
+      lastCheckpointAt: now,
+    };
+    const weakConcept = contract.concepts.find((concept) => concept.status === "weak") ?? null;
+    const lastStuckDetail = contract.likelyStuckPoints[0] ?? weakConcept?.evidence ?? contract.confidenceNote;
+    const lastStuckPoint: StudyStuckPoint | null = weakConcept
+      ? {
+          conceptLabel: weakConcept.label,
+          detail: lastStuckDetail,
+          workflow: contract.workflow,
+          createdAt: now,
+        }
+      : null;
+    const nextProblemPrompts = contract.nextProblems.length > 0 ? contract.nextProblems : contract.nextAction ? [contract.nextAction] : [];
+    const nextProblems: StudyNextProblem[] = nextProblemPrompts.map((prompt) => ({
+      prompt,
+      workflow: contract.workflow,
+      source: contract.sources[0] ?? null,
+      createdAt: now,
+    }));
+    return {
+      ...base,
+      latestContract: {
+        ...contract,
+        sources: [...contract.sources],
+        concepts: contract.concepts.map((concept) => ({ ...concept })),
+        likelyStuckPoints: [...contract.likelyStuckPoints],
+        nextProblems: [...contract.nextProblems],
+      },
+      ...(lastStuckPoint ? { lastStuckPoint } : {}),
+      ...(nextProblems.length > 0 ? { nextProblems } : {}),
+      lastCheckpointAt: now,
+    };
   }
 
   private mergeStudyCheckpointIntoCoachState(

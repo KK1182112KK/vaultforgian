@@ -16,9 +16,17 @@ import type {
   RestartDropNotice,
   RecentStudySource,
   StudyCoachState,
+  StudyContractConcept,
+  StudyContractConceptStatus,
+  StudyContractWorkflowKind,
   StudyHubState,
+  StudyMemoryUnderstoodConcept,
+  StudyMemoryWeakConcept,
+  StudyNextProblem,
   StudyWeakPoint,
   StudyWorkflowKind,
+  StudyStuckPoint,
+  StudyTurnContract,
   ConversationTabState,
   ModelCatalogEntry,
   PatchProposal,
@@ -28,6 +36,7 @@ import type {
   ToolCallRecord,
   UserAdaptationMemory,
   UserAdaptationProfile,
+  UserStudyMemory,
   UsageSummary,
   WaitingState,
   WorkspaceState,
@@ -50,6 +59,10 @@ const LEGACY_TRANSIENT_RUNTIME_SYSTEM_MESSAGE_PATTERNS = [
 ] as const;
 
 const RESTART_DROP_NOTICE_META_KEY = "restartDropNotice";
+const MAX_STUDY_MEMORY_WEAK_CONCEPTS = 20;
+const MAX_STUDY_MEMORY_UNDERSTOOD_CONCEPTS = 30;
+const MAX_STUDY_MEMORY_NEXT_PROBLEMS = 10;
+const MAX_STUDY_MEMORY_STUCK_POINTS = 10;
 
 function normalizeLineage(lineage: ConversationTabState["lineage"] | null | undefined): ConversationTabState["lineage"] {
   return {
@@ -85,6 +98,181 @@ function normalizeStudyWeakPoint(point: StudyWeakPoint | null | undefined): Stud
   };
 }
 
+function normalizeStudyContractWorkflow(value: unknown): StudyContractWorkflowKind {
+  return value === "lecture" || value === "review" || value === "paper" || value === "homework" || value === "general"
+    ? value
+    : "general";
+}
+
+function normalizeStudyContractConceptStatus(value: unknown): StudyContractConceptStatus {
+  return value === "introduced" || value === "weak" || value === "understood" || value === "review" ? value : "review";
+}
+
+function normalizeStudyContractConcept(concept: StudyContractConcept | null | undefined): StudyContractConcept | null {
+  if (!concept) {
+    return null;
+  }
+  const label = typeof concept.label === "string" ? concept.label.trim() : "";
+  if (!label) {
+    return null;
+  }
+  return {
+    label,
+    status: normalizeStudyContractConceptStatus(concept.status),
+    evidence: typeof concept.evidence === "string" && concept.evidence.trim() ? concept.evidence.trim() : null,
+  };
+}
+
+function normalizeStudyTurnContract(contract: StudyTurnContract | null | undefined): StudyTurnContract | null {
+  if (!contract) {
+    return null;
+  }
+  const objective = typeof contract.objective === "string" ? contract.objective.trim() : "";
+  const sources = Array.isArray(contract.sources) ? contract.sources.map((entry) => entry.trim()).filter(Boolean) : [];
+  const concepts = Array.isArray(contract.concepts)
+    ? contract.concepts
+        .map((entry) => normalizeStudyContractConcept(entry))
+        .filter((entry): entry is StudyContractConcept => Boolean(entry))
+    : [];
+  const checkQuestion = typeof contract.checkQuestion === "string" ? contract.checkQuestion.trim() : "";
+  const nextAction = typeof contract.nextAction === "string" ? contract.nextAction.trim() : "";
+  const confidenceNote = typeof contract.confidenceNote === "string" ? contract.confidenceNote.trim() : "";
+  if (!objective || sources.length === 0 || concepts.length === 0 || !checkQuestion || !nextAction || !confidenceNote) {
+    return null;
+  }
+  return {
+    objective,
+    sources,
+    concepts,
+    likelyStuckPoints: Array.isArray(contract.likelyStuckPoints)
+      ? contract.likelyStuckPoints.map((entry) => entry.trim()).filter(Boolean)
+      : [],
+    checkQuestion,
+    nextAction,
+    nextProblems: Array.isArray(contract.nextProblems)
+      ? contract.nextProblems.map((entry) => entry.trim()).filter(Boolean)
+      : [],
+    confidenceNote,
+    workflow: normalizeStudyContractWorkflow(contract.workflow),
+  };
+}
+
+function normalizeStudyStuckPoint(point: StudyStuckPoint | null | undefined): StudyStuckPoint | null {
+  if (!point) {
+    return null;
+  }
+  const conceptLabel = typeof point.conceptLabel === "string" ? point.conceptLabel.trim() : "";
+  const detail = typeof point.detail === "string" ? point.detail.trim() : "";
+  const createdAt = typeof point.createdAt === "number" && Number.isFinite(point.createdAt) ? point.createdAt : Date.now();
+  if (!conceptLabel || !detail) {
+    return null;
+  }
+  return {
+    conceptLabel,
+    detail,
+    workflow: normalizeStudyContractWorkflow(point.workflow),
+    createdAt,
+  };
+}
+
+function normalizeStudyNextProblem(problem: StudyNextProblem | null | undefined): StudyNextProblem | null {
+  if (!problem) {
+    return null;
+  }
+  const prompt = typeof problem.prompt === "string" ? problem.prompt.trim() : "";
+  const createdAt = typeof problem.createdAt === "number" && Number.isFinite(problem.createdAt) ? problem.createdAt : Date.now();
+  if (!prompt) {
+    return null;
+  }
+  return {
+    prompt,
+    workflow: normalizeStudyContractWorkflow(problem.workflow),
+    source: typeof problem.source === "string" && problem.source.trim() ? problem.source.trim() : null,
+    createdAt,
+  };
+}
+
+function normalizeStudyWeakMemoryConcept(concept: StudyMemoryWeakConcept | null | undefined): StudyMemoryWeakConcept | null {
+  if (!concept) {
+    return null;
+  }
+  const conceptLabel = typeof concept.conceptLabel === "string" ? concept.conceptLabel.trim() : "";
+  const evidence = typeof concept.evidence === "string" ? concept.evidence.trim() : "";
+  const lastStuckPoint = typeof concept.lastStuckPoint === "string" ? concept.lastStuckPoint.trim() : "";
+  const nextQuestion = typeof concept.nextQuestion === "string" ? concept.nextQuestion.trim() : "";
+  const updatedAt = typeof concept.updatedAt === "number" && Number.isFinite(concept.updatedAt) ? concept.updatedAt : Date.now();
+  if (!conceptLabel || !evidence || !nextQuestion) {
+    return null;
+  }
+  return {
+    conceptLabel,
+    evidence,
+    lastStuckPoint,
+    nextQuestion,
+    workflow: normalizeStudyContractWorkflow(concept.workflow),
+    updatedAt,
+  };
+}
+
+function normalizeStudyUnderstoodMemoryConcept(
+  concept: StudyMemoryUnderstoodConcept | null | undefined,
+): StudyMemoryUnderstoodConcept | null {
+  if (!concept) {
+    return null;
+  }
+  const conceptLabel = typeof concept.conceptLabel === "string" ? concept.conceptLabel.trim() : "";
+  const evidence = typeof concept.evidence === "string" ? concept.evidence.trim() : "";
+  const updatedAt = typeof concept.updatedAt === "number" && Number.isFinite(concept.updatedAt) ? concept.updatedAt : Date.now();
+  if (!conceptLabel || !evidence) {
+    return null;
+  }
+  return {
+    conceptLabel,
+    evidence,
+    workflow: normalizeStudyContractWorkflow(concept.workflow),
+    updatedAt,
+  };
+}
+
+function normalizeUserStudyMemory(memory: UserStudyMemory | null | undefined): UserStudyMemory | null {
+  if (!memory) {
+    return null;
+  }
+  const weakConcepts = Array.isArray(memory.weakConcepts)
+    ? memory.weakConcepts
+        .map((entry) => normalizeStudyWeakMemoryConcept(entry))
+        .filter((entry): entry is StudyMemoryWeakConcept => Boolean(entry))
+        .slice(0, MAX_STUDY_MEMORY_WEAK_CONCEPTS)
+    : [];
+  const understoodConcepts = Array.isArray(memory.understoodConcepts)
+    ? memory.understoodConcepts
+        .map((entry) => normalizeStudyUnderstoodMemoryConcept(entry))
+        .filter((entry): entry is StudyMemoryUnderstoodConcept => Boolean(entry))
+        .slice(0, MAX_STUDY_MEMORY_UNDERSTOOD_CONCEPTS)
+    : [];
+  const nextProblems = Array.isArray(memory.nextProblems)
+    ? memory.nextProblems
+        .map((entry) => normalizeStudyNextProblem(entry))
+        .filter((entry): entry is StudyNextProblem => Boolean(entry))
+        .slice(0, MAX_STUDY_MEMORY_NEXT_PROBLEMS)
+    : [];
+  const recentStuckPoints = Array.isArray(memory.recentStuckPoints)
+    ? memory.recentStuckPoints
+        .map((entry) => normalizeStudyStuckPoint(entry))
+        .filter((entry): entry is StudyStuckPoint => Boolean(entry))
+        .slice(0, MAX_STUDY_MEMORY_STUCK_POINTS)
+    : [];
+  if (weakConcepts.length === 0 && understoodConcepts.length === 0 && nextProblems.length === 0 && recentStuckPoints.length === 0) {
+    return null;
+  }
+  return {
+    weakConcepts,
+    understoodConcepts,
+    nextProblems,
+    recentStuckPoints,
+  };
+}
+
 function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | undefined): StudyCoachState | null {
   if (!studyCoachState) {
     return null;
@@ -114,7 +302,15 @@ function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | unde
       : latestRecap
         ? Date.now()
         : null;
-  if (!latestRecap && weakPointLedger.length === 0 && lastCheckpointAt === null) {
+  const latestContract = normalizeStudyTurnContract(studyCoachState.latestContract ?? null);
+  const lastStuckPoint = normalizeStudyStuckPoint(studyCoachState.lastStuckPoint ?? null);
+  const nextProblems = Array.isArray(studyCoachState.nextProblems)
+    ? studyCoachState.nextProblems
+        .map((entry) => normalizeStudyNextProblem(entry))
+        .filter((entry): entry is StudyNextProblem => Boolean(entry))
+        .slice(0, MAX_STUDY_MEMORY_NEXT_PROBLEMS)
+    : [];
+  if (!latestRecap && weakPointLedger.length === 0 && lastCheckpointAt === null && !latestContract && !lastStuckPoint && nextProblems.length === 0) {
     return null;
   }
   return {
@@ -124,6 +320,9 @@ function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | unde
         : null,
     weakPointLedger,
     lastCheckpointAt,
+    ...(latestContract ? { latestContract } : {}),
+    ...(lastStuckPoint ? { lastStuckPoint } : {}),
+    ...(nextProblems.length > 0 ? { nextProblems } : {}),
   };
 }
 
@@ -144,6 +343,19 @@ function cloneStudyCoachState(studyCoachState: StudyCoachState | null | undefine
       : null,
     weakPointLedger: normalized.weakPointLedger.map((entry) => ({ ...entry })),
     lastCheckpointAt: normalized.lastCheckpointAt,
+    ...(normalized.latestContract
+      ? {
+          latestContract: {
+            ...normalized.latestContract,
+            sources: [...normalized.latestContract.sources],
+            concepts: normalized.latestContract.concepts.map((entry) => ({ ...entry })),
+            likelyStuckPoints: [...normalized.latestContract.likelyStuckPoints],
+            nextProblems: [...normalized.latestContract.nextProblems],
+          },
+        }
+      : {}),
+    ...(normalized.lastStuckPoint ? { lastStuckPoint: { ...normalized.lastStuckPoint } } : {}),
+    ...(normalized.nextProblems ? { nextProblems: normalized.nextProblems.map((entry) => ({ ...entry })) } : {}),
   };
 }
 
@@ -201,12 +413,14 @@ function normalizeUserAdaptationMemory(memory: UserAdaptationMemory | null | und
       ] as const,
     ];
   });
-  if (!globalProfile && panelEntries.length === 0) {
+  const studyMemory = normalizeUserStudyMemory(memory.studyMemory ?? null);
+  if (!globalProfile && panelEntries.length === 0 && !studyMemory) {
     return null;
   }
   return {
     globalProfile,
     panelOverlays: Object.fromEntries(panelEntries),
+    ...(studyMemory ? { studyMemory } : {}),
   };
 }
 
@@ -238,6 +452,16 @@ function cloneUserAdaptationMemory(memory: UserAdaptationMemory | null | undefin
         },
       ]),
     ),
+    ...(normalized.studyMemory
+      ? {
+          studyMemory: {
+            weakConcepts: normalized.studyMemory.weakConcepts.map((entry) => ({ ...entry })),
+            understoodConcepts: normalized.studyMemory.understoodConcepts.map((entry) => ({ ...entry })),
+            nextProblems: normalized.studyMemory.nextProblems.map((entry) => ({ ...entry })),
+            recentStuckPoints: normalized.studyMemory.recentStuckPoints.map((entry) => ({ ...entry })),
+          },
+        }
+      : {}),
   };
 }
 

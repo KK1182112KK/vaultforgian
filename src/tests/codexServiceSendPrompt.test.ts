@@ -1651,7 +1651,49 @@ describe("CodexService sendPrompt skill context", () => {
         }),
       ],
       lastCheckpointAt: expect.any(Number),
+      latestContract: expect.objectContaining({
+        objective: "Continue the review study turn.",
+        concepts: [
+          expect.objectContaining({
+            label: "Can explain the headline reason convolution becomes multiplication.",
+            status: "understood",
+          }),
+          expect.objectContaining({
+            label: "Still unclear on why the transform changes a sliding integral into multiplication.",
+            status: "weak",
+          }),
+        ],
+        checkQuestion: "Explain the bridge between convolution and multiplication in one sentence.",
+        nextAction: "Explain the bridge between convolution and multiplication in one sentence.",
+        workflow: "review",
+      }),
+      lastStuckPoint: expect.objectContaining({
+        conceptLabel: "Still unclear on why the transform changes a sliding integral into multiplication.",
+        detail: "Still unclear on why the transform changes a sliding integral into multiplication.",
+        workflow: "review",
+      }),
+      nextProblems: [
+        expect.objectContaining({
+          prompt: "Explain the bridge between convolution and multiplication in one sentence.",
+          workflow: "review",
+        }),
+      ],
     });
+
+    expect(service.store.getState().userAdaptationMemory?.studyMemory?.weakConcepts).toEqual([
+      expect.objectContaining({
+        conceptLabel: "Still unclear on why the transform changes a sliding integral into multiplication.",
+        evidence: "The learner understands the headline result but cannot justify the bridge yet.",
+        nextQuestion: "Explain the bridge between convolution and multiplication in one sentence.",
+        workflow: "review",
+      }),
+    ]);
+    expect(service.store.getState().userAdaptationMemory?.studyMemory?.understoodConcepts).toEqual([
+      expect.objectContaining({
+        conceptLabel: "Can explain the headline reason convolution becomes multiplication.",
+        workflow: "review",
+      }),
+    ]);
 
     const captureTurnContext = (
       service as unknown as Record<
@@ -1672,7 +1714,7 @@ describe("CodexService sendPrompt skill context", () => {
     )["captureTurnContext"];
     const context = await captureTurnContext.call(service, tabId, null, null, "Continue helping me review this topic.", null, [], null, null, [], []);
 
-    expect(context.studyCoachText).toContain("Study coach carry-forward:");
+    expect(context.studyCoachText).toContain("Study memory carry-forward:");
     expect(context.studyCoachText).toContain("Workflow-specific coach guidance:");
     expect(context.studyCoachText).toContain("Weak point: The learner understands the headline result but cannot justify the bridge yet.");
     expect(context.studyCoachText).toContain("Next check: Explain the bridge between convolution and multiplication in one sentence.");

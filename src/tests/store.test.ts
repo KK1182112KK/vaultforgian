@@ -138,6 +138,42 @@ describe("AgentStore", () => {
             updatedAt: 456,
           },
         },
+        studyMemory: {
+          weakConcepts: [
+            {
+              conceptLabel: "RMS voltage",
+              evidence: "Still mixes peak and RMS voltage.",
+              lastStuckPoint: "Forgets peak-to-RMS conversion.",
+              nextQuestion: "What if the voltage is already RMS?",
+              workflow: "homework",
+              updatedAt: 789,
+            },
+          ],
+          understoodConcepts: [
+            {
+              conceptLabel: "Average power formula",
+              evidence: "Can state P = Vrms^2 / R.",
+              workflow: "homework",
+              updatedAt: 790,
+            },
+          ],
+          nextProblems: [
+            {
+              prompt: "Compute average load power for Vpeak = 10 V and R = 50 ohms.",
+              workflow: "homework",
+              source: "EENG3520 HW5",
+              createdAt: 791,
+            },
+          ],
+          recentStuckPoints: [
+            {
+              conceptLabel: "Peak-to-RMS conversion",
+              detail: "Dividing by sqrt(2) is not automatic yet.",
+              workflow: "homework",
+              createdAt: 792,
+            },
+          ],
+        },
       },
     } as ConstructorParameters<typeof AgentStore>[0] & { userAdaptationMemory?: unknown };
 
@@ -145,10 +181,14 @@ describe("AgentStore", () => {
     const state = store.getState() as typeof store.getState extends () => infer T ? T & { userAdaptationMemory?: any } : never;
     expect(state.userAdaptationMemory?.globalProfile?.preferredFocusTags).toEqual(["examples", "pitfalls"]);
     expect(state.userAdaptationMemory?.panelOverlays?.["panel-1"]?.preferredSkillNames).toEqual(["deep-read"]);
+    expect(state.userAdaptationMemory?.studyMemory?.weakConcepts?.[0]?.conceptLabel).toBe("RMS voltage");
+    expect(state.userAdaptationMemory?.studyMemory?.understoodConcepts?.[0]?.conceptLabel).toBe("Average power formula");
 
     const serialized = store.serialize() as ReturnType<AgentStore["serialize"]> & { userAdaptationMemory?: any };
     expect(serialized.userAdaptationMemory?.globalProfile?.explanationDepth).toBe("step_by_step");
     expect(serialized.userAdaptationMemory?.panelOverlays?.["panel-1"]?.lastAppliedTargetPath).toBe("Notes/Paper.md");
+    expect(serialized.userAdaptationMemory?.studyMemory?.nextProblems?.[0]?.prompt).toContain("average load power");
+    expect(serialized.userAdaptationMemory?.studyMemory?.recentStuckPoints?.[0]?.detail).toContain("sqrt(2)");
   });
 
   it("normalizes an invalid persisted active tab id to the first available tab", () => {
@@ -707,6 +747,31 @@ describe("AgentStore", () => {
         },
       ],
       lastCheckpointAt: 777,
+      latestContract: {
+        objective: "Understand the final proof implication.",
+        sources: ["Chapter proof note"],
+        concepts: [{ label: "final proof implication", status: "weak", evidence: "Can repeat but not justify it." }],
+        likelyStuckPoints: ["Which assumption unlocks the implication."],
+        checkQuestion: "Which assumption unlocks the last implication?",
+        nextAction: "Re-derive the final implication from the assumption.",
+        nextProblems: ["Prove the last implication without looking."],
+        confidenceNote: "The learner can summarize but not defend the final step.",
+        workflow: "review",
+      },
+      lastStuckPoint: {
+        conceptLabel: "final proof implication",
+        detail: "The last implication is being repeated from memory instead of understood.",
+        workflow: "review",
+        createdAt: 777,
+      },
+      nextProblems: [
+        {
+          prompt: "Prove the last implication without looking.",
+          workflow: "review",
+          source: "Chapter proof note",
+          createdAt: 777,
+        },
+      ],
     });
 
     const serialized = store.serialize();
@@ -729,6 +794,31 @@ describe("AgentStore", () => {
         },
       ],
       lastCheckpointAt: 777,
+      latestContract: {
+        objective: "Understand the final proof implication.",
+        sources: ["Chapter proof note"],
+        concepts: [{ label: "final proof implication", status: "weak", evidence: "Can repeat but not justify it." }],
+        likelyStuckPoints: ["Which assumption unlocks the implication."],
+        checkQuestion: "Which assumption unlocks the last implication?",
+        nextAction: "Re-derive the final implication from the assumption.",
+        nextProblems: ["Prove the last implication without looking."],
+        confidenceNote: "The learner can summarize but not defend the final step.",
+        workflow: "review",
+      },
+      lastStuckPoint: {
+        conceptLabel: "final proof implication",
+        detail: "The last implication is being repeated from memory instead of understood.",
+        workflow: "review",
+        createdAt: 777,
+      },
+      nextProblems: [
+        {
+          prompt: "Prove the last implication without looking.",
+          workflow: "review",
+          source: "Chapter proof note",
+          createdAt: 777,
+        },
+      ],
     });
 
     const restored = new AgentStore(serialized, "/vault", true);
@@ -751,6 +841,31 @@ describe("AgentStore", () => {
         },
       ],
       lastCheckpointAt: 777,
+      latestContract: {
+        objective: "Understand the final proof implication.",
+        sources: ["Chapter proof note"],
+        concepts: [{ label: "final proof implication", status: "weak", evidence: "Can repeat but not justify it." }],
+        likelyStuckPoints: ["Which assumption unlocks the implication."],
+        checkQuestion: "Which assumption unlocks the last implication?",
+        nextAction: "Re-derive the final implication from the assumption.",
+        nextProblems: ["Prove the last implication without looking."],
+        confidenceNote: "The learner can summarize but not defend the final step.",
+        workflow: "review",
+      },
+      lastStuckPoint: {
+        conceptLabel: "final proof implication",
+        detail: "The last implication is being repeated from memory instead of understood.",
+        workflow: "review",
+        createdAt: 777,
+      },
+      nextProblems: [
+        {
+          prompt: "Prove the last implication without looking.",
+          workflow: "review",
+          source: "Chapter proof note",
+          createdAt: 777,
+        },
+      ],
     });
   });
 

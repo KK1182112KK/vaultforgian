@@ -52,6 +52,7 @@ describe("StudyLayer prompt overlays", () => {
       learningMode: true,
     });
     expect(prompt).not.toContain("obsidian-study-checkpoint");
+    expect(prompt).not.toContain("obsidian-study-contract");
     expect(prompt).not.toContain("Learning mode is active for this tab.");
   });
 
@@ -74,8 +75,28 @@ describe("StudyLayer prompt overlays", () => {
     expect(isStudyLayerActiveForTurn(context)).toBe(true);
     expect(overlay.statusLines).toContain("Active study workflow: review");
     expect(overlay.instructions.join("\n")).toContain("Learning mode is active for this tab.");
-    expect(overlay.instructions.join("\n")).toContain("obsidian-study-checkpoint");
+    expect(overlay.instructions.join("\n")).toContain("obsidian-study-contract");
+    expect(overlay.instructions.join("\n")).toContain("Do not show the contract JSON");
     expect(overlay.blocks).toContain("Study coach carry-forward:\n- Weak point: convolution.");
+  });
+
+  it("adds contract guidance for explicit study workflow turns even when learning mode is off", () => {
+    const context = createContext({
+      studyWorkflow: "homework",
+      workflowText: "Active study workflow: Homework\nResponse contract:",
+    });
+    const overlay = buildStudyLayerPromptOverlay({
+      prompt: "Help me understand this homework formula.",
+      context,
+      composeMode: "chat",
+      allowVaultWrite: false,
+      learningMode: false,
+      skillNames: [],
+      mode: "normal",
+    });
+
+    expect(overlay.instructions.join("\n")).toContain("obsidian-study-contract");
+    expect(overlay.learningModeActive).toBe(false);
   });
 
   it("keeps paper-study overlays in the study layer", () => {

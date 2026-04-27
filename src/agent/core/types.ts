@@ -11,6 +11,7 @@ import type {
   ParsedAssistantDiagram,
   ParsedAssistantPlanSignal,
   ParsedAssistantProposalResult,
+  ParsedAssistantStudyContract,
   ParsedAssistantStudyCheckpoint,
   ParsedAssistantSuggestionSignal,
 } from "../../util/assistantProposals";
@@ -87,6 +88,7 @@ export type AgentArtifactKind =
   | "obsidian-ops"
   | "obsidian-plan"
   | "obsidian-suggest"
+  | "obsidian-study-contract"
   | "obsidian-study-checkpoint"
   | "obsidian-diagram";
 
@@ -95,6 +97,7 @@ export type AgentArtifact =
   | { kind: "obsidian-ops"; payload: ParsedAssistantOp; sourceIndex: number }
   | { kind: "obsidian-plan"; payload: ParsedAssistantPlanSignal; sourceIndex: null }
   | { kind: "obsidian-suggest"; payload: ParsedAssistantSuggestionSignal; sourceIndex: null }
+  | { kind: "obsidian-study-contract"; payload: ParsedAssistantStudyContract; sourceIndex: null }
   | { kind: "obsidian-study-checkpoint"; payload: ParsedAssistantStudyCheckpoint; sourceIndex: null }
   | { kind: "obsidian-diagram"; payload: ParsedAssistantDiagram; sourceIndex: number };
 
@@ -217,6 +220,9 @@ export function createAgentArtifacts(parsed: ParsedAssistantProposalResult): Age
     })),
     parsed.plan ? { kind: "obsidian-plan" as const, payload: parsed.plan, sourceIndex: null } : null,
     parsed.suggestion ? { kind: "obsidian-suggest" as const, payload: parsed.suggestion, sourceIndex: null } : null,
+    parsed.studyContract
+      ? { kind: "obsidian-study-contract" as const, payload: parsed.studyContract, sourceIndex: null }
+      : null,
     parsed.studyCheckpoint
       ? { kind: "obsidian-study-checkpoint" as const, payload: parsed.studyCheckpoint, sourceIndex: null }
       : null,

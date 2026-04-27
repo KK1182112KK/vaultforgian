@@ -84,6 +84,21 @@ function shouldUseLearningMode(input: StudyLayerPromptOverlayInput): boolean {
   return Boolean(input.context.studyWorkflow) || matchesAnyPattern(input.prompt, EXPLANATION_PATTERNS);
 }
 
+function shouldUseStudyContract(input: StudyLayerPromptOverlayInput, learningModeActive: boolean): boolean {
+  if (input.composeMode !== "chat" || input.allowVaultWrite || promptAllowsVaultWrite(input.prompt)) {
+    return false;
+  }
+  if (learningModeActive) {
+    return true;
+  }
+  return Boolean(
+    input.context.studyWorkflow ||
+      input.context.workflowText ||
+      input.context.paperStudyRuntimeOverlayText ||
+      input.context.paperStudyGuideText,
+  );
+}
+
 export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput): StudyLayerPromptOverlay {
   const statusLines: string[] = [];
   const instructions: string[] = [];
@@ -91,6 +106,7 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
   const context = input.context;
   const active = isStudyLayerActiveForTurn(context);
   const learningModeActive = shouldUseLearningMode(input);
+  const studyContractActive = shouldUseStudyContract(input, learningModeActive);
 
   if (!active) {
     return { statusLines, instructions, blocks, learningModeActive };
@@ -108,19 +124,28 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
         "Learning mode is active for this tab. Use a study-coach response structure for study and explanation turns. Because the user explicitly asked for the direct answer in this turn, Give the direct answer first.",
       );
       instructions.push(
-        "After the direct answer, still include one short understanding-check question, name one likely point of confusion, suggest the next study step, and append a fenced `obsidian-study-checkpoint` JSON block after the visible answer. Use this literal fence label: ```obsidian-study-checkpoint",
+        "After the direct answer, still include one short understanding-check question, name one likely point of confusion, and suggest the next study step.",
       );
     } else {
       instructions.push(
         "Learning mode is active for this tab. Use a study-coach response structure for study and explanation turns: lead with the key explanation, include one short understanding-check question, name a likely point of confusion, and end with the next study step.",
       );
       instructions.push(
-        "After the visible answer, append a fenced `obsidian-study-checkpoint` JSON block with keys `workflow`, `mastered`, `unclear`, `next_step`, and `confidence_note`. Keep the checkpoint factual and concise so the plugin can carry it forward into the next turn. Use this literal fence label: ```obsidian-study-checkpoint",
-      );
-      instructions.push(
         "Do not force this study-coach contract onto note-editing, patch-generation, implementation, or operational tasks.",
       );
     }
+  }
+
+  if (studyContractActive) {
+    instructions.push(
+      "For this study turn, append a hidden fenced `obsidian-study-contract` JSON block after the visible answer. Use this literal fence label: ```obsidian-study-contract",
+    );
+    instructions.push(
+      "The study contract JSON schema is {\"objective\":\"...\",\"sources\":[\"...\"],\"concepts\":[{\"label\":\"...\",\"status\":\"introduced|weak|understood|review\",\"evidence\":\"...\"}],\"likely_stuck_points\":[\"...\"],\"check_question\":\"...\",\"next_action\":\"...\",\"next_problems\":[\"...\"],\"confidence_note\":\"...\",\"workflow\":\"lecture|review|paper|homework|general\"}.",
+    );
+    instructions.push(
+      "Do not show the contract JSON or internal analysis in the visible reply. Surface only the useful explanation, one concise check question when helpful, and the next action.",
+    );
   }
 
   if (context.paperStudyRuntimeOverlayText) {
@@ -131,7 +156,7 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
     instructions.push("Do not call shell or file-reading tools for source acquisition in this turn.");
   }
 
-  if (learningModeActive && context.studyCoachText) {
+  if (studyContractActive && context.studyCoachText) {
     instructions.push("A study coach carry-forward summary is attached for this turn.");
     instructions.push("Use it to continue from the learner's latest recap, unresolved weak point, and next study step.");
   }
@@ -143,7 +168,7 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
     );
   }
 
-  blocks.push(context.workflowText, learningModeActive ? context.studyCoachText ?? null : null, context.paperStudyRuntimeOverlayText, context.paperStudyGuideText);
+  blocks.push(context.workflowText, studyContractActive ? context.studyCoachText ?? null : null, context.paperStudyRuntimeOverlayText, context.paperStudyGuideText);
 
   return { statusLines, instructions, blocks, learningModeActive };
 }

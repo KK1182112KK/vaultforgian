@@ -171,6 +171,67 @@ describe("assistant proposal parsing", () => {
     });
   });
 
+  it("extracts and hides obsidian-study-contract blocks", () => {
+    const parsed = extractAssistantProposals(
+      [
+        "Average load power depends on the RMS voltage across the load.",
+        "",
+        "Quick check: why do we square voltage before averaging?",
+        "",
+        "```obsidian-study-contract",
+        JSON.stringify({
+          objective: "Understand average load power from peak voltage.",
+          sources: ["EENG3520 HW5 - Study Guide.md"],
+          concepts: [
+            {
+              label: "RMS voltage",
+              status: "understood",
+              evidence: "The learner can state why RMS is used for average power.",
+            },
+            {
+              label: "Peak-to-RMS conversion",
+              status: "weak",
+              evidence: "The learner still mixes peak and RMS voltage.",
+            },
+          ],
+          likely_stuck_points: ["Forgetting that average power uses RMS voltage."],
+          check_question: "What changes in the formula if the voltage is already RMS?",
+          next_action: "Solve one average-power problem using peak voltage.",
+          next_problems: ["Compute load power for Vpeak = 10 V and R = 50 ohms."],
+          confidence_note: "The learner understands the target formula but needs one numerical check.",
+          workflow: "homework",
+        }),
+        "```",
+      ].join("\n"),
+    );
+
+    expect(parsed.displayText).toBe(
+      "Average load power depends on the RMS voltage across the load.\n\nQuick check: why do we square voltage before averaging?",
+    );
+    expect(parsed.studyContract).toEqual({
+      objective: "Understand average load power from peak voltage.",
+      sources: ["EENG3520 HW5 - Study Guide.md"],
+      concepts: [
+        {
+          label: "RMS voltage",
+          status: "understood",
+          evidence: "The learner can state why RMS is used for average power.",
+        },
+        {
+          label: "Peak-to-RMS conversion",
+          status: "weak",
+          evidence: "The learner still mixes peak and RMS voltage.",
+        },
+      ],
+      likelyStuckPoints: ["Forgetting that average power uses RMS voltage."],
+      checkQuestion: "What changes in the formula if the voltage is already RMS?",
+      nextAction: "Solve one average-power problem using peak voltage.",
+      nextProblems: ["Compute load power for Vpeak = 10 V and R = 50 ohms."],
+      confidenceNote: "The learner understands the target formula but needs one numerical check.",
+      workflow: "homework",
+    });
+  });
+
   it("extracts and hides obsidian-diagram blocks", () => {
     const parsed = extractAssistantProposals(
       [
@@ -207,6 +268,21 @@ describe("assistant proposal parsing", () => {
     ["obsidian-plan", { status: "drafting" }, "plan"],
     ["obsidian-suggest", { kind: "unknown" }, "suggestion"],
     ["obsidian-study-checkpoint", { workflow: "lecture", mastered: "not an array" }, "studyCheckpoint"],
+    [
+      "obsidian-study-contract",
+      {
+        objective: "",
+        sources: ["Lecture note"],
+        concepts: [{ label: "RMS voltage", status: "weak" }],
+        likely_stuck_points: ["peak vs RMS"],
+        check_question: "Check?",
+        next_action: "Practice.",
+        next_problems: ["Problem 1"],
+        confidence_note: "Needs practice.",
+        workflow: "lecture",
+      },
+      "studyContract",
+    ],
     ["obsidian-diagram", { title: "Missing SVG", alt: "No SVG", insertMode: "auto" }, "diagrams"],
   ] as const)("marks invalid %s blocks as malformed", (blockType, payload, resultKey) => {
     const parsed = extractAssistantProposals(

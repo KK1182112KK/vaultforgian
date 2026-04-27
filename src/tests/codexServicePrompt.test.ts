@@ -319,7 +319,8 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("one short understanding-check question");
     expect(prompt).toContain("likely point of confusion");
     expect(prompt).toContain("next study step");
-    expect(prompt).toContain("```obsidian-study-checkpoint");
+    expect(prompt).toContain("```obsidian-study-contract");
+    expect(prompt).toContain("Do not show the contract JSON");
   });
 
   it("lets direct-answer requests bypass the coaching preamble for that turn", () => {
@@ -337,6 +338,7 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("the user explicitly asked for the direct answer in this turn");
     expect(prompt).toContain("Give the direct answer first");
     expect(prompt).toContain("After the direct answer, still include");
+    expect(prompt).toContain("```obsidian-study-contract");
   });
 
   it("does not force learning-mode tutoring onto editing turns", () => {

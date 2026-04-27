@@ -1,13 +1,23 @@
-import type { PatchEvidenceSourceKind, PatchIntent, PatchProposalKind, StudyWorkflowKind, VaultOpKind } from "../model/types";
+import type {
+  PatchEvidenceSourceKind,
+  PatchIntent,
+  PatchProposalKind,
+  StudyContractConceptStatus,
+  StudyContractWorkflowKind,
+  StudyWorkflowKind,
+  VaultOpKind,
+} from "../model/types";
 import { normalizePatchIntent } from "./agenticTurnPolicy";
 import { sanitizeOperationalAssistantText } from "./assistantChatter";
 
-const PROPOSAL_BLOCK_PATTERN = /```(obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint|obsidian-diagram)\s*\n([\s\S]*?)```/gim;
-const PARTIAL_PROPOSAL_FENCE_PATTERN = /```(?:obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint|obsidian-diagram)\b[\s\S]*$/im;
+const PROPOSAL_BLOCK_PATTERN =
+  /```(obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint|obsidian-study-contract|obsidian-diagram)\s*\n([\s\S]*?)```/gim;
+const PARTIAL_PROPOSAL_FENCE_PATTERN =
+  /```(?:obsidian-patch|obsidian-ops|obsidian-plan|obsidian-suggest|obsidian-study-checkpoint|obsidian-study-contract|obsidian-diagram)\b[\s\S]*$/im;
 const JSON_PROPOSAL_LINE_PATTERN =
-  /^\s*"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|content|text|proposedText|anchors|anchorBefore|anchorAfter|replacement|destinationPath|newPath|toPath|propertyKey|propertyValue|taskLine|taskText|checked|title|alt|caption|insertMode|svg)"\s*:/m;
+  /^\s*"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|content|text|proposedText|anchors|anchorBefore|anchorAfter|replacement|destinationPath|newPath|toPath|propertyKey|propertyValue|taskLine|taskText|checked|title|alt|caption|insertMode|svg|objective|sources|concepts|likely_stuck_points|check_question|next_action|next_problems|confidence_note|workflow)"\s*:/m;
 const JSON_PROPOSAL_MARKER_PATTERN =
-  /"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|anchors|anchorBefore|anchorAfter|replacement|destinationPath|propertyKey|propertyValue|taskLine|taskText|checked|title|alt|caption|insertMode|svg)"\s*:/i;
+  /"(?:patches|patch|ops|op|path|targetPath|file|kind|operation|intent|summary|anchors|anchorBefore|anchorAfter|replacement|destinationPath|propertyKey|propertyValue|taskLine|taskText|checked|title|alt|caption|insertMode|svg|objective|sources|concepts|likely_stuck_points|check_question|next_action|next_problems|confidence_note|workflow)"\s*:/i;
 
 export interface ParsedAssistantPatchAnchor {
   anchorBefore: string;
@@ -47,6 +57,7 @@ export interface ParsedAssistantProposalResult {
   plan: ParsedAssistantPlanSignal | null;
   suggestion: ParsedAssistantSuggestionSignal | null;
   studyCheckpoint: ParsedAssistantStudyCheckpoint | null;
+  studyContract: ParsedAssistantStudyContract | null;
   diagrams: ParsedAssistantDiagram[];
   hasProposalMarkers: boolean;
   hasMalformedProposal: boolean;
@@ -76,6 +87,24 @@ export interface ParsedAssistantStudyCheckpoint {
   unclear: string[];
   nextStep: string;
   confidenceNote: string;
+}
+
+export interface ParsedAssistantStudyContractConcept {
+  label: string;
+  status: StudyContractConceptStatus;
+  evidence: string | null;
+}
+
+export interface ParsedAssistantStudyContract {
+  objective: string;
+  sources: string[];
+  concepts: ParsedAssistantStudyContractConcept[];
+  likelyStuckPoints: string[];
+  checkQuestion: string;
+  nextAction: string;
+  nextProblems: string[];
+  confidenceNote: string;
+  workflow: StudyContractWorkflowKind;
 }
 
 export interface ParsedAssistantDiagram {
@@ -183,6 +212,57 @@ function normalizeStudyWorkflowKind(value: unknown): StudyWorkflowKind | null {
   return null;
 }
 
+function normalizeStudyContractWorkflowKind(value: unknown): StudyContractWorkflowKind {
+  return normalizeStudyWorkflowKind(value) ?? "general";
+}
+
+function normalizeStudyContractConceptStatus(value: unknown): StudyContractConceptStatus {
+  const normalized = normalizeWhitespace(asString(value) ?? "").toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "understood" || normalized === "mastered" || normalized === "resolved") {
+    return "understood";
+  }
+  if (normalized === "weak" || normalized === "unclear" || normalized === "stuck" || normalized === "confused") {
+    return "weak";
+  }
+  if (normalized === "introduced" || normalized === "new") {
+    return "introduced";
+  }
+  return "review";
+}
+
+function normalizeStudyContractSources(value: unknown): string[] {
+  return toArray(value)
+    .map((entry) => {
+      const record = asRecord(entry);
+      if (record) {
+        return normalizeWhitespace(asString(record.label) ?? asString(record.title) ?? asString(record.path) ?? "");
+      }
+      return normalizeWhitespace(asString(entry) ?? "");
+    })
+    .filter(Boolean);
+}
+
+function parseStudyContractConceptEntries(value: unknown): ParsedAssistantStudyContractConcept[] {
+  return toArray(value).flatMap((entry) => {
+    const record = asRecord(entry);
+    if (record) {
+      const label = normalizeWhitespace(asString(record.label) ?? asString(record.concept) ?? asString(record.name) ?? "");
+      if (!label) {
+        return [];
+      }
+      return [
+        {
+          label,
+          status: normalizeStudyContractConceptStatus(record.status ?? record.state),
+          evidence: normalizeWhitespace(asString(record.evidence) ?? asString(record.reason) ?? asString(record.note) ?? "") || null,
+        },
+      ];
+    }
+    const label = normalizeWhitespace(asString(entry) ?? "");
+    return label ? [{ label, status: "review" as const, evidence: null }] : [];
+  });
+}
+
 function parseStudyCheckpointSignal(value: unknown): ParsedAssistantStudyCheckpoint | null {
   const record = asRecord(value);
   if (!record) {
@@ -200,6 +280,33 @@ function parseStudyCheckpointSignal(value: unknown): ParsedAssistantStudyCheckpo
     unclear: normalizeStringArray(record.unclear),
     nextStep,
     confidenceNote,
+  };
+}
+
+function parseStudyContractSignal(value: unknown): ParsedAssistantStudyContract | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const objective = normalizeWhitespace(asString(record.objective) ?? "");
+  const sources = normalizeStudyContractSources(record.sources);
+  const concepts = parseStudyContractConceptEntries(record.concepts);
+  const checkQuestion = normalizeWhitespace(asString(record.check_question) ?? asString(record.checkQuestion) ?? "");
+  const nextAction = normalizeWhitespace(asString(record.next_action) ?? asString(record.nextAction) ?? "");
+  const confidenceNote = normalizeWhitespace(asString(record.confidence_note) ?? asString(record.confidenceNote) ?? "");
+  if (!objective || sources.length === 0 || concepts.length === 0 || !checkQuestion || !nextAction || !confidenceNote) {
+    return null;
+  }
+  return {
+    objective,
+    sources,
+    concepts,
+    likelyStuckPoints: normalizeStringArray(record.likely_stuck_points ?? record.likelyStuckPoints),
+    checkQuestion,
+    nextAction,
+    nextProblems: normalizeStringArray(record.next_problems ?? record.nextProblems),
+    confidenceNote,
+    workflow: normalizeStudyContractWorkflowKind(record.workflow),
   };
 }
 
@@ -602,6 +709,7 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
   let plan: ParsedAssistantPlanSignal | null = null;
   let suggestion: ParsedAssistantSuggestionSignal | null = null;
   let studyCheckpoint: ParsedAssistantStudyCheckpoint | null = null;
+  let studyContract: ParsedAssistantStudyContract | null = null;
   const visibleParts: string[] = [];
   let hasProposalMarkers = false;
   let hasMalformedProposal = false;
@@ -660,6 +768,13 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
           } else {
             studyCheckpoint = parsedCheckpoint;
           }
+        } else if (blockType === "obsidian-study-contract") {
+          const parsedContract = parseStudyContractSignal(parsed);
+          if (!parsedContract) {
+            hasMalformedProposal = true;
+          } else {
+            studyContract = parsedContract;
+          }
         } else if (blockType === "obsidian-diagram") {
           const parsedDiagram = parseDiagramSignal(parsed, blockIndex);
           if (!parsedDiagram) {
@@ -698,6 +813,7 @@ export function extractAssistantProposals(text: string): ParsedAssistantProposal
     plan,
     suggestion,
     studyCheckpoint,
+    studyContract,
     diagrams,
     hasProposalMarkers: hasProposalMarkers || malformedTail.hasProposalMarkers,
     hasMalformedProposal: hasMalformedProposal || malformedTail.hasMalformedProposal,

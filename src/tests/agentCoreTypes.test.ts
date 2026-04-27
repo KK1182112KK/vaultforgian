@@ -105,6 +105,17 @@ describe("agent core boundaries", () => {
         nextStep: "B",
         confidenceNote: "C",
       },
+      studyContract: {
+        objective: "Understand average load power.",
+        sources: ["Lecture note"],
+        concepts: [{ label: "RMS voltage", status: "weak", evidence: "Still mixing peak and RMS." }],
+        likelyStuckPoints: ["Peak voltage versus RMS voltage."],
+        checkQuestion: "What if the voltage is already RMS?",
+        nextAction: "Solve one numerical problem.",
+        nextProblems: ["Compute load power for a 10 V peak source."],
+        confidenceNote: "Needs one applied check.",
+        workflow: "homework",
+      },
       hasProposalMarkers: true,
       hasMalformedProposal: false,
     });
@@ -115,6 +126,7 @@ describe("agent core boundaries", () => {
       "obsidian-diagram",
       "obsidian-plan",
       "obsidian-suggest",
+      "obsidian-study-contract",
       "obsidian-study-checkpoint",
     ]);
   });
