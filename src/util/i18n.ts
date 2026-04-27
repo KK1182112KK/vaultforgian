@@ -479,10 +479,10 @@ const EN_COPY: LocalizedCopy = {
   pluginName: "Codex Noteforge",
   pluginDescription: "Study-first Codex workspace for Obsidian",
   ribbon: {
-    openWorkspace: "Open Study workspace",
+    openWorkspace: "Open Codex Noteforge workspace",
   },
   commands: {
-    openWorkspace: "Open Study workspace",
+    openWorkspace: "Open Codex Noteforge workspace",
     openIngestHub: "Open Panel Studio",
     newTab: "New Codex tab",
     startLectureWorkflow: "Start Lecture workflow",
@@ -540,7 +540,7 @@ const EN_COPY: LocalizedCopy = {
     noPatchTarget: "No Codex patch target.",
     cannotForkConversation: "Cannot fork this conversation.",
     noResumableThread: "No resumable Codex thread on this tab.",
-    noOpenLeaf: "Failed to allocate an Obsidian leaf for the Study workspace.",
+    noOpenLeaf: "Failed to allocate an Obsidian leaf for the Codex Noteforge workspace.",
     cannotStartNewSession: "Cannot start a new session while Codex is responding.",
     blockedLegacyLauncherNotice: "Blocked an unsafe legacy Codex launcher and restored safe defaults. Review Codex runtime settings.",
     provideSearchQuery: "Provide a search query.",
@@ -821,10 +821,10 @@ const JA_COPY: LocalizedCopy = {
   pluginName: "Codex Noteforge",
   pluginDescription: "Obsidian 向け学習用 Codex ワークスペース",
   ribbon: {
-    openWorkspace: "Study ワークスペースを開く",
+    openWorkspace: "Codex Noteforge ワークスペースを開く",
   },
   commands: {
-    openWorkspace: "Study ワークスペースを開く",
+    openWorkspace: "Codex Noteforge ワークスペースを開く",
     openIngestHub: "Panel Studio を開く",
     newTab: "Codex タブを新規作成",
     startLectureWorkflow: "Lecture workflow を開始",
@@ -882,7 +882,7 @@ const JA_COPY: LocalizedCopy = {
     noPatchTarget: "Codex patch の対象がありません。",
     cannotForkConversation: "この conversation は fork できません。",
     noResumableThread: "このタブに再開可能な Codex thread はありません。",
-    noOpenLeaf: "Study ワークスペース用の Obsidian leaf を確保できませんでした。",
+    noOpenLeaf: "Codex Noteforge ワークスペース用の Obsidian leaf を確保できませんでした。",
     cannotStartNewSession: "Codex が応答中のため、新しい session を開始できません。",
     blockedLegacyLauncherNotice: "危険な legacy Codex launcher を拒否して安全な既定値へ戻しました。Codex runtime 設定を確認してください。",
     provideSearchQuery: "検索クエリを入力してください。",

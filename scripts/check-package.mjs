@@ -8,6 +8,7 @@ const avatarSourcePath = path.join(projectRoot, "assets", "chat-avatar-source.pn
 const avatarGeneratedPath = path.join(projectRoot, "src", "generated", "chatAvatar.ts");
 const expectedPackageName = "codex-noteforge";
 const expectedManifestId = "obsidian-codex-study";
+const expectedManifestName = "Codex Noteforge";
 
 async function assertReadable(filePath) {
   await access(filePath);
@@ -76,6 +77,9 @@ async function main() {
   }
   if (manifest.id !== expectedManifestId) {
     throw new Error(`manifest.json id (${manifest.id}) does not match expected stable plugin id (${expectedManifestId}).`);
+  }
+  if (manifest.name !== expectedManifestName) {
+    throw new Error(`manifest.json name (${manifest.name}) does not match expected product name (${expectedManifestName}).`);
   }
   if (packageJson.version !== manifest.version) {
     throw new Error(`package.json version (${packageJson.version}) does not match manifest version (${manifest.version}).`);

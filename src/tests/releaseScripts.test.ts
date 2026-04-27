@@ -117,6 +117,7 @@ async function writePackageFixture(root: string, includeAvatarModule = true): Pr
     JSON.stringify(
       {
         id: "obsidian-codex-study",
+        name: "Codex Noteforge",
         version: "0.1.0",
       },
       null,
@@ -255,6 +256,29 @@ describe("release scripts", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.errors).toContain("src/styles directory is missing.");
+  });
+
+  it("fails the package check when the manifest product name drifts", async () => {
+    const root = await makeTempRoot("obsidian-codex-release-name-drift-");
+    await writePackageFixture(root);
+    await writeFile(
+      join(root, "manifest.json"),
+      JSON.stringify(
+        {
+          id: "obsidian-codex-study",
+          name: "Obsidian Codex Study",
+          version: "0.1.0",
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const result = await runNodeScript(checkPackageScript, root);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errors).toContain("expected product name (Codex Noteforge)");
   });
 
   it("builds styles from source files even when invoked outside the project root", async () => {

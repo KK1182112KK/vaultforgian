@@ -45,6 +45,10 @@ Before installing the plugin, you need:
 
 ## Install
 
+### Naming and compatibility
+
+The product name is **Codex Noteforge**. The stable Obsidian plugin id and install folder remain `obsidian-codex-study` for early beta compatibility, so existing installs, settings, and BRAT/manual update paths keep working without a rename migration.
+
 ### Via BRAT (recommended during beta)
 
 1. Install the **BRAT** (Beta Reviewers Auto-update Tool) community plugin in Obsidian.
@@ -78,7 +82,7 @@ For friend testing and beta feedback, see [TESTING.md](./TESTING.md).
 ## Quick start
 
 1. Run `codex login` in your terminal if you haven't already. Verify with `codex --version`.
-2. Open the plugin's workspace view (**Command palette → "Open Study workspace"**).
+2. Open the plugin's workspace view (**Command palette → "Open Codex Noteforge workspace"**).
 3. Type a request — e.g. "Summarize the key equations in this paper."
 4. If the request implies editing a note ("clean up the formatting", "convert all math to LaTeX", "add a section on X"), Codex will emit a patch block that appears as an **approval panel**. Review the diff and click **Apply**.
 5. Use the **Plan / Chat** toggle in the composer to switch modes. In plan mode, Codex asks clarifying questions instead of editing.

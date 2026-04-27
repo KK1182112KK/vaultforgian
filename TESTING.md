@@ -2,6 +2,8 @@
 
 This repo is distributed as a public beta.
 
+Product name is **Codex Noteforge**. The Obsidian plugin id and installed folder remain `obsidian-codex-study` for beta compatibility, so existing manual installs and update paths continue to work.
+
 ## Before You Install
 
 You need all of the following:
@@ -34,7 +36,7 @@ If `codex --version` or `codex login` does not work in your terminal, fix that b
 After install, please verify:
 
 1. The plugin enables without crashing.
-2. `Open Study workspace` opens the workspace view.
+2. `Open Codex Noteforge workspace` opens the workspace view.
 3. The settings tab opens and shows the new layout.
 4. You can create a chat tab and type in the composer.
 5. If you shrink the Obsidian window, the header/actions and chat hub still remain usable.
