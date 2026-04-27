@@ -324,6 +324,12 @@ export interface LocalizedCopy {
     invalidPatchRepairFailed: string;
     applyLatestPatchAmbiguous: (count: number) => string;
     proposalProcessingFailed: (message: string) => string;
+    generatedDiagramRejectedUnsafePath: (assetPath: string) => string;
+    generatedDiagramActivityTitle: (inserted: boolean) => string;
+    generatedDiagramActivitySummary: (assetPath: string, targetNotePath: string | null, inserted: boolean) => string;
+    generatedDiagramActivityResult: (assetPath: string, targetNotePath: string | null, inserted: boolean) => string;
+    generatedDiagramInserted: (assetPath: string) => string;
+    generatedDiagramSavedNoTarget: (assetPath: string) => string;
   };
 }
 
@@ -814,6 +820,16 @@ const EN_COPY: LocalizedCopy = {
     invalidPatchRepairFailed: "Codex did not return a valid note patch. Nothing was applied.",
     applyLatestPatchAmbiguous: (count) => `There are ${count} pending note patches. Pick one from the Changes tray before applying it.`,
     proposalProcessingFailed: (message) => `Failed to process Codex proposals: ${message}`,
+    generatedDiagramRejectedUnsafePath: (assetPath) => `Generated diagram was rejected: unsafe asset path ${assetPath}.`,
+    generatedDiagramActivityTitle: (inserted) => (inserted ? "Inserted diagram" : "Saved diagram"),
+    generatedDiagramActivitySummary: (assetPath, targetNotePath, inserted) =>
+      inserted && targetNotePath ? `Saved SVG and inserted into ${targetNotePath}.` : `Saved SVG to ${assetPath}.`,
+    generatedDiagramActivityResult: (assetPath, targetNotePath, inserted) =>
+      inserted && targetNotePath
+        ? `Generated diagram saved at ${assetPath} and inserted into ${targetNotePath}.`
+        : `Generated diagram saved at ${assetPath}.`,
+    generatedDiagramInserted: (assetPath) => `Generated and inserted diagram: ${assetPath}.`,
+    generatedDiagramSavedNoTarget: (assetPath) => `Generated diagram saved, but no target note was available: ${assetPath}.`,
   },
 };
 
@@ -1156,6 +1172,14 @@ const JA_COPY: LocalizedCopy = {
     invalidPatchRepairFailed: "Codex から有効な note patch が返らなかったため、何も適用されていません。",
     applyLatestPatchAmbiguous: (count) => `${count} 件の note patch が保留中です。適用前に Changes tray から対象を選んでください。`,
     proposalProcessingFailed: (message) => `Codex proposal の処理に失敗しました: ${message}`,
+    generatedDiagramRejectedUnsafePath: (assetPath) => `生成した図を拒否しました。安全でない asset path です: ${assetPath}。`,
+    generatedDiagramActivityTitle: (inserted) => (inserted ? "図を挿入" : "図を保存"),
+    generatedDiagramActivitySummary: (assetPath, targetNotePath, inserted) =>
+      inserted && targetNotePath ? `SVG を保存し、${targetNotePath} に挿入しました。` : `SVG を ${assetPath} に保存しました。`,
+    generatedDiagramActivityResult: (assetPath, targetNotePath, inserted) =>
+      inserted && targetNotePath ? `生成した図を ${assetPath} に保存し、${targetNotePath} に挿入しました。` : `生成した図を ${assetPath} に保存しました。`,
+    generatedDiagramInserted: (assetPath) => `図を生成して挿入しました: ${assetPath}。`,
+    generatedDiagramSavedNoTarget: (assetPath) => `図を保存しました。挿入先のノートは見つかりませんでした: ${assetPath}。`,
   },
 };
 

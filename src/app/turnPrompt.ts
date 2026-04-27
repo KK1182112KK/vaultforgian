@@ -2,12 +2,22 @@ import type { ComposeMode, RuntimeMode, TurnContextSnapshot } from "../model/typ
 import type { StudyTurnPlan } from "../agent/study/studyTurnPlanner";
 import type { NoteApplyPolicy } from "../util/permissionMode";
 import type { AgentTurnIntentKind, NoteSuggestionPolicy } from "../util/turnIntent";
+import type { SupportedLocale } from "../util/i18n";
 import {
   buildDelimiterPatchExample,
   buildPatchMathFormattingRules,
   buildQuotedPatchMathFormattingRules,
 } from "../util/patchPromptContract";
 import { buildStudyLayerPromptOverlay } from "../agent/study/studyLayer";
+
+function buildVisibleLanguageInstructions(locale: SupportedLocale): string[] {
+  const language = locale === "ja" ? "Japanese" : "English";
+  return [
+    `Selected plugin display language: ${language}.`,
+    `Write all user-visible chat replies, questions, patch summaries, diagram titles/captions, study check questions, and status text in ${language} unless the user explicitly asks for another language or you are quoting source text.`,
+    "Preserve code, formulas, file paths, model names, command names, and quoted source text verbatim even when the visible reply language is different.",
+  ];
+}
 
 export function buildTurnPrompt(
   prompt: string,
@@ -26,9 +36,11 @@ export function buildTurnPrompt(
     diagramGeneration?: boolean;
     studyTurnPlan?: StudyTurnPlan | null;
     turnIntentKind?: AgentTurnIntentKind | null;
+    locale?: SupportedLocale;
   } = {},
 ): string {
   const noteSuggestionPolicy = options.noteSuggestionPolicy ?? (allowVaultWrite ? "eligible" : "never");
+  const locale = options.locale ?? "en";
   const studyOverlay = buildStudyLayerPromptOverlay({
     prompt,
     context,
@@ -43,6 +55,7 @@ export function buildTurnPrompt(
   const instructions = [
     "You are Codex embedded in an Obsidian vault.",
     "Prefer concise, practical markdown answers.",
+    ...buildVisibleLanguageInstructions(locale),
     "Do not narrate internal skill selection, system policy checks, startup rules, or local instruction loading in the visible reply.",
     "Do not narrate MCP/tool plumbing in the visible reply; mention tools only when the result itself is useful to the user.",
     context.sourceAcquisitionContractText

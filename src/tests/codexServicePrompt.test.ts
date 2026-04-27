@@ -103,6 +103,39 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("Do not narrate MCP/tool plumbing");
   });
 
+  it("pins visible replies to the selected English display language", () => {
+    const prompt = buildTurnPrompt(
+      "\u3053\u3093\u306b\u3061\u306f",
+      createContext(),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+      { locale: "en", noteSuggestionPolicy: "never" },
+    );
+
+    expect(prompt).toContain("Selected plugin display language: English.");
+    expect(prompt).toContain("Write all user-visible chat replies");
+    expect(prompt).toContain("in English unless the user explicitly asks for another language");
+  });
+
+  it("pins visible replies to the selected Japanese display language", () => {
+    const prompt = buildTurnPrompt(
+      "hello",
+      createContext(),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+      { locale: "ja", noteSuggestionPolicy: "never" },
+    );
+
+    expect(prompt).toContain("Selected plugin display language: Japanese.");
+    expect(prompt).toContain("in Japanese unless the user explicitly asks for another language");
+  });
+
   it("injects the managed SVG diagram contract only for diagram generation turns", () => {
     const diagramPrompt = buildTurnPrompt(
       "Turn this concept into a study diagram.",

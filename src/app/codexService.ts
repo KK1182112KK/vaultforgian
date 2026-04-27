@@ -3197,6 +3197,7 @@ export class CodexService {
         diagramGeneration: turnIntent.kind === "diagram_generation",
         studyTurnPlan,
         turnIntentKind: turnIntent.kind,
+        locale: this.getLocale(),
         shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
           ? [
               ...this.settingsProvider().securityPolicy.blockedCommandsWindows,
@@ -3863,7 +3864,7 @@ export class CodexService {
       this.store.addMessage(tabId, {
         id: makeId("diagram-error"),
         kind: "system",
-        text: `Generated diagram was rejected: unsafe asset path ${assetPath}.`,
+        text: this.getLocalizedCopy().service.generatedDiagramRejectedUnsafePath(assetPath),
         meta: { tone: "error" },
         createdAt: Date.now(),
       });
@@ -3886,15 +3887,14 @@ export class CodexService {
       status: inserted ? "inserted" : "saved",
     };
     this.store.addGeneratedDiagram(tabId, record);
+    const serviceCopy = this.getLocalizedCopy().service;
     this.store.addToolLog(tabId, {
       id: makeId("tool"),
       callId: `diagram-${messageId}-${diagram.sourceIndex}`,
       kind: "file",
       name: "obsidian-diagram",
-      title: inserted ? "Inserted diagram" : "Saved diagram",
-      summary: inserted
-        ? `Saved SVG and inserted into ${targetNotePath}.`
-        : `Saved SVG to ${validatedAssetPath.normalizedPath}.`,
+      title: serviceCopy.generatedDiagramActivityTitle(Boolean(inserted)),
+      summary: serviceCopy.generatedDiagramActivitySummary(validatedAssetPath.normalizedPath, targetNotePath, Boolean(inserted)),
       argsJson: JSON.stringify({
         title: diagram.title,
         assetPath: validatedAssetPath.normalizedPath,
@@ -3903,16 +3903,14 @@ export class CodexService {
       createdAt: now,
       updatedAt: Date.now(),
       status: "completed",
-      resultText: inserted
-        ? `Generated diagram saved at ${validatedAssetPath.normalizedPath} and inserted into ${targetNotePath}.`
-        : `Generated diagram saved at ${validatedAssetPath.normalizedPath}.`,
+      resultText: serviceCopy.generatedDiagramActivityResult(validatedAssetPath.normalizedPath, targetNotePath, Boolean(inserted)),
     });
     this.store.addMessage(tabId, {
       id: makeId(inserted ? "diagram-inserted" : "diagram-saved"),
       kind: "system",
       text: inserted
-        ? `Generated and inserted diagram: ${validatedAssetPath.normalizedPath}.`
-        : `Generated diagram saved, but no target note was available: ${validatedAssetPath.normalizedPath}.`,
+        ? serviceCopy.generatedDiagramInserted(validatedAssetPath.normalizedPath)
+        : serviceCopy.generatedDiagramSavedNoTarget(validatedAssetPath.normalizedPath),
       meta: { tone: inserted ? "success" : "warning" },
       createdAt: Date.now(),
     });

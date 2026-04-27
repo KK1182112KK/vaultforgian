@@ -376,6 +376,66 @@ describe("CodexService sendPrompt skill context", () => {
     expect(service.getActiveTab()?.messages.some((message) => message.kind === "assistant" && message.text.includes("Runtime boundary OK"))).toBe(true);
   });
 
+  it("passes the resolved plugin locale into the runtime prompt language contract", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-locale-contract-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "ja",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      const callbacks = request as {
+        onJsonEvent: (event: unknown) => void;
+      };
+      callbacks.onJsonEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "\u3053\u3093\u306b\u3061\u306f\u3002",
+        },
+      });
+      return { threadId: "thread-locale-contract" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "hello",
+      "normal",
+      "chat",
+      [],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "hello",
+      false,
+      false,
+      "turn-locale-contract",
+      "user-locale-contract",
+    );
+
+    const request = runCodexStreamSpy.mock.calls[0]?.[0] as { prompt?: string } | undefined;
+    expect(request?.prompt).toContain("Selected plugin display language: Japanese.");
+    expect(request?.prompt).toContain("in Japanese unless the user explicitly asks for another language");
+  });
+
   it("injects a hidden study turn plan into study panel runtime prompts", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-turn-plan-"));
     tempRoots.push(vaultRoot);
@@ -1223,6 +1283,40 @@ describe("CodexService sendPrompt skill context", () => {
       kind: "system",
       meta: { tone: "warning" },
     });
+  });
+
+  it("localizes generated diagram system messages with the selected plugin locale", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-diagram-ja-"));
+    tempRoots.push(vaultRoot);
+
+    const writable = createWritableApp(vaultRoot);
+    const service = new CodexService(writable.app, () => DEFAULT_SETTINGS, () => "ja", null, async () => {}, async () => {});
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const assistantText = [
+      "\u56f3\u3092\u4f5c\u6210\u3057\u307e\u3057\u305f\u3002",
+      "",
+      "```obsidian-diagram",
+      JSON.stringify({
+        title: "Standalone Concept Map",
+        alt: "Concept map with three linked ideas.",
+        insertMode: "auto",
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><circle cx="320" cy="180" r="80" fill="white" stroke="black"/></svg>',
+      }),
+      "```",
+    ].join("\n");
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-diagram-ja", assistantText);
+
+    const lastMessage = service.getActiveTab()?.messages.at(-1);
+    expect(lastMessage?.text).toContain("\u56f3\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f");
+    expect(lastMessage?.text).not.toContain("Generated diagram saved");
   });
 
   it("rescues the reported missing-note-reflection shape with a hidden repair on non-edit prompts", async () => {
