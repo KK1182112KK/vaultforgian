@@ -32,6 +32,7 @@ import type {
   StudyStuckPoint,
   StudyTurnContract,
   TurnContextSnapshot,
+  WaitingFocus,
   WaitingPhase,
 } from "../model/types";
 import { DEFAULT_PRIMARY_MODEL as DEFAULT_MODEL } from "../model/types";
@@ -2040,13 +2041,14 @@ export class CodexService {
       return false;
     }
     const beforeArtifacts = this.captureTurnArtifacts(params.tabId);
-    this.store.setWaitingState(params.tabId, {
-      phase: "tools",
-      text: pickWaitingCopy("tools", params.mode, Date.now(), {
-        focus: hasRepairablePatchSafetyIssue(params.candidate.proposals[0]!) ? "repair" : "readability",
-        locale: this.getLocale(),
-      }),
-    });
+    this.store.setWaitingState(
+      params.tabId,
+      this.createWaitingState(
+        "tools",
+        params.mode,
+        hasRepairablePatchSafetyIssue(params.candidate.proposals[0]!) ? "repair" : "readability",
+      ),
+    );
     await this.runTurn(
       params.tabId,
       this.buildPatchReadabilityRepairPrompt(params.turnContext, params.candidate.message, params.candidate.proposals[0]!),
@@ -3778,10 +3780,7 @@ export class CodexService {
     });
     const parsed = routed.parsed;
     if (parsed.patches.length > 0 && this.activeRuns.has(tabId)) {
-      this.store.setWaitingState(tabId, {
-        phase: "tools",
-        text: pickWaitingCopy("tools", tab.runtimeMode, Date.now(), { focus: "patch_safety", locale: this.getLocale() }),
-      });
+      this.store.setWaitingState(tabId, this.createWaitingState("tools", tab.runtimeMode, "patch_safety"));
     }
     const patchBasket = (
       await Promise.all(
@@ -5932,10 +5931,13 @@ export class CodexService {
     return buildContextPackText(sources);
   }
 
-  private createWaitingState(phase: WaitingPhase, mode: RuntimeMode) {
+  private createWaitingState(phase: WaitingPhase, mode: RuntimeMode, focus: WaitingFocus | null = null) {
     return {
       phase,
-      text: pickWaitingCopy(phase, mode, Date.now(), { locale: this.getLocale() }),
+      text: pickWaitingCopy(phase, mode, Date.now(), { focus, locale: this.getLocale() }),
+      locale: this.getLocale(),
+      mode,
+      focus,
     };
   }
 

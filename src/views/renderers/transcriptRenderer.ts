@@ -7,6 +7,7 @@ import { extractAssistantProposals } from "../../util/assistantProposals";
 import { TRANSCRIPT_SOFT_COLLAPSE_WINDOW } from "../../util/conversationCompaction";
 import { clampTranscriptScrollTop, shouldStickTranscriptToBottom } from "../../util/transcriptScroll";
 import { buildTranscriptEntries } from "../../util/transcriptEntries";
+import { resolveWaitingStateText } from "../../util/waiting";
 import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "./types";
 import { buildStatusBarDisplayState, buildTranscriptRenderState } from "./viewModels/workspaceViewModels";
 import {
@@ -135,7 +136,7 @@ export class TranscriptRenderer {
         this.renderApprovalEntry(context, entry.approval);
         continue;
       }
-      this.renderWaitingEntry(entry.waitingState);
+      this.renderWaitingEntry(context, entry.waitingState);
     }
 
     this.lastRenderedTabId = activeTabId;
@@ -630,7 +631,7 @@ export class TranscriptRenderer {
     );
   }
 
-  private renderWaitingEntry(waitingState: WorkspaceState["tabs"][number]["waitingState"]): void {
+  private renderWaitingEntry(context: WorkspaceRenderContext, waitingState: WorkspaceState["tabs"][number]["waitingState"]): void {
     if (!waitingState) {
       return;
     }
@@ -638,7 +639,10 @@ export class TranscriptRenderer {
     const avatar = msgEl.createDiv({ cls: "obsidian-codex__avatar obsidian-codex__avatar-assistant" });
     this.applyAssistantAvatar(avatar);
     const body = msgEl.createDiv({ cls: "obsidian-codex__message-content obsidian-codex__message-content--waiting" });
-    body.createSpan({ cls: "obsidian-codex__waiting-copy", text: waitingState.text });
+    body.createSpan({
+      cls: "obsidian-codex__waiting-copy",
+      text: resolveWaitingStateText(waitingState, context.activeTab?.runtimeMode ?? "normal", context.locale),
+    });
     const dotsEl = body.createSpan({ cls: "obsidian-codex__waiting-dots" });
     for (let index = 0; index < 3; index += 1) {
       dotsEl.createSpan({ cls: "obsidian-codex__waiting-dot" });

@@ -276,6 +276,24 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(avatar?.dataset.hasImage).toBe("true");
   });
 
+  it("renders stale generated waiting copy in the current display language", () => {
+    const state = createState();
+    state.tabs[0]!.status = "busy";
+    state.tabs[0]!.runtimeMode = "normal";
+    state.tabs[0]!.waitingState = {
+      phase: "boot",
+      text: "文脈をほどいています",
+    };
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state, 0, "en"));
+
+    const waitingText = root.querySelector(".obsidian-codex__waiting-copy")?.textContent ?? "";
+    expect(waitingText).not.toMatch(/[ぁ-んァ-ン一-龥]/u);
+    expect(waitingText.length).toBeGreaterThan(0);
+  });
+
   it("hides generic mcp plumbing activity while keeping the waiting row visible", () => {
     const state = createState();
     state.tabs[0]!.status = "busy";

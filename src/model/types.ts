@@ -12,6 +12,7 @@ export type AgentStatus = "ready" | "busy" | "waiting_approval" | "error" | "mis
 export type RuntimeMode = "normal" | "skill";
 export type ComposeMode = "chat" | "plan";
 export type WaitingPhase = "boot" | "reasoning" | "tools" | "finalizing";
+export type WaitingFocus = "note_context" | "patch_safety" | "readability" | "repair";
 export type MessageKind =
   | "user"
   | "assistant"
@@ -260,6 +261,9 @@ export interface AccountUsageSummary {
 export interface WaitingState {
   phase: WaitingPhase;
   text: string;
+  locale?: "en" | "ja";
+  mode?: RuntimeMode;
+  focus?: WaitingFocus | null;
 }
 
 export interface ModelCatalogEntry {

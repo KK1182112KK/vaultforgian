@@ -1,6 +1,4 @@
-import type { RuntimeMode, WaitingPhase } from "../model/types";
-
-export type WaitingFocus = "note_context" | "patch_safety" | "readability" | "repair";
+import type { RuntimeMode, WaitingFocus, WaitingPhase, WaitingState } from "../model/types";
 
 export interface WaitingCopyOptions {
   focus?: WaitingFocus | null;
@@ -137,6 +135,37 @@ function hash(input: string): number {
   return value;
 }
 
+function normalizeWaitingLocale(locale: "en" | "ja" | null | undefined): "en" | "ja" {
+  return locale === "en" ? "en" : "ja";
+}
+
+function stripSkillPrefix(text: string): string {
+  return text
+    .replace(/^Calling skill\s*·\s*/u, "")
+    .replace(/^skill を呼び出しています\s*·\s*/u, "")
+    .trim();
+}
+
+function inferFocusedWaitingCopy(text: string): WaitingFocus | null {
+  const normalized = text.trim();
+  for (const focus of Object.keys(FOCUSED_WAITING_COPY) as WaitingFocus[]) {
+    if (Object.values(FOCUSED_WAITING_COPY[focus]).includes(normalized)) {
+      return focus;
+    }
+  }
+  return null;
+}
+
+function isKnownGeneratedWaitingCopy(text: string): boolean {
+  const normalized = stripSkillPrefix(text);
+  if (inferFocusedWaitingCopy(normalized)) {
+    return true;
+  }
+  return (Object.keys(WAITING_COPY) as Array<"en" | "ja">).some((locale) =>
+    (Object.keys(WAITING_COPY[locale]) as WaitingPhase[]).some((phase) => WAITING_COPY[locale][phase].includes(normalized)),
+  );
+}
+
 export function pickWaitingCopy(
   phase: WaitingPhase,
   mode: RuntimeMode,
@@ -152,4 +181,26 @@ export function pickWaitingCopy(
   const seed = hash(`${phase}:${mode}:${entropy}`);
   const phrase = phrases[seed % phrases.length] ?? phrases[0] ?? (locale === "en" ? "Thinking" : "考えています");
   return prefix ? `${prefix} · ${phrase}` : phrase;
+}
+
+export function resolveWaitingStateText(
+  waitingState: WaitingState,
+  fallbackMode: RuntimeMode,
+  locale: "en" | "ja",
+): string {
+  const nextLocale = normalizeWaitingLocale(locale);
+  if (waitingState.locale === nextLocale) {
+    return waitingState.text;
+  }
+
+  const focus = waitingState.focus ?? inferFocusedWaitingCopy(waitingState.text);
+  const generated = Boolean(waitingState.mode || waitingState.locale || focus || isKnownGeneratedWaitingCopy(waitingState.text));
+  if (!generated) {
+    return waitingState.text;
+  }
+
+  return pickWaitingCopy(waitingState.phase, waitingState.mode ?? fallbackMode, hash(waitingState.text), {
+    focus,
+    locale: nextLocale,
+  });
 }
