@@ -166,6 +166,18 @@ function isKnownGeneratedWaitingCopy(text: string): boolean {
   );
 }
 
+function hasJapaneseText(text: string): boolean {
+  return /[ぁ-んァ-ン一-龥]/u.test(text);
+}
+
+function hasAsciiLetter(text: string): boolean {
+  return /[A-Za-z]/u.test(text);
+}
+
+function isWaitingTextCompatibleWithLocale(text: string, locale: "en" | "ja"): boolean {
+  return locale === "en" ? !hasJapaneseText(text) : !hasAsciiLetter(stripSkillPrefix(text));
+}
+
 export function pickWaitingCopy(
   phase: WaitingPhase,
   mode: RuntimeMode,
@@ -189,7 +201,7 @@ export function resolveWaitingStateText(
   locale: "en" | "ja",
 ): string {
   const nextLocale = normalizeWaitingLocale(locale);
-  if (waitingState.locale === nextLocale) {
+  if (waitingState.locale === nextLocale && isWaitingTextCompatibleWithLocale(waitingState.text, nextLocale)) {
     return waitingState.text;
   }
 

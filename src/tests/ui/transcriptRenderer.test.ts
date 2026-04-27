@@ -294,6 +294,26 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(waitingText.length).toBeGreaterThan(0);
   });
 
+  it("corrects generated waiting copy when the stored locale metadata is wrong", () => {
+    const state = createState();
+    state.tabs[0]!.status = "busy";
+    state.tabs[0]!.runtimeMode = "normal";
+    state.tabs[0]!.waitingState = {
+      phase: "boot",
+      text: "入口を見つけています",
+      locale: "en",
+      mode: "normal",
+    };
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state, 0, "en"));
+
+    const waitingText = root.querySelector(".obsidian-codex__waiting-copy")?.textContent ?? "";
+    expect(waitingText).not.toMatch(/[ぁ-んァ-ン一-龥]/u);
+    expect(waitingText.length).toBeGreaterThan(0);
+  });
+
   it("hides generic mcp plumbing activity while keeping the waiting row visible", () => {
     const state = createState();
     state.tabs[0]!.status = "busy";
