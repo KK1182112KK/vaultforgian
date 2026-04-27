@@ -410,6 +410,41 @@ export interface PanelStudyMemory extends UserStudyMemory {
   improvementSignals: PanelImprovementSignal[];
 }
 
+export type StudyTeachingMode = "explain" | "coach" | "quiz" | "source_check" | "ask_for_source";
+export type StudySourceStrategy = "use_note" | "use_attachment" | "continue_from_memory" | "ask_for_source";
+
+export interface StudyTurnPlanSkillRecommendation {
+  name: string;
+  reason: string;
+}
+
+export interface StudyTurnPlanSignal {
+  kind: PanelImprovementSignalKind;
+  label: string;
+  reason: string;
+}
+
+export interface StudyTurnPlan {
+  objective: string;
+  teachingMode: StudyTeachingMode;
+  focusConcepts: string[];
+  likelyStuckPoint: string | null;
+  sourceStrategy: StudySourceStrategy;
+  checkQuestion: string | null;
+  nextAction: string;
+  recommendedSkills: StudyTurnPlanSkillRecommendation[];
+  panelSignals: StudyTurnPlanSignal[];
+  visibleReplyGuidance: string;
+}
+
+export interface PanelAutoAdjustment {
+  panelId: string;
+  addedSkillNames: string[];
+  addedSourceHints: string[];
+  reason: string;
+  createdAt: number;
+}
+
 export interface StudyWeakPoint {
   conceptLabel: string;
   workflow: StudyWorkflowKind;

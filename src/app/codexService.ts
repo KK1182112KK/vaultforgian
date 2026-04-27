@@ -209,6 +209,7 @@ import {
 } from "../agent/core/agentCapabilityCatalog";
 import { AgentArtifactRouter } from "../agent/core/agentArtifactRouter";
 import { AgentContextAssembler } from "../agent/core/agentContextAssembler";
+import { buildStudyTurnPlan, type StudyTurnPlan } from "../agent/study/studyTurnPlanner";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -1252,6 +1253,64 @@ export class CodexService {
     }
 
     return lines.length > 1 ? lines.join("\n") : null;
+  }
+
+  private buildStudyTurnPlanForPrompt(params: {
+    tabId: string;
+    prompt: string;
+    skillNames: readonly string[];
+    turnContext: TurnContextSnapshot;
+    turnIntent: ReturnType<typeof classifyTurnIntent>;
+    allowVaultWrite: boolean;
+    composeMode: ComposeMode;
+    proposalRepairPhase: boolean;
+  }): StudyTurnPlan | null {
+    if (
+      params.proposalRepairPhase ||
+      params.allowVaultWrite ||
+      params.composeMode !== "chat" ||
+      params.turnIntent.kind === "smalltalk" ||
+      params.turnIntent.kind === "note_edit" ||
+      params.turnIntent.kind === "plan"
+    ) {
+      return null;
+    }
+    const studyActive = Boolean(
+      params.turnContext.studyWorkflow ||
+        params.turnContext.workflowText ||
+        params.turnContext.studyCoachText ||
+        params.turnContext.paperStudyRuntimeOverlayText ||
+        params.turnContext.paperStudyGuideText,
+    );
+    if (!studyActive) {
+      return null;
+    }
+
+    const tab = this.findTab(params.tabId);
+    const panelId = tab?.activeStudyRecipeId ?? null;
+    const activePanel = panelId ? this.getHubPanels().find((panel) => panel.id === panelId) ?? null : null;
+    const memory = this.store.getState().userAdaptationMemory ?? null;
+    const panelMemory = activePanel ? memory?.panelOverlays?.[activePanel.id]?.studyMemory ?? null : null;
+    const preflight = activePanel ? this.studyPanels.getStudyRecipePreflight(activePanel.id, params.tabId) : null;
+
+    return buildStudyTurnPlan({
+      prompt: params.prompt,
+      activePanel,
+      panelMemory,
+      globalStudyMemory: memory?.studyMemory ?? null,
+      studyCoachState: tab?.studyCoachState ?? null,
+      turnIntent: params.turnIntent,
+      preflight,
+      selectedSkillNames: params.skillNames,
+      explicitSkillNames: params.skillNames,
+      availableSkills: this.getUserOwnedInstalledSkills(),
+      sourceState: {
+        hasAttachmentContent: Boolean(params.turnContext.attachmentContentText),
+        hasNoteSourcePack: Boolean(params.turnContext.noteSourcePackText),
+        hasSelection: Boolean(params.turnContext.selection),
+      },
+      learningMode: Boolean(tab?.learningMode),
+    });
   }
 
   private buildCompactionSystemNote(reason: "auto" | "retry"): string {
@@ -3120,12 +3179,24 @@ export class CodexService {
       const handleJsonEvent = (event: JsonRecord) => {
         terminalError = this.threadEventReducer.handleThreadEvent(tabId, event, assistantOutputVisibility) ?? terminalError;
       };
+      const studyTurnPlan = this.buildStudyTurnPlanForPrompt({
+        tabId,
+        prompt,
+        skillNames,
+        turnContext,
+        turnIntent,
+        allowVaultWrite,
+        composeMode,
+        proposalRepairPhase,
+      });
       const runtimePrompt = buildTurnPrompt(prompt, turnContext, mode, skillNames, composeMode, allowVaultWrite, this.getNoteApplyPolicy(composeMode), {
         preferredName: this.settingsProvider().preferredName,
         customSystemPrompt: this.settingsProvider().customSystemPrompt,
         learningMode: this.findTab(tabId)?.learningMode ?? false,
         noteSuggestionPolicy,
         diagramGeneration: turnIntent.kind === "diagram_generation",
+        studyTurnPlan,
+        turnIntentKind: turnIntent.kind,
         shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
           ? [
               ...this.settingsProvider().securityPolicy.blockedCommandsWindows,
@@ -4391,6 +4462,7 @@ export class CodexService {
         preferredSkillNames: tab.activeStudySkillNames,
       });
       this.store.setUserAdaptationMemory(panelMemory);
+      this.studyPanels.applyStablePanelMemoryAdjustments(tabId, panel.id);
       return;
     }
     this.store.setUserAdaptationMemory(nextMemory);

@@ -447,6 +447,66 @@ describe("StudyPanelCoordinator", () => {
     expect(store.getState().studyRecipes.find((entry) => entry.id === panel.id)?.linkedSkillNames).toEqual(["lecture-read"]);
   });
 
+  it("auto-adjusts only linked skills and source hints after stable panel memory signals", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = {
+      ...createPanel("panel-1", "Original prompt stays unchanged"),
+      description: "Original description stays unchanged",
+      linkedSkillNames: ["lecture-read"],
+      sourceHints: ["current note"],
+    };
+    store.setStudyRecipes([panel]);
+    store.setActiveStudyPanel(tabId, panel.id, []);
+    store.setUserAdaptationMemory({
+      globalProfile: null,
+      panelOverlays: {
+        [panel.id]: {
+          panelId: panel.id,
+          preferredFocusTags: [],
+          preferredNoteStyleHints: [],
+          preferredSkillNames: [],
+          lastAppliedTargetPath: null,
+          updatedAt: 10,
+          studyMemory: {
+            weakConcepts: [],
+            understoodConcepts: [],
+            nextProblems: [],
+            recentStuckPoints: [],
+            sourcePreferences: [],
+            lastContract: null,
+            improvementSignals: [
+              { kind: "skill", key: "deep-read", label: "deep-read", count: 3, updatedAt: 11 },
+              { kind: "source", key: "lecture pdf", label: "lecture PDF", count: 3, updatedAt: 12 },
+            ],
+          },
+        },
+      },
+      studyMemory: null,
+    });
+
+    const coordinator = createCoordinator(store);
+    const adjustment = coordinator.applyStablePanelMemoryAdjustments(tabId, panel.id);
+    const updated = store.getState().studyRecipes.find((entry) => entry.id === panel.id);
+
+    expect(adjustment).toEqual(
+      expect.objectContaining({
+        panelId: panel.id,
+        addedSkillNames: ["deep-read"],
+        addedSourceHints: ["lecture PDF"],
+      }),
+    );
+    expect(updated?.linkedSkillNames).toEqual(["lecture-read", "deep-read"]);
+    expect(updated?.sourceHints).toEqual(["current note", "lecture PDF"]);
+    expect(updated?.promptTemplate).toBe("Original prompt stays unchanged");
+    expect(updated?.description).toBe("Original description stays unchanged");
+    expect(store.getActiveTab()?.chatSuggestion).toBeNull();
+    expect(store.getActiveTab()?.messages.some((message) => message.kind === "system" && message.text.includes("Panel updated"))).toBe(true);
+  });
+
   it("marks saved recipe messages as success", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

@@ -376,6 +376,105 @@ describe("CodexService sendPrompt skill context", () => {
     expect(service.getActiveTab()?.messages.some((message) => message.kind === "assistant" && message.text.includes("Runtime boundary OK"))).toBe(true);
   });
 
+  it("injects a hidden study turn plan into study panel runtime prompts", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-turn-plan-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = {
+      ...createPanel("panel-review", ["review-coach"]),
+      title: "Review",
+      workflow: "review" as const,
+      promptTemplate: "Continue review from weak points.",
+    };
+    service.store.setStudyRecipes([panel]);
+    service.store.setActiveStudyPanel(tabId, panel.id, ["review-coach"]);
+    service.store.setTabStudyWorkflow(tabId, "review");
+    service.store.setUserAdaptationMemory({
+      globalProfile: null,
+      panelOverlays: {
+        [panel.id]: {
+          panelId: panel.id,
+          preferredFocusTags: [],
+          preferredNoteStyleHints: [],
+          preferredSkillNames: [],
+          lastAppliedTargetPath: null,
+          updatedAt: 10,
+          studyMemory: {
+            weakConcepts: [
+              {
+                conceptLabel: "frequency response",
+                evidence: "Still mixes magnitude and phase.",
+                lastStuckPoint: "Phase interpretation is unclear.",
+                nextQuestion: "What changes when only phase shifts?",
+                workflow: "review",
+                updatedAt: 10,
+              },
+            ],
+            understoodConcepts: [],
+            nextProblems: [],
+            recentStuckPoints: [],
+            sourcePreferences: [],
+            lastContract: null,
+            improvementSignals: [],
+          },
+        },
+      },
+      studyMemory: null,
+    });
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onJsonEvent: (event: unknown) => void }).onJsonEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "Let's review frequency response.",
+        },
+      });
+      return { threadId: "thread-study-plan" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Continue review",
+      "normal",
+      "chat",
+      ["review-coach"],
+      createNoteTurnContext(vaultRoot, {
+        studyWorkflow: "review",
+        workflowText: "Active study workflow: Review",
+        studyCoachText: "Panel memory carry-forward:\n- Weak concepts: frequency response",
+      }),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "draft",
+    );
+
+    const request = runCodexStreamSpy.mock.calls[0]?.[0] as { prompt?: string };
+    expect(request.prompt).toContain("StudyTurnPlan");
+    expect(request.prompt).toContain("frequency response");
+    expect(request.prompt).toContain("at most one understanding-check question");
+  });
+
   it("hydrates panel-selected skills before building the turn context", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-sendprompt-"));
     tempRoots.push(vaultRoot);

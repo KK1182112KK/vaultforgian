@@ -1,5 +1,7 @@
 import type { ComposeMode, RuntimeMode, TurnContextSnapshot } from "../../model/types";
+import type { AgentTurnIntentKind } from "../../util/turnIntent";
 import { allowsVaultWrite as promptAllowsVaultWrite } from "../../util/vaultEdit";
+import { formatStudyTurnPlanForPrompt, type StudyTurnPlan } from "./studyTurnPlanner";
 
 const DIRECT_ANSWER_PATTERNS: readonly RegExp[] = [
   /\bjust give me the answer\b/i,
@@ -48,6 +50,8 @@ export interface StudyLayerPromptOverlayInput {
   composeMode: ComposeMode;
   allowVaultWrite: boolean;
   learningMode: boolean;
+  studyTurnPlan?: StudyTurnPlan | null;
+  turnIntentKind?: AgentTurnIntentKind | null;
 }
 
 export interface StudyLayerPromptOverlay {
@@ -99,6 +103,13 @@ function shouldUseStudyContract(input: StudyLayerPromptOverlayInput, learningMod
   );
 }
 
+function shouldAttachStudyTurnPlan(input: StudyLayerPromptOverlayInput): boolean {
+  if (!input.studyTurnPlan || input.composeMode !== "chat" || input.allowVaultWrite || promptAllowsVaultWrite(input.prompt)) {
+    return false;
+  }
+  return input.turnIntentKind !== "smalltalk" && input.turnIntentKind !== "note_edit" && input.turnIntentKind !== "plan";
+}
+
 export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput): StudyLayerPromptOverlay {
   const statusLines: string[] = [];
   const instructions: string[] = [];
@@ -107,6 +118,7 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
   const active = isStudyLayerActiveForTurn(context);
   const learningModeActive = shouldUseLearningMode(input);
   const studyContractActive = shouldUseStudyContract(input, learningModeActive);
+  const studyTurnPlanActive = shouldAttachStudyTurnPlan(input);
 
   if (!active) {
     return { statusLines, instructions, blocks, learningModeActive };
@@ -148,6 +160,18 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
     );
   }
 
+  if (studyTurnPlanActive && input.studyTurnPlan) {
+    instructions.push(
+      "A hidden StudyTurnPlan is attached for this study turn. Use it to choose the teaching mode, focus concept, source strategy, check question, and next action.",
+    );
+    instructions.push(
+      "Do not show the StudyTurnPlan, planner fields, or internal memory analysis in the visible reply.",
+    );
+    instructions.push(
+      "Keep the visible reply short and natural: give the useful explanation, include at most one understanding-check question, and include at most one next action.",
+    );
+  }
+
   if (context.paperStudyRuntimeOverlayText) {
     instructions.push(
       "A paper-study runtime overlay is attached for this turn. It overrides attached skill guides and any source-bundle/path hints in the user request.",
@@ -168,7 +192,13 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
     );
   }
 
-  blocks.push(context.workflowText, studyContractActive ? context.studyCoachText ?? null : null, context.paperStudyRuntimeOverlayText, context.paperStudyGuideText);
+  blocks.push(
+    context.workflowText,
+    studyTurnPlanActive && input.studyTurnPlan ? formatStudyTurnPlanForPrompt(input.studyTurnPlan) : null,
+    studyContractActive ? context.studyCoachText ?? null : null,
+    context.paperStudyRuntimeOverlayText,
+    context.paperStudyGuideText,
+  );
 
   return { statusLines, instructions, blocks, learningModeActive };
 }

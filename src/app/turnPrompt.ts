@@ -1,6 +1,7 @@
 import type { ComposeMode, RuntimeMode, TurnContextSnapshot } from "../model/types";
+import type { StudyTurnPlan } from "../agent/study/studyTurnPlanner";
 import type { NoteApplyPolicy } from "../util/permissionMode";
-import type { NoteSuggestionPolicy } from "../util/turnIntent";
+import type { AgentTurnIntentKind, NoteSuggestionPolicy } from "../util/turnIntent";
 import {
   buildDelimiterPatchExample,
   buildPatchMathFormattingRules,
@@ -23,6 +24,8 @@ export function buildTurnPrompt(
     learningMode?: boolean;
     noteSuggestionPolicy?: NoteSuggestionPolicy;
     diagramGeneration?: boolean;
+    studyTurnPlan?: StudyTurnPlan | null;
+    turnIntentKind?: AgentTurnIntentKind | null;
   } = {},
 ): string {
   const noteSuggestionPolicy = options.noteSuggestionPolicy ?? (allowVaultWrite ? "eligible" : "never");
@@ -34,6 +37,8 @@ export function buildTurnPrompt(
     composeMode,
     allowVaultWrite,
     learningMode: Boolean(options.learningMode),
+    studyTurnPlan: options.turnIntentKind === "note_edit" ? null : options.studyTurnPlan ?? null,
+    turnIntentKind: options.turnIntentKind ?? null,
   });
   const instructions = [
     "You are Codex embedded in an Obsidian vault.",

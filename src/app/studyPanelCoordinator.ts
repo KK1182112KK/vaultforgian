@@ -6,6 +6,7 @@ import type {
   ChatSuggestion,
   ComposerAttachment,
   ConversationTabState,
+  PanelAutoAdjustment,
   PanelSessionOrigin,
   StudyRecipe,
   StudyWorkflowKind,
@@ -617,6 +618,46 @@ export class StudyPanelCoordinator {
 
   private getPanelStudyMemory(panelId: string) {
     return this.deps.store.getState().userAdaptationMemory?.panelOverlays?.[panelId]?.studyMemory ?? null;
+  }
+
+  applyStablePanelMemoryAdjustments(tabId: string, panelId: string): PanelAutoAdjustment | null {
+    const panel = this.requireStudyRecipe(panelId);
+    const stableSignals = getStablePanelImprovementSignals(this.getPanelStudyMemory(panel.id));
+    const addedSkillNames = stableSignals
+      .filter((signal) => signal.kind === "skill")
+      .map((signal) => signal.label)
+      .filter((label) => !panel.linkedSkillNames.includes(label));
+    const addedSourceHints = stableSignals
+      .filter((signal) => signal.kind === "source")
+      .map((signal) => signal.label)
+      .filter((label) => !panel.sourceHints.includes(label));
+    const uniqueSkillNames = [...new Set(addedSkillNames)];
+    const uniqueSourceHints = [...new Set(addedSourceHints)];
+    if (uniqueSkillNames.length === 0 && uniqueSourceHints.length === 0) {
+      return null;
+    }
+
+    const createdAt = Date.now();
+    this.deps.store.upsertStudyRecipe({
+      ...panel,
+      linkedSkillNames: [...panel.linkedSkillNames, ...uniqueSkillNames],
+      sourceHints: [...panel.sourceHints, ...uniqueSourceHints],
+      updatedAt: createdAt,
+    });
+    this.deps.store.addMessage(tabId, {
+      id: makeId("panel-auto-adjust"),
+      kind: "system",
+      text: "Panel updated: added source hint and skill.",
+      meta: systemToneMeta("success"),
+      createdAt,
+    });
+    return {
+      panelId: panel.id,
+      addedSkillNames: uniqueSkillNames,
+      addedSourceHints: uniqueSourceHints,
+      reason: "Stable panel memory signals reached the auto-adjust threshold.",
+      createdAt,
+    };
   }
 
   applyStudyRecipeContext(tabId: string, recipe: StudyRecipe): void {
