@@ -136,7 +136,7 @@ function hash(input: string): number {
 }
 
 function normalizeWaitingLocale(locale: "en" | "ja" | null | undefined): "en" | "ja" {
-  return locale === "en" ? "en" : "ja";
+  return locale === "ja" ? "ja" : "en";
 }
 
 function stripSkillPrefix(text: string): string {
@@ -185,9 +185,9 @@ export function pickWaitingCopy(
   options: WaitingCopyOptions = {},
 ): string {
   if (phase === "tools" && options.focus) {
-    return FOCUSED_WAITING_COPY[options.focus][options.locale === "en" ? "en" : "ja"];
+    return FOCUSED_WAITING_COPY[options.focus][normalizeWaitingLocale(options.locale)];
   }
-  const locale = options.locale === "en" ? "en" : "ja";
+  const locale = normalizeWaitingLocale(options.locale);
   const phrases = WAITING_COPY[locale][phase];
   const prefix = mode === "skill" && phase === "tools" ? (locale === "en" ? "Calling skill" : "skill を呼び出しています") : "";
   const seed = hash(`${phase}:${mode}:${entropy}`);

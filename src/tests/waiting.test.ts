@@ -17,6 +17,11 @@ describe("waiting copy", () => {
     expect(pickWaitingCopy("boot", "normal", 0, { locale: "ja" })).toMatch(/[ぁ-んァ-ン一-龥]/u);
   });
 
+  it("falls back to English unless Japanese is explicitly selected", () => {
+    expect(pickWaitingCopy("boot", "normal", 0)).not.toMatch(/[ぁ-んァ-ン一-龥]/u);
+    expect(pickWaitingCopy("tools", "normal", 0, { focus: "patch_safety" })).toBe("Checking note safety");
+  });
+
   it("offers a richer set of playful waiting variants in each language", () => {
     for (const phase of ["boot", "reasoning", "tools", "finalizing"] as const) {
       expect(sampleWaitingCopies(phase, "en").size).toBeGreaterThanOrEqual(8);
