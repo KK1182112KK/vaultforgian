@@ -387,6 +387,29 @@ export interface UserStudyMemory {
   recentStuckPoints: StudyStuckPoint[];
 }
 
+export type PanelImprovementSignalKind = "source" | "skill" | "workflow" | "weak_concept";
+
+export interface PanelSourcePreference {
+  label: string;
+  count: number;
+  workflow: StudyContractWorkflowKind;
+  updatedAt: number;
+}
+
+export interface PanelImprovementSignal {
+  kind: PanelImprovementSignalKind;
+  key: string;
+  label: string;
+  count: number;
+  updatedAt: number;
+}
+
+export interface PanelStudyMemory extends UserStudyMemory {
+  sourcePreferences: PanelSourcePreference[];
+  lastContract: StudyTurnContract | null;
+  improvementSignals: PanelImprovementSignal[];
+}
+
 export interface StudyWeakPoint {
   conceptLabel: string;
   workflow: StudyWorkflowKind;
@@ -420,6 +443,7 @@ export interface PanelAdaptationOverlay {
   preferredSkillNames: string[];
   lastAppliedTargetPath: string | null;
   updatedAt: number;
+  studyMemory?: PanelStudyMemory | null;
 }
 
 export interface UserAdaptationMemory {
@@ -482,6 +506,7 @@ export interface ChatSuggestion {
   panelTitle: string | null;
   promptSnapshot: string;
   matchedSkillName: string | null;
+  matchedSkillSource?: "linked" | "panel_memory" | null;
   canUpdatePanel: boolean;
   canSaveCopy: boolean;
   planSummary: string | null;

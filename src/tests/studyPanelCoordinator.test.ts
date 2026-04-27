@@ -291,6 +291,162 @@ describe("StudyPanelCoordinator", () => {
     expect(tab?.messages.at(-1)?.meta?.tone).toBe("success");
   });
 
+  it("suggests panel improvements only after stable panel memory signals and applies them on approval", async () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = {
+      ...createPanel("panel-1", "Summarize this lecture"),
+      linkedSkillNames: ["lecture-read"],
+      sourceHints: ["current note"],
+    };
+    store.setStudyRecipes([panel]);
+    store.setActiveStudyPanel(tabId, panel.id, []);
+    store.setTabStudyWorkflow(tabId, "lecture");
+    store.setUserAdaptationMemory({
+      globalProfile: null,
+      panelOverlays: {
+        [panel.id]: {
+          panelId: panel.id,
+          preferredFocusTags: [],
+          preferredNoteStyleHints: [],
+          preferredSkillNames: ["deep-read"],
+          lastAppliedTargetPath: null,
+          updatedAt: 10,
+          studyMemory: {
+            weakConcepts: [],
+            understoodConcepts: [],
+            nextProblems: [],
+            recentStuckPoints: [],
+            sourcePreferences: [
+              {
+                label: "lecture PDF",
+                count: 3,
+                workflow: "lecture",
+                updatedAt: 11,
+              },
+            ],
+            lastContract: null,
+            improvementSignals: [
+              {
+                kind: "skill",
+                key: "deep-read",
+                label: "deep-read",
+                count: 3,
+                updatedAt: 12,
+              },
+              {
+                kind: "source",
+                key: "lecture pdf",
+                label: "lecture PDF",
+                count: 3,
+                updatedAt: 13,
+              },
+            ],
+          },
+        },
+      },
+      studyMemory: null,
+    });
+
+    const coordinator = createCoordinator(store, {
+      installedSkills: [
+        {
+          name: "lecture-read",
+          description: "Read lecture notes.",
+          path: "/vault/.codex/skills/lecture-read/SKILL.md",
+        },
+        {
+          name: "deep-read",
+          description: "Deeply analyze lecture PDFs and source material.",
+          path: "/vault/.codex/skills/deep-read/SKILL.md",
+        },
+      ],
+    });
+    coordinator.capturePanelSessionOrigin(tabId, panel.promptTemplate);
+    store.addMessage(tabId, {
+      id: "assistant-1",
+      kind: "assistant",
+      text: "Done.",
+      createdAt: 10,
+    });
+    coordinator.armPanelCompletionSignal(tabId);
+
+    expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "done")).toBe(true);
+    expect(store.getActiveTab()?.chatSuggestion).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        canUpdatePanel: true,
+        matchedSkillName: "deep-read",
+      }),
+    );
+
+    await coordinator.respondToChatSuggestion(tabId, "update_panel");
+
+    const updated = store.getState().studyRecipes.find((entry) => entry.id === panel.id);
+    expect(updated?.linkedSkillNames).toEqual(["lecture-read", "deep-read"]);
+    expect(updated?.sourceHints).toEqual(["current note", "lecture PDF"]);
+  });
+
+  it("does not suggest panel improvements before the three-signal threshold", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = { ...createPanel("panel-1", "Summarize this lecture"), linkedSkillNames: ["lecture-read"] };
+    store.setStudyRecipes([panel]);
+    store.setActiveStudyPanel(tabId, panel.id, []);
+    store.setTabStudyWorkflow(tabId, "lecture");
+    store.setUserAdaptationMemory({
+      globalProfile: null,
+      panelOverlays: {
+        [panel.id]: {
+          panelId: panel.id,
+          preferredFocusTags: [],
+          preferredNoteStyleHints: [],
+          preferredSkillNames: ["deep-read"],
+          lastAppliedTargetPath: null,
+          updatedAt: 10,
+          studyMemory: {
+            weakConcepts: [],
+            understoodConcepts: [],
+            nextProblems: [],
+            recentStuckPoints: [],
+            sourcePreferences: [],
+            lastContract: null,
+            improvementSignals: [
+              {
+                kind: "skill",
+                key: "deep-read",
+                label: "deep-read",
+                count: 2,
+                updatedAt: 12,
+              },
+            ],
+          },
+        },
+      },
+      studyMemory: null,
+    });
+
+    const coordinator = createCoordinator(store);
+    coordinator.capturePanelSessionOrigin(tabId, panel.promptTemplate);
+    store.addMessage(tabId, {
+      id: "assistant-1",
+      kind: "assistant",
+      text: "Done.",
+      createdAt: 10,
+    });
+    coordinator.armPanelCompletionSignal(tabId);
+
+    expect(coordinator.maybeHandlePanelCompletionSignal(tabId, "done")).toBe(true);
+    expect(store.getActiveTab()?.chatSuggestion).toBeNull();
+    expect(store.getState().studyRecipes.find((entry) => entry.id === panel.id)?.linkedSkillNames).toEqual(["lecture-read"]);
+  });
+
   it("marks saved recipe messages as success", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

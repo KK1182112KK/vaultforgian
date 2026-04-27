@@ -125,6 +125,7 @@ import {
 import { buildUnifiedDiff } from "../util/unifiedDiff";
 import {
   buildStudyMemoryCarryForwardText,
+  mergeStudyContractIntoPanelMemory,
   mergeStudyContractIntoUserAdaptationMemory,
   updateUserAdaptationMemory,
 } from "../util/userAdaptation";
@@ -156,6 +157,7 @@ import {
 } from "../util/usageSessions";
 import { allowsVaultWrite } from "../util/vaultEdit";
 import { classifyTurnIntent, resolveNoteSuggestionPolicy, type NoteSuggestionPolicy } from "../util/turnIntent";
+import { rankPanelSkillsForRecipe } from "../util/studyRecipes";
 import { pickWaitingCopy } from "../util/waiting";
 import {
   buildStudyRecipeMentionContext,
@@ -967,9 +969,24 @@ export class CodexService {
   }
 
   getUserOwnedInstalledSkills(): InstalledSkillDefinition[] {
-    return this.allInstalledSkillCatalog
+    const skills = this.allInstalledSkillCatalog
       .filter((skill) => isUserOwnedSkillDefinition(skill))
       .map((entry) => ({ ...entry }));
+    const activeTab = this.getActiveTab();
+    const panelId = activeTab?.activeStudyRecipeId ?? null;
+    const panel = panelId ? this.getHubPanels().find((entry) => entry.id === panelId) ?? null : null;
+    if (!panel) {
+      return skills;
+    }
+    const overlay = this.store.getState().userAdaptationMemory?.panelOverlays?.[panel.id] ?? null;
+    return rankPanelSkillsForRecipe({
+      panel,
+      panelMemory: overlay?.studyMemory ?? null,
+      skills,
+      selectedSkillNames: activeTab?.activeStudySkillNames ?? [],
+      preferredSkillNames: overlay?.preferredSkillNames ?? [],
+      prompt: activeTab?.draft ?? panel.promptTemplate,
+    }).map((entry) => ({ ...entry }));
   }
 
   getInstalledSkills(): InstalledSkillDefinition[] {
@@ -1180,9 +1197,11 @@ export class CodexService {
       return null;
     }
     const locale = this.getLocale();
+    const activePanelId = tab.activeStudyRecipeId ?? null;
+    const hasPanelMemory = Boolean(activePanelId && this.store.getState().userAdaptationMemory?.panelOverlays?.[activePanelId]?.studyMemory);
     const studyCoachState = tab.studyCoachState;
     const workflowKind = tab.studyWorkflow ?? studyCoachState?.latestContract?.workflow ?? studyCoachState?.latestRecap?.workflow ?? null;
-    const lines: string[] = ["Study memory carry-forward:"];
+    const lines: string[] = [hasPanelMemory ? "Panel memory carry-forward:" : "Study memory carry-forward:"];
 
     if (workflowKind && workflowKind !== "general") {
       const definition = getStudyWorkflowDefinition(workflowKind, locale);
@@ -1193,9 +1212,13 @@ export class CodexService {
       }
     }
 
-    const userStudyMemoryText = buildStudyMemoryCarryForwardText(this.store.getState().userAdaptationMemory ?? null);
+    const userStudyMemoryText = buildStudyMemoryCarryForwardText(this.store.getState().userAdaptationMemory ?? null, activePanelId);
     if (userStudyMemoryText) {
-      lines.push(...userStudyMemoryText.split("\n").filter((line) => line.trim() && line.trim() !== "Study memory carry-forward:"));
+      lines.push(
+        ...userStudyMemoryText
+          .split("\n")
+          .filter((line) => line.trim() && line.trim() !== "Study memory carry-forward:" && line.trim() !== "Panel memory carry-forward:"),
+      );
     }
 
     if (!studyCoachState) {
@@ -4359,6 +4382,17 @@ export class CodexService {
       contract,
       Date.now(),
     );
+    const panelId = tab.activeStudyRecipeId ?? null;
+    const panel = panelId ? this.getHubPanels().find((entry) => entry.id === panelId) ?? null : null;
+    if (panel) {
+      const panelMemory = mergeStudyContractIntoPanelMemory(nextMemory, panel.id, contract, {
+        panelWorkflow: panel.workflow,
+        occurredAt: Date.now(),
+        preferredSkillNames: tab.activeStudySkillNames,
+      });
+      this.store.setUserAdaptationMemory(panelMemory);
+      return;
+    }
     this.store.setUserAdaptationMemory(nextMemory);
   }
 

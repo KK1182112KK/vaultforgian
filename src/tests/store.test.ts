@@ -136,6 +136,56 @@ describe("AgentStore", () => {
             preferredSkillNames: ["deep-read"],
             lastAppliedTargetPath: "Notes/Paper.md",
             updatedAt: 456,
+            studyMemory: {
+              weakConcepts: [
+                {
+                  conceptLabel: "claims vs interpretation",
+                  evidence: "Still blends author claims with reader interpretation.",
+                  lastStuckPoint: "Needs a source-grounded distinction.",
+                  nextQuestion: "Which sentence is the claim and which is interpretation?",
+                  workflow: "paper",
+                  updatedAt: 800,
+                },
+              ],
+              understoodConcepts: [],
+              nextProblems: [
+                {
+                  prompt: "Mark one paragraph as claim, method, or interpretation.",
+                  workflow: "paper",
+                  source: "Notes/Paper.md",
+                  createdAt: 801,
+                },
+              ],
+              recentStuckPoints: [],
+              sourcePreferences: [
+                {
+                  label: "paper PDF",
+                  count: 3,
+                  workflow: "paper",
+                  updatedAt: 802,
+                },
+              ],
+              lastContract: {
+                objective: "Separate paper claims from interpretation.",
+                sources: ["paper PDF"],
+                concepts: [{ label: "claims vs interpretation", status: "weak", evidence: "Needs source grounding." }],
+                likelyStuckPoints: ["Claim wording is being paraphrased as fact."],
+                checkQuestion: "What is the strongest source-backed claim?",
+                nextAction: "Classify one paragraph.",
+                nextProblems: ["Classify one paragraph as claim, method, or interpretation."],
+                confidenceNote: "Good summary, weak attribution.",
+                workflow: "paper",
+              },
+              improvementSignals: [
+                {
+                  kind: "source",
+                  key: "paper pdf",
+                  label: "paper PDF",
+                  count: 3,
+                  updatedAt: 803,
+                },
+              ],
+            },
           },
         },
         studyMemory: {
@@ -181,12 +231,19 @@ describe("AgentStore", () => {
     const state = store.getState() as typeof store.getState extends () => infer T ? T & { userAdaptationMemory?: any } : never;
     expect(state.userAdaptationMemory?.globalProfile?.preferredFocusTags).toEqual(["examples", "pitfalls"]);
     expect(state.userAdaptationMemory?.panelOverlays?.["panel-1"]?.preferredSkillNames).toEqual(["deep-read"]);
+    expect(state.userAdaptationMemory?.panelOverlays?.["panel-1"]?.studyMemory?.weakConcepts?.[0]?.conceptLabel).toBe(
+      "claims vs interpretation",
+    );
+    expect(state.userAdaptationMemory?.panelOverlays?.["panel-1"]?.studyMemory?.sourcePreferences?.[0]?.count).toBe(3);
     expect(state.userAdaptationMemory?.studyMemory?.weakConcepts?.[0]?.conceptLabel).toBe("RMS voltage");
     expect(state.userAdaptationMemory?.studyMemory?.understoodConcepts?.[0]?.conceptLabel).toBe("Average power formula");
 
     const serialized = store.serialize() as ReturnType<AgentStore["serialize"]> & { userAdaptationMemory?: any };
     expect(serialized.userAdaptationMemory?.globalProfile?.explanationDepth).toBe("step_by_step");
     expect(serialized.userAdaptationMemory?.panelOverlays?.["panel-1"]?.lastAppliedTargetPath).toBe("Notes/Paper.md");
+    expect(serialized.userAdaptationMemory?.panelOverlays?.["panel-1"]?.studyMemory?.lastContract?.objective).toContain(
+      "Separate paper claims",
+    );
     expect(serialized.userAdaptationMemory?.studyMemory?.nextProblems?.[0]?.prompt).toContain("average load power");
     expect(serialized.userAdaptationMemory?.studyMemory?.recentStuckPoints?.[0]?.detail).toContain("sqrt(2)");
   });

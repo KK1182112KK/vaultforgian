@@ -1720,6 +1720,148 @@ describe("CodexService sendPrompt skill context", () => {
     expect(context.studyCoachText).toContain("Next check: Explain the bridge between convolution and multiplication in one sentence.");
   });
 
+  it("stores study contracts into active panel memory and prefers that memory on the next panel turn", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-panel-contract-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const panel = createPanel("panel-paper", ["deep-read"]);
+    service.store.setStudyRecipes([panel]);
+    service.store.setActiveStudyPanel(tabId, panel.id, ["deep-read"]);
+    service.store.setTabStudyWorkflow(tabId, "paper");
+    service.store.setUserAdaptationMemory({
+      globalProfile: null,
+      panelOverlays: {
+        [panel.id]: {
+          panelId: panel.id,
+          preferredFocusTags: [],
+          preferredNoteStyleHints: [],
+          preferredSkillNames: ["deep-read"],
+          lastAppliedTargetPath: null,
+          updatedAt: 1,
+          studyMemory: {
+            weakConcepts: [
+              {
+                conceptLabel: "claims vs interpretation",
+                evidence: "Prior turn showed confusion.",
+                lastStuckPoint: "Claim wording was treated as interpretation.",
+                nextQuestion: "Which sentence is the claim?",
+                workflow: "paper",
+                updatedAt: 1,
+              },
+            ],
+            understoodConcepts: [],
+            nextProblems: [],
+            recentStuckPoints: [],
+            sourcePreferences: [],
+            lastContract: null,
+            improvementSignals: [],
+          },
+        },
+      },
+      studyMemory: null,
+    });
+
+    const assistantText = [
+      "The paper distinguishes the author's claim from your interpretation.",
+      "",
+      "```obsidian-study-contract",
+      JSON.stringify({
+        objective: "Separate claims from interpretation in the assigned paper.",
+        sources: ["paper PDF"],
+        concepts: [
+          {
+            label: "claims vs interpretation",
+            status: "understood",
+            evidence: "The learner can now identify author claims.",
+          },
+          {
+            label: "method validity",
+            status: "weak",
+            evidence: "The learner still needs help judging method limits.",
+          },
+        ],
+        likely_stuck_points: ["Method limits are being summarized without evidence."],
+        check_question: "Which sentence states the method limit?",
+        next_action: "Classify one paragraph as claim, method, or interpretation.",
+        next_problems: ["Mark the next paragraph as claim, method, or interpretation."],
+        confidence_note: "Claim separation improved, method validity remains weak.",
+        workflow: "paper",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-panel-study-1",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-panel-study-1", assistantText);
+
+    const overlay = service.store.getState().userAdaptationMemory?.panelOverlays?.[panel.id];
+    expect(overlay?.studyMemory?.weakConcepts).toEqual([
+      expect.objectContaining({
+        conceptLabel: "method validity",
+        nextQuestion: "Which sentence states the method limit?",
+      }),
+    ]);
+    expect(overlay?.studyMemory?.understoodConcepts).toEqual([
+      expect.objectContaining({
+        conceptLabel: "claims vs interpretation",
+      }),
+    ]);
+    expect(overlay?.studyMemory?.sourcePreferences).toEqual([
+      expect.objectContaining({
+        label: "paper PDF",
+        count: 1,
+      }),
+    ]);
+    expect(overlay?.studyMemory?.lastContract?.objective).toContain("Separate claims");
+    expect(service.store.getState().userAdaptationMemory?.studyMemory?.weakConcepts?.[0]?.conceptLabel).toBe("method validity");
+
+    const captureTurnContext = (
+      service as unknown as Record<
+        string,
+        (
+          tabId: string,
+          file: null,
+          editor: null,
+          prompt: string,
+          slashCommand: string | null,
+          attachments: [],
+          mentionContextText: string | null,
+          explicitTargetNotePath: string | null,
+          skillNames: string[],
+          resolvedSkillDefinitions: [],
+        ) => Promise<TurnContextSnapshot>
+      >
+    )["captureTurnContext"];
+    const context = await captureTurnContext.call(service, tabId, null, null, "Continue the paper panel.", null, [], null, null, [], []);
+
+    expect(context.studyCoachText).toContain("Panel memory carry-forward:");
+    expect(context.studyCoachText).toContain("method validity");
+    expect(context.studyCoachText).toContain("paper PDF");
+    expect(context.studyCoachText).toContain("Mark the next paragraph");
+  });
+
   it("does not auto-inject grill-me in plan mode", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-planmode-"));
     tempRoots.push(vaultRoot);

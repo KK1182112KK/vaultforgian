@@ -1,4 +1,4 @@
-import type { StudyRecipe, StudyRecipeWorkflowKind } from "../model/types";
+import type { ComposerAttachment, ConversationTabState, PanelStudyMemory, StudyRecipe, StudyRecipeWorkflowKind } from "../model/types";
 import type { SupportedLocale } from "./i18n";
 import { getStudyRecipeWorkflowLabel, getStudyWorkflowDefinition } from "./studyWorkflows";
 
@@ -8,6 +8,15 @@ export interface StudyRecipeRuntimeContext {
   hasAttachments?: boolean;
   hasSelection?: boolean;
   pinnedContextCount?: number;
+  panelMemory?: PanelStudyMemory | null;
+  prompt?: string | null;
+}
+
+export type PanelSourceStrategy = "use_note" | "use_attachment" | "ask_for_source" | "continue_from_memory";
+
+export interface PanelRuntimeContextHint {
+  kind: "weak_concept" | "next_problem" | "source_preference" | "advisory";
+  text: string;
 }
 
 export interface StudyRecipePreflight {
@@ -15,6 +24,20 @@ export interface StudyRecipePreflight {
   summary: string;
   missing: string[];
   advisories: string[];
+  autoContextAdditions?: PanelRuntimeContextHint[];
+  sourceStrategy?: PanelSourceStrategy;
+  suggestedSkills?: string[];
+}
+
+export interface PanelRuntimePreflightInput {
+  panel: StudyRecipe;
+  panelMemory: PanelStudyMemory | null;
+  tab: ConversationTabState | null;
+  attachments: readonly ComposerAttachment[];
+  selection: string | null;
+  targetNote: string | null;
+  pinnedContext: string | null;
+  prompt: string;
 }
 
 function normalizeWhitespace(value: string): string {
@@ -24,6 +47,54 @@ function normalizeWhitespace(value: string): string {
     .map((line) => line.trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function tokenizeForStudyRecipeSimilarity(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+function hasHomeworkProblemText(prompt: string): boolean {
+  return /(\d+\s*[=+\-*/^]|problem\s*\d+|given|solve|find|compute|calculate|homework\s*\d+|問|問題|求め|計算)/iu.test(prompt);
+}
+
+function chooseSourceStrategy(
+  panel: StudyRecipe,
+  context: Pick<StudyRecipeRuntimeContext, "currentFilePath" | "targetNotePath" | "hasAttachments" | "panelMemory" | "prompt">,
+): PanelSourceStrategy {
+  const hasTargetNote = Boolean(context.currentFilePath || context.targetNotePath);
+  const hasAttachments = Boolean(context.hasAttachments);
+  const hasMemory = Boolean(
+    context.panelMemory &&
+      (context.panelMemory.weakConcepts.length > 0 ||
+        context.panelMemory.nextProblems.length > 0 ||
+        context.panelMemory.sourcePreferences.length > 0),
+  );
+  if (panel.workflow === "paper" && hasAttachments) {
+    return "use_attachment";
+  }
+  if (panel.workflow === "lecture" && hasTargetNote) {
+    return "use_note";
+  }
+  if (panel.workflow === "review" && hasMemory) {
+    return "continue_from_memory";
+  }
+  if (panel.workflow === "homework" && !hasTargetNote && !hasAttachments && !hasHomeworkProblemText(context.prompt ?? "")) {
+    return "ask_for_source";
+  }
+  if (hasTargetNote) {
+    return "use_note";
+  }
+  if (hasAttachments) {
+    return "use_attachment";
+  }
+  if (hasMemory) {
+    return "continue_from_memory";
+  }
+  return "ask_for_source";
 }
 
 export function slugifyStudyRecipeToken(value: string): string {
@@ -106,17 +177,99 @@ export function buildStudyRecipeMentionContext(recipe: StudyRecipe, locale: Supp
   ].join("\n");
 }
 
+export function rankPanelSkillsForRecipe<TSkill extends { name: string; description: string; path?: string }>(params: {
+  panel: StudyRecipe;
+  panelMemory: PanelStudyMemory | null;
+  skills: readonly TSkill[];
+  selectedSkillNames?: readonly string[];
+  explicitSkillNames?: readonly string[];
+  preferredSkillNames?: readonly string[];
+  prompt?: string;
+}): TSkill[] {
+  const selected = new Set((params.selectedSkillNames ?? []).map((entry) => entry.trim()).filter(Boolean));
+  const explicit = new Set((params.explicitSkillNames ?? []).map((entry) => entry.trim()).filter(Boolean));
+  const linked = new Set(params.panel.linkedSkillNames.map((entry) => entry.trim()).filter(Boolean));
+  const preferred = new Set((params.preferredSkillNames ?? []).map((entry) => entry.trim()).filter(Boolean));
+  const weakTokens = new Set(tokenizeForStudyRecipeSimilarity((params.panelMemory?.weakConcepts ?? []).map((entry) => entry.conceptLabel).join(" ")));
+  const panelTokens = new Set(
+    tokenizeForStudyRecipeSimilarity(
+      [params.panel.workflow, params.panel.title, params.panel.description, params.panel.promptTemplate, params.prompt ?? ""].join(" "),
+    ),
+  );
+
+  return [...params.skills]
+    .map((skill, index) => {
+      const skillTokens = new Set(tokenizeForStudyRecipeSimilarity(`${skill.name} ${skill.description}`));
+      let score = 0;
+      if (explicit.has(skill.name)) {
+        score += 5;
+      }
+      if (selected.has(skill.name)) {
+        score += 5;
+      }
+      if (linked.has(skill.name)) {
+        score += 4;
+      }
+      if (preferred.has(skill.name)) {
+        score += 2;
+      }
+      for (const token of weakTokens) {
+        if (skillTokens.has(token)) {
+          score += 3;
+        }
+      }
+      for (const token of panelTokens) {
+        if (skillTokens.has(token)) {
+          score += 1;
+        }
+      }
+      return { skill, score, index };
+    })
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((entry) => entry.skill);
+}
+
 export function evaluateStudyRecipePreflight(
   recipe: StudyRecipe,
   context: StudyRecipeRuntimeContext,
   locale: SupportedLocale = "en",
 ): StudyRecipePreflight {
+  return evaluatePanelRuntimePreflight(
+    {
+      panel: recipe,
+      panelMemory: context.panelMemory ?? null,
+      tab: null,
+      attachments: context.hasAttachments ? ([{ kind: "file" }] as unknown as readonly ComposerAttachment[]) : [],
+      selection: context.hasSelection ? "selection" : null,
+      targetNote: context.currentFilePath ?? context.targetNotePath ?? null,
+      pinnedContext: (context.pinnedContextCount ?? 0) > 0 ? "pinned context" : null,
+      prompt: context.prompt ?? "",
+    },
+    locale,
+    context,
+  );
+}
+
+export function evaluatePanelRuntimePreflight(
+  input: PanelRuntimePreflightInput,
+  locale: SupportedLocale = "en",
+  legacyContext: StudyRecipeRuntimeContext | null = null,
+): StudyRecipePreflight {
+  const recipe = input.panel;
   const missing: string[] = [];
   const advisories: string[] = [];
-  const hasTargetNote = Boolean(context.currentFilePath || context.targetNotePath);
-  const hasAttachments = Boolean(context.hasAttachments);
-  const hasSelection = Boolean(context.hasSelection);
-  const pinnedCount = context.pinnedContextCount ?? 0;
+  const hasTargetNote = Boolean(input.targetNote || legacyContext?.currentFilePath || legacyContext?.targetNotePath);
+  const hasAttachments = input.attachments.length > 0 || Boolean(legacyContext?.hasAttachments);
+  const hasSelection = Boolean(input.selection || legacyContext?.hasSelection);
+  const pinnedCount = input.pinnedContext ? 1 : legacyContext?.pinnedContextCount ?? 0;
+  const panelMemory = input.panelMemory ?? legacyContext?.panelMemory ?? null;
+  const sourceStrategy = chooseSourceStrategy(recipe, {
+    currentFilePath: legacyContext?.currentFilePath ?? input.targetNote,
+    targetNotePath: legacyContext?.targetNotePath ?? input.targetNote,
+    hasAttachments,
+    panelMemory,
+    prompt: input.prompt,
+  });
 
   if (recipe.contextContract.requireSelection && !hasSelection) {
     missing.push(locale === "ja" ? "selection が必要です" : "Selection is required");
@@ -137,13 +290,47 @@ export function evaluateStudyRecipePreflight(
   if (recipe.contextContract.recommendAttachments && !hasAttachments) {
     advisories.push(locale === "ja" ? "添付 source があると精度が上がります" : "Attach source material for better results");
   }
+  if (recipe.workflow === "homework" && sourceStrategy === "ask_for_source") {
+    advisories.push(locale === "ja" ? "問題文が不足している場合は短く確認してください" : "Ask for the problem statement before solving if it is missing");
+  }
+
+  const autoContextAdditions: PanelRuntimeContextHint[] = [];
+  const weakConcept = panelMemory?.weakConcepts[0] ?? null;
+  if (weakConcept) {
+    autoContextAdditions.push({
+      kind: "weak_concept",
+      text: `Weak concept: ${weakConcept.conceptLabel} - ${weakConcept.lastStuckPoint || weakConcept.evidence}`,
+    });
+  }
+  const nextProblem = panelMemory?.nextProblems[0] ?? null;
+  if (nextProblem) {
+    autoContextAdditions.push({
+      kind: "next_problem",
+      text: `Next problem: ${nextProblem.prompt}`,
+    });
+  }
+  const sourcePreference = panelMemory?.sourcePreferences[0] ?? null;
+  if (sourcePreference) {
+    autoContextAdditions.push({
+      kind: "source_preference",
+      text: `Preferred source: ${sourcePreference.label}`,
+    });
+  }
 
   const ready = missing.length === 0;
   const summary =
     missing[0] ??
     advisories[0] ??
     (locale === "ja" ? "現在の context で実行できます" : "Ready with the current context");
-  return { ready, summary, missing, advisories };
+  return {
+    ready,
+    summary,
+    missing,
+    advisories,
+    autoContextAdditions,
+    sourceStrategy,
+    suggestedSkills: [],
+  };
 }
 
 export function summarizeStudyRecipeDiff(current: StudyRecipe | null, next: StudyRecipe, locale: SupportedLocale = "en"): string {

@@ -31,6 +31,9 @@ import type {
   ModelCatalogEntry,
   PatchProposal,
   PendingApproval,
+  PanelImprovementSignal,
+  PanelSourcePreference,
+  PanelStudyMemory,
   PersistedWorkspaceState,
   StudyRecipe,
   ToolCallRecord,
@@ -63,6 +66,8 @@ const MAX_STUDY_MEMORY_WEAK_CONCEPTS = 20;
 const MAX_STUDY_MEMORY_UNDERSTOOD_CONCEPTS = 30;
 const MAX_STUDY_MEMORY_NEXT_PROBLEMS = 10;
 const MAX_STUDY_MEMORY_STUCK_POINTS = 10;
+const MAX_PANEL_SOURCE_PREFERENCES = 12;
+const MAX_PANEL_IMPROVEMENT_SIGNALS = 20;
 
 function normalizeLineage(lineage: ConversationTabState["lineage"] | null | undefined): ConversationTabState["lineage"] {
   return {
@@ -273,6 +278,81 @@ function normalizeUserStudyMemory(memory: UserStudyMemory | null | undefined): U
   };
 }
 
+function normalizePanelSourcePreference(preference: PanelSourcePreference | null | undefined): PanelSourcePreference | null {
+  if (!preference) {
+    return null;
+  }
+  const label = typeof preference.label === "string" ? preference.label.trim() : "";
+  const count = typeof preference.count === "number" && Number.isFinite(preference.count) ? Math.max(1, Math.floor(preference.count)) : 1;
+  const updatedAt =
+    typeof preference.updatedAt === "number" && Number.isFinite(preference.updatedAt) ? preference.updatedAt : Date.now();
+  if (!label) {
+    return null;
+  }
+  return {
+    label,
+    count,
+    workflow: normalizeStudyContractWorkflow(preference.workflow),
+    updatedAt,
+  };
+}
+
+function normalizePanelImprovementSignal(signal: PanelImprovementSignal | null | undefined): PanelImprovementSignal | null {
+  if (!signal) {
+    return null;
+  }
+  const kind =
+    signal.kind === "source" || signal.kind === "skill" || signal.kind === "workflow" || signal.kind === "weak_concept"
+      ? signal.kind
+      : null;
+  const key = typeof signal.key === "string" ? signal.key.trim().toLowerCase().replace(/\s+/g, " ") : "";
+  const label = typeof signal.label === "string" ? signal.label.trim() : "";
+  const count = typeof signal.count === "number" && Number.isFinite(signal.count) ? Math.max(1, Math.floor(signal.count)) : 1;
+  const updatedAt = typeof signal.updatedAt === "number" && Number.isFinite(signal.updatedAt) ? signal.updatedAt : Date.now();
+  if (!kind || !key || !label) {
+    return null;
+  }
+  return {
+    kind,
+    key,
+    label,
+    count,
+    updatedAt,
+  };
+}
+
+function normalizePanelStudyMemory(memory: PanelStudyMemory | null | undefined): PanelStudyMemory | null {
+  if (!memory) {
+    return null;
+  }
+  const base = normalizeUserStudyMemory(memory);
+  const sourcePreferences = Array.isArray(memory.sourcePreferences)
+    ? memory.sourcePreferences
+        .map((entry) => normalizePanelSourcePreference(entry))
+        .filter((entry): entry is PanelSourcePreference => Boolean(entry))
+        .slice(0, MAX_PANEL_SOURCE_PREFERENCES)
+    : [];
+  const improvementSignals = Array.isArray(memory.improvementSignals)
+    ? memory.improvementSignals
+        .map((entry) => normalizePanelImprovementSignal(entry))
+        .filter((entry): entry is PanelImprovementSignal => Boolean(entry))
+        .slice(0, MAX_PANEL_IMPROVEMENT_SIGNALS)
+    : [];
+  const lastContract = normalizeStudyTurnContract(memory.lastContract ?? null);
+  if (!base && sourcePreferences.length === 0 && improvementSignals.length === 0 && !lastContract) {
+    return null;
+  }
+  return {
+    weakConcepts: base?.weakConcepts ?? [],
+    understoodConcepts: base?.understoodConcepts ?? [],
+    nextProblems: base?.nextProblems ?? [],
+    recentStuckPoints: base?.recentStuckPoints ?? [],
+    sourcePreferences,
+    lastContract,
+    improvementSignals,
+  };
+}
+
 function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | undefined): StudyCoachState | null {
   if (!studyCoachState) {
     return null;
@@ -409,6 +489,9 @@ function normalizeUserAdaptationMemory(memory: UserAdaptationMemory | null | und
               : null,
           updatedAt:
             typeof overlay.updatedAt === "number" && Number.isFinite(overlay.updatedAt) ? overlay.updatedAt : Date.now(),
+          ...(normalizePanelStudyMemory(overlay.studyMemory ?? null)
+            ? { studyMemory: normalizePanelStudyMemory(overlay.studyMemory ?? null) }
+            : {}),
         },
       ] as const,
     ];
@@ -449,6 +532,27 @@ function cloneUserAdaptationMemory(memory: UserAdaptationMemory | null | undefin
           preferredSkillNames: [...overlay.preferredSkillNames],
           lastAppliedTargetPath: overlay.lastAppliedTargetPath,
           updatedAt: overlay.updatedAt,
+          ...(overlay.studyMemory
+            ? {
+                studyMemory: {
+                  weakConcepts: overlay.studyMemory.weakConcepts.map((entry) => ({ ...entry })),
+                  understoodConcepts: overlay.studyMemory.understoodConcepts.map((entry) => ({ ...entry })),
+                  nextProblems: overlay.studyMemory.nextProblems.map((entry) => ({ ...entry })),
+                  recentStuckPoints: overlay.studyMemory.recentStuckPoints.map((entry) => ({ ...entry })),
+                  sourcePreferences: overlay.studyMemory.sourcePreferences.map((entry) => ({ ...entry })),
+                  lastContract: overlay.studyMemory.lastContract
+                    ? {
+                        ...overlay.studyMemory.lastContract,
+                        sources: [...overlay.studyMemory.lastContract.sources],
+                        concepts: overlay.studyMemory.lastContract.concepts.map((entry) => ({ ...entry })),
+                        likelyStuckPoints: [...overlay.studyMemory.lastContract.likelyStuckPoints],
+                        nextProblems: [...overlay.studyMemory.lastContract.nextProblems],
+                      }
+                    : null,
+                  improvementSignals: overlay.studyMemory.improvementSignals.map((entry) => ({ ...entry })),
+                },
+              }
+            : {}),
         },
       ]),
     ),
@@ -670,14 +774,19 @@ function normalizeChatSuggestion(
   if (chatSuggestion.panelId && !recipe) {
     return null;
   }
+  const matchedSkillName =
+    typeof chatSuggestion.matchedSkillName === "string" && chatSuggestion.matchedSkillName.trim()
+      ? chatSuggestion.matchedSkillName.trim()
+      : null;
+  const linkedMatchedSkillName =
+    recipe && matchedSkillName ? normalizeLinkedSkillNames([matchedSkillName], recipe.linkedSkillNames)[0] ?? null : matchedSkillName;
+  const keepPanelMemorySkill = chatSuggestion.matchedSkillSource === "panel_memory";
   return {
     ...chatSuggestion,
     panelId: recipe?.id ?? chatSuggestion.panelId,
     panelTitle: recipe?.title?.trim() || chatSuggestion.panelTitle,
-    matchedSkillName:
-      recipe && chatSuggestion.matchedSkillName
-        ? normalizeLinkedSkillNames([chatSuggestion.matchedSkillName], recipe.linkedSkillNames)[0] ?? null
-        : chatSuggestion.matchedSkillName,
+    matchedSkillName: linkedMatchedSkillName ?? (keepPanelMemorySkill ? matchedSkillName : null),
+    matchedSkillSource: linkedMatchedSkillName ? "linked" : keepPanelMemorySkill && matchedSkillName ? "panel_memory" : null,
   };
 }
 

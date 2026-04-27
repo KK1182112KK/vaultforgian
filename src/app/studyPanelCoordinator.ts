@@ -17,11 +17,13 @@ import {
   buildStudyRecipeCommandAlias,
   buildStudySkillDraft,
   evaluateStudyRecipePreflight,
+  evaluatePanelRuntimePreflight,
   summarizeStudyRecipeDiff,
   summarizeStudySkillDiff,
   type StudyRecipePreflight,
   type StudyRecipeRuntimeContext,
 } from "../util/studyRecipes";
+import { getStablePanelImprovementSignals } from "../util/userAdaptation";
 import {
   getStudyWorkflowDefinition,
   type StudyWorkflowPromptContext,
@@ -207,7 +209,22 @@ export class StudyPanelCoordinator {
     if (!tabId) {
       return evaluateStudyRecipePreflight(recipe, {}, this.deps.getLocale());
     }
-    return evaluateStudyRecipePreflight(recipe, this.getStudyRecipeRuntimeContext(tabId), this.deps.getLocale());
+    const tab = this.deps.findTab(tabId);
+    const runtimeContext = this.getStudyRecipeRuntimeContext(tabId);
+    return evaluatePanelRuntimePreflight(
+      {
+        panel: recipe,
+        panelMemory: this.getPanelStudyMemory(recipe.id),
+        tab,
+        attachments: this.deps.getTabSessionItems(tabId),
+        selection: tab?.selectionContext?.text ?? null,
+        targetNote: runtimeContext.targetNotePath ?? runtimeContext.currentFilePath ?? null,
+        pinnedContext: runtimeContext.pinnedContextCount ? "pinned context" : null,
+        prompt: tab?.draft ?? recipe.promptTemplate,
+      },
+      this.deps.getLocale(),
+      runtimeContext,
+    );
   }
 
   ensureDefaultStudyPanels(): void {
@@ -598,6 +615,10 @@ export class StudyPanelCoordinator {
     return structuredClone(recipe);
   }
 
+  private getPanelStudyMemory(panelId: string) {
+    return this.deps.store.getState().userAdaptationMemory?.panelOverlays?.[panelId]?.studyMemory ?? null;
+  }
+
   applyStudyRecipeContext(tabId: string, recipe: StudyRecipe): void {
     this.deps.store.setTabStudyWorkflow(tabId, recipe.workflow === "custom" ? null : recipe.workflow);
     this.deps.store.setComposeMode(tabId, "chat");
@@ -810,10 +831,18 @@ export class StudyPanelCoordinator {
   private createPanelCompletionSuggestion(panel: StudyRecipe, origin: PanelSessionOrigin): ChatSuggestion | null {
     const linkedSkillNames = [...new Set([...(panel.linkedSkillNames ?? []), ...(origin.selectedSkillNames ?? [])].filter(Boolean))];
     const promptSnapshot = origin.promptSnapshot.trim() || panel.promptTemplate.trim();
+    const stableSignals = getStablePanelImprovementSignals(this.getPanelStudyMemory(panel.id));
+    const stableSkillName = stableSignals.find((signal) => signal.kind === "skill")?.label ?? null;
+    const stableNewSkillName = stableSkillName && !linkedSkillNames.includes(stableSkillName) ? stableSkillName : null;
+    const stableSourceHint =
+      stableSignals.find((signal) => signal.kind === "source" && !panel.sourceHints.includes(signal.label))?.label ?? null;
     const canUpdatePanel =
       normalizeUserPromptWhitespace(panel.promptTemplate) !== normalizeUserPromptWhitespace(promptSnapshot) ||
-      linkedSkillNames.length !== panel.linkedSkillNames.length;
-    const matchedSkillName = this.findBestLinkedPanelSkillMatch(promptSnapshot, panel.title, panel.description, linkedSkillNames);
+      linkedSkillNames.length !== panel.linkedSkillNames.length ||
+      Boolean(stableNewSkillName || stableSourceHint);
+    const matchedSkillName =
+      stableSkillName ?? this.findBestLinkedPanelSkillMatch(promptSnapshot, panel.title, panel.description, linkedSkillNames);
+    const matchedSkillSource = stableSkillName ? "panel_memory" : matchedSkillName ? "linked" : null;
     const canSaveCopy = canUpdatePanel && this.deps.getStudyRecipes().length < MAX_STUDY_HUB_PANELS;
     if (!canUpdatePanel && !matchedSkillName && !canSaveCopy) {
       return null;
@@ -827,6 +856,7 @@ export class StudyPanelCoordinator {
       panelTitle: this.getPanelDisplayTitle(panel.title),
       promptSnapshot,
       matchedSkillName,
+      matchedSkillSource,
       canUpdatePanel,
       canSaveCopy,
       planSummary: null,
@@ -883,7 +913,11 @@ export class StudyPanelCoordinator {
     const source = this.requireStudyRecipe(suggestion.panelId);
     const tab = this.deps.findTab(tabId);
     const selectedSkillNames = tab?.panelSessionOrigin?.selectedSkillNames ?? [];
-    const linkedSkillNames = [...new Set([...source.linkedSkillNames, ...selectedSkillNames])];
+    const stableSignals = getStablePanelImprovementSignals(this.getPanelStudyMemory(source.id));
+    const stableSkillNames = stableSignals.filter((signal) => signal.kind === "skill").map((signal) => signal.label);
+    const stableSourceHints = stableSignals.filter((signal) => signal.kind === "source").map((signal) => signal.label);
+    const linkedSkillNames = [...new Set([...source.linkedSkillNames, ...selectedSkillNames, ...stableSkillNames])];
+    const sourceHints = [...new Set([...source.sourceHints, ...stableSourceHints])];
     const now = Date.now();
 
     if (asCopy) {
@@ -898,6 +932,7 @@ export class StudyPanelCoordinator {
         commandAlias: buildStudyRecipeCommandAlias(title, this.deps.getStudyRecipes().map((entry) => entry.commandAlias)),
         promptTemplate: suggestion.promptSnapshot,
         linkedSkillNames,
+        sourceHints,
         exampleSession: this.collectStudyRecipeExampleSession(tabId),
         createdAt: now,
         updatedAt: now,
@@ -911,6 +946,7 @@ export class StudyPanelCoordinator {
       ...source,
       promptTemplate: suggestion.promptSnapshot,
       linkedSkillNames,
+      sourceHints,
       exampleSession: this.collectStudyRecipeExampleSession(tabId),
       updatedAt: now,
     };

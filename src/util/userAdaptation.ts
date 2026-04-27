@@ -1,5 +1,8 @@
 import type {
   PanelAdaptationOverlay,
+  PanelImprovementSignal,
+  PanelSourcePreference,
+  PanelStudyMemory,
   StudyContractWorkflowKind,
   StudyMemoryUnderstoodConcept,
   StudyMemoryWeakConcept,
@@ -65,6 +68,9 @@ const MAX_STUDY_MEMORY_WEAK_CONCEPTS = 20;
 const MAX_STUDY_MEMORY_UNDERSTOOD_CONCEPTS = 30;
 const MAX_STUDY_MEMORY_NEXT_PROBLEMS = 10;
 const MAX_STUDY_MEMORY_STUCK_POINTS = 10;
+const MAX_PANEL_SOURCE_PREFERENCES = 12;
+const MAX_PANEL_IMPROVEMENT_SIGNALS = 20;
+const PANEL_IMPROVEMENT_SIGNAL_THRESHOLD = 3;
 
 function unique(values: Iterable<string>): string[] {
   return [...new Set([...values].map((entry) => entry.trim()).filter(Boolean))];
@@ -227,6 +233,113 @@ function normalizeUserStudyMemory(memory: UserStudyMemory | null | undefined): U
   };
 }
 
+function normalizeStudyContract(contract: StudyTurnContract | null | undefined): StudyTurnContract | null {
+  if (!contract) {
+    return null;
+  }
+  const objective = contract.objective?.trim() ?? "";
+  const sources = unique(contract.sources ?? []);
+  const concepts = (contract.concepts ?? [])
+    .map((concept) => ({
+      label: concept.label?.trim() ?? "",
+      status:
+        concept.status === "introduced" || concept.status === "weak" || concept.status === "understood" || concept.status === "review"
+          ? concept.status
+          : "review",
+      evidence: concept.evidence?.trim() || null,
+    }))
+    .filter((concept) => concept.label);
+  const checkQuestion = contract.checkQuestion?.trim() ?? "";
+  const nextAction = contract.nextAction?.trim() ?? "";
+  const confidenceNote = contract.confidenceNote?.trim() ?? "";
+  if (!objective || sources.length === 0 || concepts.length === 0 || !checkQuestion || !nextAction || !confidenceNote) {
+    return null;
+  }
+  return {
+    objective,
+    sources,
+    concepts,
+    likelyStuckPoints: unique(contract.likelyStuckPoints ?? []),
+    checkQuestion,
+    nextAction,
+    nextProblems: unique(contract.nextProblems ?? []),
+    confidenceNote,
+    workflow: normalizeStudyWorkflow(contract.workflow),
+  };
+}
+
+function normalizePanelSourcePreference(preference: PanelSourcePreference | null | undefined): PanelSourcePreference | null {
+  if (!preference) {
+    return null;
+  }
+  const label = preference.label?.trim() ?? "";
+  if (!label) {
+    return null;
+  }
+  return {
+    label,
+    count: typeof preference.count === "number" && Number.isFinite(preference.count) ? Math.max(1, Math.floor(preference.count)) : 1,
+    workflow: normalizeStudyWorkflow(preference.workflow),
+    updatedAt: typeof preference.updatedAt === "number" && Number.isFinite(preference.updatedAt) ? preference.updatedAt : Date.now(),
+  };
+}
+
+function normalizePanelImprovementSignal(signal: PanelImprovementSignal | null | undefined): PanelImprovementSignal | null {
+  if (!signal) {
+    return null;
+  }
+  const kind =
+    signal.kind === "source" || signal.kind === "skill" || signal.kind === "workflow" || signal.kind === "weak_concept"
+      ? signal.kind
+      : null;
+  const key = signal.key?.trim().toLowerCase().replace(/\s+/g, " ") ?? "";
+  const label = signal.label?.trim() ?? "";
+  if (!kind || !key || !label) {
+    return null;
+  }
+  return {
+    kind,
+    key,
+    label,
+    count: typeof signal.count === "number" && Number.isFinite(signal.count) ? Math.max(1, Math.floor(signal.count)) : 1,
+    updatedAt: typeof signal.updatedAt === "number" && Number.isFinite(signal.updatedAt) ? signal.updatedAt : Date.now(),
+  };
+}
+
+export function normalizePanelStudyMemory(memory: PanelStudyMemory | null | undefined): PanelStudyMemory | null {
+  if (!memory) {
+    return null;
+  }
+  const base = normalizeUserStudyMemory(memory);
+  const sourcePreferences = (memory.sourcePreferences ?? [])
+    .flatMap((entry) => {
+      const normalized = normalizePanelSourcePreference(entry);
+      return normalized ? [normalized] : [];
+    })
+    .sort((left, right) => right.count - left.count || right.updatedAt - left.updatedAt)
+    .slice(0, MAX_PANEL_SOURCE_PREFERENCES);
+  const improvementSignals = (memory.improvementSignals ?? [])
+    .flatMap((entry) => {
+      const normalized = normalizePanelImprovementSignal(entry);
+      return normalized ? [normalized] : [];
+    })
+    .sort((left, right) => right.count - left.count || right.updatedAt - left.updatedAt)
+    .slice(0, MAX_PANEL_IMPROVEMENT_SIGNALS);
+  const lastContract = normalizeStudyContract(memory.lastContract ?? null);
+  if (!base && sourcePreferences.length === 0 && improvementSignals.length === 0 && !lastContract) {
+    return null;
+  }
+  return {
+    weakConcepts: base?.weakConcepts ?? [],
+    understoodConcepts: base?.understoodConcepts ?? [],
+    nextProblems: base?.nextProblems ?? [],
+    recentStuckPoints: base?.recentStuckPoints ?? [],
+    sourcePreferences,
+    lastContract,
+    improvementSignals,
+  };
+}
+
 export function normalizeUserAdaptationMemory(memory: UserAdaptationMemory | null | undefined): UserAdaptationMemory | null {
   if (!memory) {
     return null;
@@ -259,6 +372,9 @@ export function normalizeUserAdaptationMemory(memory: UserAdaptationMemory | nul
         preferredSkillNames: unique(overlay.preferredSkillNames ?? []),
         lastAppliedTargetPath: overlay.lastAppliedTargetPath?.trim() || null,
         updatedAt: typeof overlay.updatedAt === "number" && Number.isFinite(overlay.updatedAt) ? overlay.updatedAt : Date.now(),
+        ...(normalizePanelStudyMemory(overlay.studyMemory ?? null)
+          ? { studyMemory: normalizePanelStudyMemory(overlay.studyMemory ?? null) }
+          : {}),
       };
       return [[normalizedPanelId, normalized] as const];
     }),
@@ -299,6 +415,27 @@ export function cloneUserAdaptationMemory(memory: UserAdaptationMemory | null | 
           preferredSkillNames: [...overlay.preferredSkillNames],
           lastAppliedTargetPath: overlay.lastAppliedTargetPath,
           updatedAt: overlay.updatedAt,
+          ...(overlay.studyMemory
+            ? {
+                studyMemory: {
+                  weakConcepts: overlay.studyMemory.weakConcepts.map((entry) => ({ ...entry })),
+                  understoodConcepts: overlay.studyMemory.understoodConcepts.map((entry) => ({ ...entry })),
+                  nextProblems: overlay.studyMemory.nextProblems.map((entry) => ({ ...entry })),
+                  recentStuckPoints: overlay.studyMemory.recentStuckPoints.map((entry) => ({ ...entry })),
+                  sourcePreferences: overlay.studyMemory.sourcePreferences.map((entry) => ({ ...entry })),
+                  lastContract: overlay.studyMemory.lastContract
+                    ? {
+                        ...overlay.studyMemory.lastContract,
+                        sources: [...overlay.studyMemory.lastContract.sources],
+                        concepts: overlay.studyMemory.lastContract.concepts.map((entry) => ({ ...entry })),
+                        likelyStuckPoints: [...overlay.studyMemory.lastContract.likelyStuckPoints],
+                        nextProblems: [...overlay.studyMemory.lastContract.nextProblems],
+                      }
+                    : null,
+                  improvementSignals: overlay.studyMemory.improvementSignals.map((entry) => ({ ...entry })),
+                },
+              }
+            : {}),
         },
       ]),
     ),
@@ -354,6 +491,7 @@ export function updateUserAdaptationMemory(
       preferredSkillNames: unique([...(prior?.preferredSkillNames ?? []), ...input.selectedSkillNames]),
       lastAppliedTargetPath: input.targetNotePath?.trim() || prior?.lastAppliedTargetPath || null,
       updatedAt: occurredAt,
+      studyMemory: prior?.studyMemory ?? null,
     };
   }
   return normalizeUserAdaptationMemory({
@@ -439,6 +577,177 @@ export function mergeStudyContractIntoUserAdaptationMemory(
   });
 }
 
+function upsertPanelSourcePreferences(
+  current: readonly PanelSourcePreference[],
+  labels: readonly string[],
+  workflow: StudyContractWorkflowKind,
+  occurredAt: number,
+): PanelSourcePreference[] {
+  const byKey = new Map(current.map((entry) => [normalizeConceptKey(entry.label), { ...entry }]));
+  for (const label of labels) {
+    const normalizedLabel = label.trim();
+    if (!normalizedLabel) {
+      continue;
+    }
+    const key = normalizeConceptKey(normalizedLabel);
+    const previous = byKey.get(key);
+    byKey.set(key, {
+      label: previous?.label ?? normalizedLabel,
+      count: (previous?.count ?? 0) + 1,
+      workflow,
+      updatedAt: occurredAt,
+    });
+  }
+  return [...byKey.values()].sort((left, right) => right.count - left.count || right.updatedAt - left.updatedAt).slice(0, MAX_PANEL_SOURCE_PREFERENCES);
+}
+
+function upsertPanelImprovementSignals(
+  current: readonly PanelImprovementSignal[],
+  additions: Array<Pick<PanelImprovementSignal, "kind" | "label">>,
+  occurredAt: number,
+): PanelImprovementSignal[] {
+  const byKey = new Map(current.map((entry) => [`${entry.kind}:${entry.key}`, { ...entry }]));
+  for (const addition of additions) {
+    const label = addition.label.trim();
+    if (!label) {
+      continue;
+    }
+    const key = normalizeConceptKey(label);
+    const mapKey = `${addition.kind}:${key}`;
+    const previous = byKey.get(mapKey);
+    byKey.set(mapKey, {
+      kind: addition.kind,
+      key,
+      label: previous?.label ?? label,
+      count: (previous?.count ?? 0) + 1,
+      updatedAt: occurredAt,
+    });
+  }
+  return [...byKey.values()].sort((left, right) => right.count - left.count || right.updatedAt - left.updatedAt).slice(0, MAX_PANEL_IMPROVEMENT_SIGNALS);
+}
+
+export function mergeStudyContractIntoPanelMemory(
+  current: UserAdaptationMemory | null | undefined,
+  panelId: string,
+  contract: StudyTurnContract,
+  options: {
+    panelWorkflow?: StudyContractWorkflowKind | "custom" | null;
+    occurredAt?: number;
+    preferredSkillNames?: readonly string[];
+  } = {},
+): UserAdaptationMemory | null {
+  const normalized = normalizeUserAdaptationMemory(current);
+  const normalizedPanelId = panelId.trim();
+  const normalizedContract = normalizeStudyContract(contract);
+  if (!normalizedPanelId || !normalizedContract) {
+    return normalized;
+  }
+  const occurredAt = typeof options.occurredAt === "number" && Number.isFinite(options.occurredAt) ? options.occurredAt : Date.now();
+  const panelOverlays = { ...(normalized?.panelOverlays ?? {}) };
+  const priorOverlay = panelOverlays[normalizedPanelId];
+  const priorMemory = normalizePanelStudyMemory(priorOverlay?.studyMemory ?? null) ?? {
+    weakConcepts: [],
+    understoodConcepts: [],
+    nextProblems: [],
+    recentStuckPoints: [],
+    sourcePreferences: [],
+    lastContract: null,
+    improvementSignals: [],
+  };
+  const workflow = normalizeStudyWorkflow(normalizedContract.workflow);
+  const nextWeakConcepts = [...priorMemory.weakConcepts];
+  const nextUnderstoodConcepts = [...priorMemory.understoodConcepts];
+
+  for (const concept of normalizedContract.concepts) {
+    const evidence = concept.evidence?.trim() || normalizedContract.confidenceNote;
+    if (concept.status === "understood") {
+      nextUnderstoodConcepts.unshift({
+        conceptLabel: concept.label,
+        evidence,
+        workflow,
+        updatedAt: occurredAt,
+      });
+      const key = normalizeConceptKey(concept.label);
+      for (let index = nextWeakConcepts.length - 1; index >= 0; index -= 1) {
+        if (normalizeConceptKey(nextWeakConcepts[index]?.conceptLabel ?? "") === key) {
+          nextWeakConcepts.splice(index, 1);
+        }
+      }
+    } else if (concept.status === "weak") {
+      nextWeakConcepts.unshift({
+        conceptLabel: concept.label,
+        evidence,
+        lastStuckPoint: normalizedContract.likelyStuckPoints[0] ?? evidence,
+        nextQuestion: normalizedContract.checkQuestion,
+        workflow,
+        updatedAt: occurredAt,
+      });
+    }
+  }
+
+  const weakConcept = normalizedContract.concepts.find((concept) => concept.status === "weak") ?? null;
+  const stuckPoints = normalizedContract.likelyStuckPoints.map((detail) => ({
+    conceptLabel: weakConcept?.label ?? normalizedContract.objective,
+    detail,
+    workflow,
+    createdAt: occurredAt,
+  }));
+  const nextProblems = normalizedContract.nextProblems.map((prompt) => ({
+    prompt,
+    workflow,
+    source: normalizedContract.sources[0] ?? null,
+    createdAt: occurredAt,
+  }));
+  const signalAdditions: Array<Pick<PanelImprovementSignal, "kind" | "label">> = [
+    ...normalizedContract.sources.map((label) => ({ kind: "source" as const, label })),
+    ...normalizedContract.concepts
+      .filter((concept) => concept.status === "weak")
+      .map((concept) => ({ kind: "weak_concept" as const, label: concept.label })),
+    ...unique(options.preferredSkillNames ?? []).map((label) => ({ kind: "skill" as const, label })),
+  ];
+  const panelWorkflow = options.panelWorkflow === "custom" ? null : options.panelWorkflow;
+  if (panelWorkflow && panelWorkflow !== normalizedContract.workflow) {
+    signalAdditions.push({ kind: "workflow", label: normalizedContract.workflow });
+  }
+
+  const nextPanelStudyMemory = normalizePanelStudyMemory({
+    weakConcepts: nextWeakConcepts,
+    understoodConcepts: nextUnderstoodConcepts,
+    nextProblems: [...nextProblems, ...priorMemory.nextProblems],
+    recentStuckPoints: [...stuckPoints, ...priorMemory.recentStuckPoints],
+    sourcePreferences: upsertPanelSourcePreferences(priorMemory.sourcePreferences, normalizedContract.sources, workflow, occurredAt),
+    lastContract: normalizedContract,
+    improvementSignals: upsertPanelImprovementSignals(priorMemory.improvementSignals, signalAdditions, occurredAt),
+  });
+
+  panelOverlays[normalizedPanelId] = {
+    panelId: normalizedPanelId,
+    preferredFocusTags: priorOverlay?.preferredFocusTags ?? [],
+    preferredNoteStyleHints: priorOverlay?.preferredNoteStyleHints ?? [],
+    preferredSkillNames: unique([...(priorOverlay?.preferredSkillNames ?? []), ...(options.preferredSkillNames ?? [])]),
+    lastAppliedTargetPath: priorOverlay?.lastAppliedTargetPath ?? null,
+    updatedAt: occurredAt,
+    studyMemory: nextPanelStudyMemory,
+  };
+
+  return normalizeUserAdaptationMemory({
+    globalProfile: normalized?.globalProfile ?? null,
+    panelOverlays,
+    studyMemory: normalized?.studyMemory ?? null,
+  });
+}
+
+export function getStablePanelImprovementSignals(
+  memory: PanelStudyMemory | null | undefined,
+  threshold = PANEL_IMPROVEMENT_SIGNAL_THRESHOLD,
+): PanelImprovementSignal[] {
+  const normalized = normalizePanelStudyMemory(memory);
+  if (!normalized) {
+    return [];
+  }
+  return normalized.improvementSignals.filter((signal) => signal.count >= threshold);
+}
+
 function formatLabelList(label: string, values: readonly string[]): string[] {
   if (values.length === 0) {
     return [];
@@ -487,13 +796,14 @@ export function buildUserAdaptationMemoryText(
   return lines.length > 1 ? lines.join("\n") : null;
 }
 
-export function buildStudyMemoryCarryForwardText(memory: UserAdaptationMemory | null | undefined): string | null {
+export function buildStudyMemoryCarryForwardText(memory: UserAdaptationMemory | null | undefined, panelId: string | null = null): string | null {
   const normalized = normalizeUserAdaptationMemory(memory);
-  const studyMemory = normalized?.studyMemory ?? null;
+  const panelMemory = panelId?.trim() ? normalized?.panelOverlays[panelId.trim()]?.studyMemory ?? null : null;
+  const studyMemory = panelMemory ?? normalized?.studyMemory ?? null;
   if (!studyMemory) {
     return null;
   }
-  const lines: string[] = ["Study memory carry-forward:"];
+  const lines: string[] = [panelMemory ? "Panel memory carry-forward:" : "Study memory carry-forward:"];
   if (studyMemory.weakConcepts.length > 0) {
     lines.push(`- Weak concepts: ${studyMemory.weakConcepts.slice(0, 3).map((entry) => entry.conceptLabel).join(" / ")}`);
     const topWeak = studyMemory.weakConcepts[0];
@@ -507,6 +817,13 @@ export function buildStudyMemoryCarryForwardText(memory: UserAdaptationMemory | 
   }
   if (studyMemory.nextProblems.length > 0) {
     lines.push(`- Next problems: ${studyMemory.nextProblems.slice(0, 3).map((entry) => entry.prompt).join(" / ")}`);
+  }
+  const sourcePreferences =
+    "sourcePreferences" in studyMemory && Array.isArray((studyMemory as Partial<PanelStudyMemory>).sourcePreferences)
+      ? ((studyMemory as PanelStudyMemory).sourcePreferences ?? [])
+      : [];
+  if (sourcePreferences.length > 0) {
+    lines.push(`- Source preferences: ${sourcePreferences.slice(0, 3).map((entry) => entry.label).join(" / ")}`);
   }
   if (studyMemory.recentStuckPoints.length > 0 && studyMemory.weakConcepts.length === 0) {
     lines.push(`- Recent stuck point: ${studyMemory.recentStuckPoints[0]?.detail}`);
