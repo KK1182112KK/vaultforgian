@@ -1,14 +1,23 @@
 # VaultForgian Demo Recording
 
-Place the final Obsidian screen recording here:
+Keep the local raw capture here, but do not commit it:
 
 ```text
 site/public/demo/obsidian-noteforge-demo.mp4
 ```
 
-Current public recording:
+Commit the compressed public web version:
+
+```text
+site/public/demo/obsidian-noteforge-demo.web.mp4
+```
+
+Current recordings:
 
 - `obsidian-noteforge-demo.mp4`
+- Raw local source capture; gitignored because it is too large for GitHub.
+- `obsidian-noteforge-demo.web.mp4`
+- Compressed public version used by the demo site.
 - 1 minute 38 seconds.
 - Shows VaultForgian creating a new Pythagorean Theorem note from a short study request.
 - `noteforge-learning-mode.mp4`

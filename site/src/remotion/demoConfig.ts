@@ -3,7 +3,7 @@ export const DEMO_SECONDS = 98;
 export const DEMO_DURATION_IN_FRAMES = DEMO_SECONDS * DEMO_FPS;
 export const DEMO_WIDTH = 1920;
 export const DEMO_HEIGHT = 1080;
-export const DEMO_RECORDING_FILE = "demo/obsidian-noteforge-demo.mp4";
+export const DEMO_RECORDING_FILE = "demo/obsidian-noteforge-demo.web.mp4";
 export const DEMO_RECORDING_PUBLIC_PATH = `/${DEMO_RECORDING_FILE}`;
 
 export type DemoChapter = {
