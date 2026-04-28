@@ -3,7 +3,7 @@ export interface SkillReference {
   name: string;
 }
 
-const SKILL_PATTERN = /(^|[\s(])\$([A-Za-z0-9:_-]+)/g;
+const SKILL_PATTERN = /(^|[\s(])\$([A-Za-z][A-Za-z0-9:_-]{1,})(?![A-Za-z0-9:_-]|\$)/g;
 
 export function extractSkillReferences(input: string): SkillReference[] {
   const references: SkillReference[] = [];

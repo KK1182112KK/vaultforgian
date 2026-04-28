@@ -19,4 +19,12 @@ describe("skill routing", () => {
     expect(hasExplicitSkillRequest("plain prompt")).toBe(false);
     expect(hasExplicitSkillRequest("Please use $slides")).toBe(true);
   });
+
+  it("does not treat inline math variables or numbers as skill references", () => {
+    expect(extractSkillReferences("Use $a^2 + b^2 = c^2$ and try $3$, $5$, $12$, $13$.")).toEqual([]);
+    expect(extractSkillReferences("Compare $a$ and $b$ before using $deep-read.")).toEqual([
+      { raw: "$deep-read", name: "deep-read" },
+    ]);
+    expect(hasExplicitSkillRequest("Formula: $a$ / $b$ / $c$")).toBe(false);
+  });
 });

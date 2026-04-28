@@ -71,11 +71,12 @@ async function assertBundleFresh() {
 
 async function main() {
   const targetDir =
+    process.env.VAULTFORGIAN_PLUGIN_DIR?.trim() ||
     process.env.CODEX_NOTEFORGE_PLUGIN_DIR?.trim() ||
     process.env.OBSIDIAN_CODEX_STUDY_PLUGIN_DIR?.trim();
   if (!targetDir) {
     throw new Error(
-      "Set CODEX_NOTEFORGE_PLUGIN_DIR (or legacy OBSIDIAN_CODEX_STUDY_PLUGIN_DIR) to your Obsidian plugin directory before running npm run deploy.",
+      "Set VAULTFORGIAN_PLUGIN_DIR (or legacy CODEX_NOTEFORGE_PLUGIN_DIR / OBSIDIAN_CODEX_STUDY_PLUGIN_DIR) to your Obsidian plugin directory before running npm run deploy.",
     );
   }
 
@@ -94,7 +95,7 @@ async function main() {
     deployedFiles.push(file);
   }
 
-  console.log(`Deployed Codex Noteforge to ${targetDir} (${deployedFiles.join(", ")})`);
+  console.log(`Deployed VaultForgian to ${targetDir} (${deployedFiles.join(", ")})`);
 }
 
 await main().catch((error) => {

@@ -1,5 +1,5 @@
 {
-  "name": "codex-noteforge-site",
+  "name": "vaultforgian-site",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,8 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@remotion/media": "^4.0.451",
+    "@remotion/player": "^4.0.451",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "remotion": "^4.0.451"
   },
   "devDependencies": {
     "@types/react": "^19.1.12",

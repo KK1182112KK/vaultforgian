@@ -483,13 +483,13 @@ function formatJapanesePatchSafetyIssue(
 }
 
 const EN_COPY: LocalizedCopy = {
-  pluginName: "Codex Noteforge",
+  pluginName: "VaultForgian",
   pluginDescription: "Study-first Codex workspace for Obsidian",
   ribbon: {
-    openWorkspace: "Open Codex Noteforge workspace",
+    openWorkspace: "Open VaultForgian workspace",
   },
   commands: {
-    openWorkspace: "Open Codex Noteforge workspace",
+    openWorkspace: "Open VaultForgian workspace",
     openIngestHub: "Open Panel Studio",
     newTab: "New Codex tab",
     startLectureWorkflow: "Start Lecture workflow",
@@ -547,7 +547,7 @@ const EN_COPY: LocalizedCopy = {
     noPatchTarget: "No Codex patch target.",
     cannotForkConversation: "Cannot fork this conversation.",
     noResumableThread: "No resumable Codex thread on this tab.",
-    noOpenLeaf: "Failed to allocate an Obsidian leaf for the Codex Noteforge workspace.",
+    noOpenLeaf: "Failed to allocate an Obsidian leaf for the VaultForgian workspace.",
     cannotStartNewSession: "Cannot start a new session while Codex is responding.",
     blockedLegacyLauncherNotice: "Blocked an unsafe legacy Codex launcher and restored safe defaults. Review Codex runtime settings.",
     provideSearchQuery: "Provide a search query.",
@@ -556,7 +556,7 @@ const EN_COPY: LocalizedCopy = {
     recipeCopyCreated: (title) => `Saved a new recipe copy: ${title}.`,
   },
   settings: {
-    title: "Codex Noteforge",
+    title: "VaultForgian",
     languageName: "Display language",
     languageDesc: "Follow Obsidian or override this plugin's UI language.",
     languageFollowApp: "Follow Obsidian",
@@ -585,7 +585,7 @@ const EN_COPY: LocalizedCopy = {
     autoRestoreTabsDesc: "Restore saved tabs and transcripts when the workspace opens.",
   },
   workspace: {
-    title: "Codex Noteforge",
+    title: "VaultForgian",
     header: {
       newTab: "New tab",
       newSession: "New session",
@@ -748,7 +748,7 @@ const EN_COPY: LocalizedCopy = {
     conflictKeepCurrent: "Keep current",
     conflictOpenInEditor: "Open in editor for manual merge",
     conflictOverwriteChangedConfirm: "This note changed after the conflict dialog opened. Overwrite it with the Codex proposal anyway?",
-    welcomeTitle: "Codex Noteforge",
+    welcomeTitle: "VaultForgian",
     welcomeBody: "Use your vault as a study workspace for lectures, review loops, papers, and homework. Start from Panel Studio or ask directly in chat.",
     usageTitle: "Codex usage",
     noUsageYet: "No Codex usage yet",
@@ -836,13 +836,13 @@ const EN_COPY: LocalizedCopy = {
 };
 
 const JA_COPY: LocalizedCopy = {
-  pluginName: "Codex Noteforge",
+  pluginName: "VaultForgian",
   pluginDescription: "Obsidian 向け学習用 Codex ワークスペース",
   ribbon: {
-    openWorkspace: "Codex Noteforge ワークスペースを開く",
+    openWorkspace: "VaultForgian ワークスペースを開く",
   },
   commands: {
-    openWorkspace: "Codex Noteforge ワークスペースを開く",
+    openWorkspace: "VaultForgian ワークスペースを開く",
     openIngestHub: "Panel Studio を開く",
     newTab: "Codex タブを新規作成",
     startLectureWorkflow: "Lecture workflow を開始",
@@ -900,7 +900,7 @@ const JA_COPY: LocalizedCopy = {
     noPatchTarget: "Codex patch の対象がありません。",
     cannotForkConversation: "この conversation は fork できません。",
     noResumableThread: "このタブに再開可能な Codex thread はありません。",
-    noOpenLeaf: "Codex Noteforge ワークスペース用の Obsidian leaf を確保できませんでした。",
+    noOpenLeaf: "VaultForgian ワークスペース用の Obsidian leaf を確保できませんでした。",
     cannotStartNewSession: "Codex が応答中のため、新しい session を開始できません。",
     blockedLegacyLauncherNotice: "危険な legacy Codex launcher を拒否して安全な既定値へ戻しました。Codex runtime 設定を確認してください。",
     provideSearchQuery: "検索クエリを入力してください。",
@@ -909,7 +909,7 @@ const JA_COPY: LocalizedCopy = {
     recipeCopyCreated: (title) => `新しい recipe コピーを保存しました: ${title}。`,
   },
   settings: {
-    title: "Codex Noteforge",
+    title: "VaultForgian",
     languageName: "表示言語",
     languageDesc: "Obsidian の言語に追従するか、この plugin の UI 言語を上書きします。",
     languageFollowApp: "Obsidian に追従",
@@ -938,7 +938,7 @@ const JA_COPY: LocalizedCopy = {
     autoRestoreTabsDesc: "workspace を開いたときに保存済みタブと transcript を復元します。",
   },
   workspace: {
-    title: "Codex Noteforge",
+    title: "VaultForgian",
     header: {
       newTab: "新しいタブ",
       newSession: "新しい session",
@@ -1101,7 +1101,7 @@ const JA_COPY: LocalizedCopy = {
     conflictKeepCurrent: "現在の内容を維持",
     conflictOpenInEditor: "エディタで手動マージ",
     conflictOverwriteChangedConfirm: "このダイアログを開いてからノートが変更されました。それでも Codex の提案で上書きしますか。",
-    welcomeTitle: "Codex Noteforge",
+    welcomeTitle: "VaultForgian",
     welcomeBody: "vault を講義、復習、論文、宿題の学習ワークスペースとして使います。Panel Studio から始めるか、そのまま chat で質問してください。",
     usageTitle: "Codex usage",
     noUsageYet: "まだ Codex usage はありません",

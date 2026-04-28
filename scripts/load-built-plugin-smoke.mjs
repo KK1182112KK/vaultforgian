@@ -200,7 +200,7 @@ function resolvePluginExport(candidate) {
 
 async function main() {
   await stat(mainJsPath);
-  const stubRoot = await mkdtemp(path.join(tmpdir(), "codex-noteforge-bundle-smoke-"));
+  const stubRoot = await mkdtemp(path.join(tmpdir(), "vaultforgian-bundle-smoke-"));
   try {
     const obsidianDir = path.join(stubRoot, "node_modules", "obsidian");
     await mkdir(obsidianDir, { recursive: true });
@@ -245,7 +245,7 @@ async function main() {
         }
         const instance = new PluginClass(createAppStub(), {
           id: "obsidian-codex-study",
-          name: "Codex Noteforge",
+          name: "VaultForgian",
           version: "0.0.0-smoke",
         });
         if (!instance || typeof instance !== "object") {

@@ -85,9 +85,10 @@ function extractCodexSessionId(event: JsonRecord): string | null {
   return null;
 }
 
-function buildEventBackedMessageId(event: JsonRecord, phase: string, fallbackPrefix: string): string {
+function buildEventBackedMessageId(event: JsonRecord, phase: string, fallbackPrefix: string, scope: string | null = null): string {
   const timestamp = asString(event.timestamp)?.replace(/[^a-zA-Z0-9]+/g, "-") ?? makeId(fallbackPrefix);
-  return `${fallbackPrefix}-${timestamp}-${phase}`;
+  const normalizedScope = scope?.trim().replace(/[^a-zA-Z0-9]+/g, "-") ?? "";
+  return normalizedScope ? `${fallbackPrefix}-${normalizedScope}-${timestamp}-${phase}` : `${fallbackPrefix}-${timestamp}-${phase}`;
 }
 
 function safeJson(value: unknown): string {
@@ -276,6 +277,7 @@ export class ThreadEventReducer {
     tabId: string,
     event: JsonRecord,
     assistantOutputVisibility: AssistantOutputVisibility = "visible",
+    messageIdScope: string | null = null,
   ): string | null {
     const usagePatch = extractUsageSummaryPatch(event);
     if (usagePatch) {
@@ -323,7 +325,7 @@ export class ThreadEventReducer {
           this.appendAssistantFallbackMessage(
             tabId,
             text,
-            buildEventBackedMessageId(event, "final_answer", "codex-message"),
+            buildEventBackedMessageId(event, "final_answer", "codex-message", messageIdScope),
             assistantOutputVisibility,
           );
         }
@@ -336,7 +338,7 @@ export class ThreadEventReducer {
           return null;
         }
         const phase = asString(payload.phase) ?? "final_answer";
-        const messageId = buildEventBackedMessageId(event, phase, "codex-message");
+        const messageId = buildEventBackedMessageId(event, phase, "codex-message", messageIdScope);
         this.recordAssistantOutput(tabId, messageId, text, false, mode, assistantOutputVisibility);
         return null;
       }
@@ -353,7 +355,7 @@ export class ThreadEventReducer {
           return null;
         }
         const phase = asString(payload.phase) ?? "final_answer";
-        const messageId = buildEventBackedMessageId(event, phase, "codex-message");
+        const messageId = buildEventBackedMessageId(event, phase, "codex-message", messageIdScope);
         this.recordAssistantOutput(tabId, messageId, text, false, mode, assistantOutputVisibility);
         return null;
       }
@@ -367,8 +369,8 @@ export class ThreadEventReducer {
         if (!text) {
           return null;
         }
-        this.deps.store.upsertMessage(tabId, buildEventBackedMessageId(event, "reasoning", "codex-reasoning"), (current) => ({
-          id: current?.id ?? buildEventBackedMessageId(event, "reasoning", "codex-reasoning"),
+        this.deps.store.upsertMessage(tabId, buildEventBackedMessageId(event, "reasoning", "codex-reasoning", messageIdScope), (current) => ({
+          id: current?.id ?? buildEventBackedMessageId(event, "reasoning", "codex-reasoning", messageIdScope),
           kind: "reasoning",
           text,
           createdAt: current?.createdAt ?? Date.now(),

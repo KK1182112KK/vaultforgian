@@ -10,9 +10,16 @@ export interface HubRendererEphemeralState {
   panelDrafts: Map<string, HubPanelDraft>;
   openSkillPanelIds: Set<string>;
   selectedDrawerSkillNames: Map<string, string[]>;
+  skillListScrollStates: Map<string, SkillListScrollState>;
   pendingScrollTargetPanelId: string | null;
   pendingFocusTitlePanelId: string | null;
   pendingFocusSkillTogglePanelId: string | null;
+}
+
+interface SkillListScrollState {
+  scrollTop: number;
+  anchorSkillName: string | null;
+  anchorOffsetTop: number | null;
 }
 
 export function createHubRendererEphemeralState(): HubRendererEphemeralState {
@@ -22,6 +29,7 @@ export function createHubRendererEphemeralState(): HubRendererEphemeralState {
     panelDrafts: new Map<string, HubPanelDraft>(),
     openSkillPanelIds: new Set<string>(),
     selectedDrawerSkillNames: new Map<string, string[]>(),
+    skillListScrollStates: new Map<string, SkillListScrollState>(),
     pendingScrollTargetPanelId: null,
     pendingFocusTitlePanelId: null,
     pendingFocusSkillTogglePanelId: null,
@@ -102,6 +110,10 @@ export class HubRenderer {
 
   private get selectedDrawerSkillNames(): Map<string, string[]> {
     return this.ephemeralState.selectedDrawerSkillNames;
+  }
+
+  private get skillListScrollStates(): Map<string, SkillListScrollState> {
+    return this.ephemeralState.skillListScrollStates;
   }
 
   private get pendingScrollTargetPanelId(): string | null {
@@ -690,6 +702,7 @@ export class HubRenderer {
   private closeCreatePanelPopover(): void {
     this.isCreatePanelPopoverOpen = false;
     this.panelDrafts.delete(HubRenderer.NEW_PANEL_DRAFT_ID);
+    this.clearPanelSkillListScroll(HubRenderer.NEW_PANEL_DRAFT_ID);
     if (this.pendingFocusTitlePanelId === HubRenderer.NEW_PANEL_DRAFT_ID) {
       this.pendingFocusTitlePanelId = null;
     }
@@ -827,6 +840,7 @@ export class HubRenderer {
     this.panelDrafts.delete(panelId);
     this.openSkillPanelIds.delete(panelId);
     this.selectedDrawerSkillNames.delete(panelId);
+    this.clearPanelSkillListScroll(panelId);
     if (this.editingPanelId === panelId) {
       this.editingPanelId = null;
     }
@@ -853,14 +867,19 @@ export class HubRenderer {
     const listEl = sectionEl.createDiv({
       cls: `obsidian-codex__panel-skill-picker-list obsidian-codex__panel-skill-picker-list--${sectionKind}`,
     });
+    listEl.addEventListener("scroll", () => {
+      this.rememberSkillListScroll(panelId, sectionKind, listEl);
+    });
     if (skills.length === 0) {
       if (emptyText) {
         listEl.createDiv({ cls: "obsidian-codex__ingest-hub-card-note is-muted", text: emptyText });
       }
+      this.restoreSkillListScroll(panelId, sectionKind, listEl);
       return;
     }
     const draft = this.panelDrafts.get(panelId);
     if (!draft) {
+      this.restoreSkillListScroll(panelId, sectionKind, listEl);
       return;
     }
     for (const skill of skills) {
@@ -869,8 +888,8 @@ export class HubRenderer {
       const checkboxEl = labelEl.createEl("input", { attr: { type: "checkbox" } });
       checkboxEl.checked = checked;
       checkboxEl.addEventListener("change", () => {
-        this.captureSkillAnchor(skill.name);
-        this.capturePanelAnchor(panelId);
+        this.rememberSkillListScroll(panelId, sectionKind, listEl, skill.name);
+        this.preserveExactHubScrollOnNextRender();
         const next = checkboxEl.checked
           ? [...new Set([...draft.linkedSkillNames, skill.name])]
           : draft.linkedSkillNames.filter((entry) => entry !== skill.name);
@@ -879,6 +898,7 @@ export class HubRenderer {
       });
       labelEl.createSpan({ text: skill.name });
     }
+    this.restoreSkillListScroll(panelId, sectionKind, listEl);
   }
 
   private renderDrawerSkillSection(
@@ -992,6 +1012,89 @@ export class HubRenderer {
     if (restoreFocus) {
       this.pendingFocusSkillTogglePanelId = panelId;
     }
+  }
+
+  private preserveExactHubScrollOnNextRender(): void {
+    this.preserveExactScrollOnNextRender = true;
+    this.preservedBodyScrollTop = this.hubBodyEl?.scrollTop ?? this.preservedBodyScrollTop;
+    this.preservedElementAnchor = null;
+    this.preservedPanelAnchor = null;
+  }
+
+  private restoreSkillListScroll(
+    panelId: string,
+    sectionKind: "linked" | "available",
+    listEl: HTMLElement,
+  ): void {
+    const state = this.skillListScrollStates.get(this.getSkillListScrollKey(panelId, sectionKind));
+    if (!state || (!state.anchorSkillName && state.scrollTop <= 0)) {
+      return;
+    }
+    const restore = () => {
+      const anchorEl = state.anchorSkillName
+        ? listEl.querySelector<HTMLElement>(`[data-skill-name="${this.escapeAttributeValue(state.anchorSkillName)}"]`)
+        : null;
+      if (anchorEl && typeof state.anchorOffsetTop === "number" && Number.isFinite(state.anchorOffsetTop)) {
+        listEl.scrollTop = Math.max(0, anchorEl.offsetTop - state.anchorOffsetTop);
+        return;
+      }
+      listEl.scrollTop = Math.max(0, state.scrollTop);
+    };
+    window.requestAnimationFrame(() => {
+      restore();
+      window.requestAnimationFrame(restore);
+    });
+  }
+
+  private rememberSkillListScroll(
+    panelId: string,
+    sectionKind: "linked" | "available",
+    listEl: HTMLElement,
+    excludeSkillName?: string,
+  ): void {
+    const key = this.getSkillListScrollKey(panelId, sectionKind);
+    const scrollTop = Number.isFinite(listEl.scrollTop) ? Math.max(0, listEl.scrollTop) : 0;
+    const anchor = this.getSkillListScrollAnchor(listEl, excludeSkillName);
+    if (scrollTop > 0 || anchor) {
+      this.skillListScrollStates.set(key, {
+        scrollTop,
+        anchorSkillName: anchor?.skillName ?? null,
+        anchorOffsetTop: anchor?.offsetTop ?? null,
+      });
+      return;
+    }
+    this.skillListScrollStates.delete(key);
+  }
+
+  private clearPanelSkillListScroll(panelId: string): void {
+    this.skillListScrollStates.delete(this.getSkillListScrollKey(panelId, "linked"));
+    this.skillListScrollStates.delete(this.getSkillListScrollKey(panelId, "available"));
+  }
+
+  private getSkillListScrollKey(panelId: string, sectionKind: "linked" | "available"): string {
+    return `${panelId}:${sectionKind}`;
+  }
+
+  private getSkillListScrollAnchor(
+    listEl: HTMLElement,
+    excludeSkillName?: string,
+  ): { skillName: string; offsetTop: number } | null {
+    const rows = Array.from(listEl.querySelectorAll<HTMLElement>(".obsidian-codex__panel-skill-option[data-skill-name]"));
+    let fallback: { skillName: string; offsetTop: number } | null = null;
+    for (const row of rows) {
+      const skillName = row.dataset.skillName?.trim();
+      if (!skillName || skillName === excludeSkillName) {
+        continue;
+      }
+      const offsetTop = row.offsetTop - listEl.scrollTop;
+      if (!fallback) {
+        fallback = { skillName, offsetTop };
+      }
+      if (offsetTop >= 0) {
+        return { skillName, offsetTop };
+      }
+    }
+    return fallback;
   }
 
   private captureHubBodyState(): void {

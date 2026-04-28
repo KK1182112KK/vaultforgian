@@ -665,6 +665,17 @@ body.theme-light .obsidian-codex {
   min-width: 0;
 }
 
+.obsidian-codex__chat-math {
+  font-family: var(--font-monospace);
+  white-space: nowrap;
+}
+
+.obsidian-codex__chat-math--display {
+  display: block;
+  margin: 0.45rem 0;
+  text-align: center;
+}
+
 .obsidian-codex__message-markdown > :first-child,
 .obsidian-codex__message-markdown > :first-child > :first-child {
   margin-top: 0;

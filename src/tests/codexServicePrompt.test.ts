@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CodexService } from "../app/codexService";
 import { buildTurnPrompt } from "../app/turnPrompt";
-import { DEFAULT_SETTINGS, type ChatMessage, type PatchProposal, type TurnContextSnapshot } from "../model/types";
+import { DEFAULT_SETTINGS, type ChatMessage, type PatchProposal, type StudyTurnPlan, type TurnContextSnapshot } from "../model/types";
+import { buildSkillOrchestrationPlan } from "../util/skillOrchestration";
 
 function createContext(overrides: Partial<TurnContextSnapshot> = {}): TurnContextSnapshot {
   return {
@@ -101,6 +102,8 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("Do not mention note changes");
     expect(prompt).toContain("Do not narrate internal skill selection");
     expect(prompt).toContain("Do not narrate MCP/tool plumbing");
+    expect(prompt).toContain("use readable LaTeX math notation with Markdown math delimiters");
+    expect(prompt).toContain("Do not write raw ASCII math");
   });
 
   it("pins visible replies to the selected English display language", () => {
@@ -163,7 +166,7 @@ describe("buildTurnPrompt", () => {
 
     expect(diagramPrompt).toContain("obsidian-diagram");
     expect(diagramPrompt).toContain("safe self-contained SVG");
-    expect(diagramPrompt).toContain("assets/noteforge/diagrams/");
+    expect(diagramPrompt).toContain("assets/vaultforgian/diagrams/");
     expect(diagramPrompt).toContain("Do not use external images, data URLs, scripts, event handlers, or foreignObject");
     expect(normalPrompt).not.toContain("obsidian-diagram");
   });
@@ -172,18 +175,113 @@ describe("buildTurnPrompt", () => {
     const prompt = buildTurnPrompt(
       "Use $deep-read on this paper",
       createContext({
-        skillGuideText: "Requested skill guides:\n\nSkill guide: $deep-read\nPath: /skills/deep-read/SKILL.md\nDescription: Read the paper deeply.",
+        skillGuideText:
+          "Requested skill guides:\n\nSkill guide: $deep-read\nPath: /skills/deep-read/SKILL.md\nDescription: Read the paper deeply.\n\n# Deep Read\nRead source material deeply.",
       }),
-      "skill",
+      "normal",
       ["deep-read"],
       "chat",
       false,
       "manual",
     );
 
+    expect(prompt).toContain("Required and auto-selected skill orchestration is active for this turn.");
+    expect(prompt).toContain("Priority order for this turn: safety/source contracts > required/auto skill orchestration > StudyTurnPlan");
+    expect(prompt).toContain("Skill orchestration plan");
+    expect(prompt).toContain("Required skills: $deep-read");
+    expect(prompt).toContain("Auto-selected skills: none");
+    expect(prompt).toContain("$deep-read -> source_read");
     expect(prompt).toContain("Requested skill guides are attached for this turn.");
     expect(prompt).toContain("Do not say that an attached requested skill is unavailable");
     expect(prompt).toContain("Skill guide: $deep-read");
+    expect(prompt).toContain("# Deep Read");
+  });
+
+  it("keeps selected skill orchestration above StudyTurnPlan guidance", () => {
+    const studyTurnPlan: StudyTurnPlan = {
+      objective: "Continue a study review.",
+      teachingMode: "coach",
+      focusConcepts: ["right triangles"],
+      likelyStuckPoint: "Confuses the hypotenuse with a leg.",
+      sourceStrategy: "use_note",
+      checkQuestion: "Which side is longest?",
+      nextAction: "Ask one reverse problem.",
+      selectedSkillNames: ["brainstorming", "deep-read", "academic-paper"],
+      recommendedSkills: [],
+      panelSignals: [],
+      visibleReplyGuidance: "Keep it short.",
+    };
+    const prompt = buildTurnPrompt(
+      "Help me study this lecture material.",
+      createContext({
+        studyWorkflow: "review",
+        workflowText: "Active study workflow: Review",
+        studyCoachText: "Panel memory carry-forward:\n- Weak concepts: Pythagorean theorem",
+        skillGuideText: [
+          "Requested skill guides:",
+          "",
+          "Skill guide: $academic-paper",
+          "Path: /skills/academic-paper/SKILL.md",
+          "Description: Academic paper writing skill.",
+          "",
+          "Skill guide: $brainstorming",
+          "Path: /skills/brainstorming/SKILL.md",
+          "Description: Generate creative options before work.",
+          "",
+          "Skill guide: $deep-read",
+          "Path: /skills/deep-read/SKILL.md",
+          "Description: Read source material deeply.",
+        ].join("\n"),
+      }),
+      "skill",
+      ["academic-paper", "brainstorming", "deep-read"],
+      "chat",
+      false,
+      "manual",
+      { studyTurnPlan, turnIntentKind: "note_answer" },
+    );
+
+    expect(prompt).toContain("Skill orchestration plan");
+    expect(prompt).toContain("Required skills: $academic-paper / $brainstorming / $deep-read");
+    expect(prompt).toContain("$brainstorming -> brainstorm");
+    expect(prompt).toContain("$deep-read -> source_read");
+    expect(prompt).toContain("$academic-paper -> execute");
+    expect(prompt).toContain("StudyTurnPlan");
+    expect(prompt.indexOf("Skill orchestration plan\n")).toBeLessThan(prompt.indexOf("StudyTurnPlan\n"));
+    expect(prompt).toContain("Do not reveal the skill order, skill loading, or internal orchestration");
+  });
+
+  it("can inject required, auto-selected, and skipped skill orchestration details", () => {
+    const skillOrchestrationPlan = buildSkillOrchestrationPlan(["deep-read"], {
+      prompt: "Review the frequency response source and explain the weak concept.",
+      weakConceptLabels: ["frequency response phase"],
+      candidates: [
+        { name: "deep-read", description: "Read source material deeply.", userOwned: true },
+        {
+          name: "bode-drill",
+          description: "Practice frequency response phase drills.",
+          userOwned: true,
+          panelPreferred: true,
+        },
+        { name: "quiet-helper", description: "Unrelated helper.", userOwned: true },
+      ],
+    });
+    const prompt = buildTurnPrompt(
+      "Review the frequency response source.",
+      createContext(),
+      "skill",
+      skillOrchestrationPlan?.selectedSkills ?? ["deep-read"],
+      "chat",
+      false,
+      "manual",
+      { skillOrchestrationPlan },
+    );
+
+    expect(prompt).toContain("Required skills: $deep-read");
+    expect(prompt).toContain("Auto-selected skills: $bode-drill");
+    expect(prompt).toContain("Skipped skills: $quiet-helper");
+    expect(prompt).toContain("Confidence:");
+    expect(prompt).toContain("Priority order for this turn: safety/source contracts > required/auto skill orchestration > StudyTurnPlan");
   });
 
   it("attaches user adaptation memory separately from skill guides when present", () => {
@@ -349,11 +447,11 @@ describe("buildTurnPrompt", () => {
     );
 
     expect(prompt).toContain("Learning mode is active for this tab.");
-    expect(prompt).toContain("Use a study-coach response structure");
-    expect(prompt).toContain("key explanation");
+    expect(prompt).toContain("Use the attached LearningCoachPlan");
+    expect(prompt).toContain("one short hint");
+    expect(prompt).toContain("at most one scaffold");
     expect(prompt).toContain("one short understanding-check question");
-    expect(prompt).toContain("likely point of confusion");
-    expect(prompt).toContain("next study step");
+    expect(prompt).toContain("next action");
     expect(prompt).toContain("```obsidian-study-contract");
     expect(prompt).toContain("Do not show the contract JSON");
   });

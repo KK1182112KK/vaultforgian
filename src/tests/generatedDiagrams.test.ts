@@ -23,7 +23,7 @@ describe("generated diagram utilities", () => {
   });
 
   it("derives deterministic managed asset paths from titles", () => {
-    expect(buildGeneratedDiagramAssetPath("Average Load Power")).toBe("assets/noteforge/diagrams/average-load-power.svg");
-    expect(buildGeneratedDiagramAssetPath("\u5e73\u5747\u8ca0\u8377\u96fb\u529b")).toBe("assets/noteforge/diagrams/study-diagram.svg");
+    expect(buildGeneratedDiagramAssetPath("Average Load Power")).toBe("assets/vaultforgian/diagrams/average-load-power.svg");
+    expect(buildGeneratedDiagramAssetPath("\u5e73\u5747\u8ca0\u8377\u96fb\u529b")).toBe("assets/vaultforgian/diagrams/study-diagram.svg");
   });
 });

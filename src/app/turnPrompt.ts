@@ -9,6 +9,11 @@ import {
   buildQuotedPatchMathFormattingRules,
 } from "../util/patchPromptContract";
 import { buildStudyLayerPromptOverlay } from "../agent/study/studyLayer";
+import {
+  buildSkillOrchestrationPlan,
+  formatSkillOrchestrationPlanForPrompt,
+  type SkillOrchestrationPlan,
+} from "../util/skillOrchestration";
 
 function buildVisibleLanguageInstructions(locale: SupportedLocale): string[] {
   const language = locale === "ja" ? "Japanese" : "English";
@@ -35,12 +40,20 @@ export function buildTurnPrompt(
     noteSuggestionPolicy?: NoteSuggestionPolicy;
     diagramGeneration?: boolean;
     studyTurnPlan?: StudyTurnPlan | null;
+    skillOrchestrationPlan?: SkillOrchestrationPlan | null;
     turnIntentKind?: AgentTurnIntentKind | null;
     locale?: SupportedLocale;
   } = {},
 ): string {
   const noteSuggestionPolicy = options.noteSuggestionPolicy ?? (allowVaultWrite ? "eligible" : "never");
   const locale = options.locale ?? "en";
+  const skillOrchestrationPlan =
+    options.skillOrchestrationPlan ??
+    buildSkillOrchestrationPlan(skillNames, {
+      skillGuideText: context.skillGuideText,
+      prompt,
+    });
+  const skillOrchestrationText = skillOrchestrationPlan ? formatSkillOrchestrationPlanForPrompt(skillOrchestrationPlan) : null;
   const studyOverlay = buildStudyLayerPromptOverlay({
     prompt,
     context,
@@ -55,6 +68,9 @@ export function buildTurnPrompt(
   const instructions = [
     "You are Codex embedded in an Obsidian vault.",
     "Prefer concise, practical markdown answers.",
+    "For mathematical expressions in visible chat replies, use readable LaTeX math notation with Markdown math delimiters.",
+    "Do not write raw ASCII math such as `6^2`, `c^2 = 25`, or bare `\\sqrt{100}` in prose; write `$6^2$`, `$c^2 = 25$`, or `$c = \\sqrt{100}$`.",
+    "For short derivations, prefer one readable equation or list items with inline math instead of code-style raw equations.",
     ...buildVisibleLanguageInstructions(locale),
     "Do not narrate internal skill selection, system policy checks, startup rules, or local instruction loading in the visible reply.",
     "Do not narrate MCP/tool plumbing in the visible reply; mention tools only when the result itself is useful to the user.",
@@ -83,7 +99,7 @@ export function buildTurnPrompt(
       ? [
           "The user is asking for a study diagram. Generate exactly one safe self-contained SVG learning diagram and append it as a fenced `obsidian-diagram` JSON block after a short visible status sentence.",
           "The `obsidian-diagram` JSON schema is: {\"title\":\"...\",\"alt\":\"...\",\"caption\":\"...\",\"targetPath\":\"optional vault-relative .md note path\",\"insertMode\":\"auto\",\"svg\":\"<svg ...>...</svg>\"}.",
-          "Use `insertMode: \"auto\"`. The plugin will save the SVG under assets/noteforge/diagrams/ and insert a wikilink into the target note.",
+          "Use `insertMode: \"auto\"`. The plugin will save the SVG under assets/vaultforgian/diagrams/ and insert a wikilink into the target note.",
           "Do not use external images, data URLs, scripts, event handlers, or foreignObject. The SVG must include width, height, and viewBox, and it must be useful as a readable study diagram.",
           "Do not emit `obsidian-suggest` for diagram turns.",
         ].join("\n")
@@ -156,6 +172,22 @@ export function buildTurnPrompt(
 
   instructions.push(...studyOverlay.instructions);
 
+  if (skillOrchestrationPlan) {
+    instructions.push("Required and auto-selected skill orchestration is active for this turn.");
+    instructions.push(
+      "Priority order for this turn: safety/source contracts > required/auto skill orchestration > StudyTurnPlan > concise reply policy.",
+    );
+    instructions.push(
+      "Read every attached required or auto-selected skill guide, then apply the skills in the `Skill orchestration plan` order. Brainstorming and planning skills shape the approach first; source-reading and analysis skills ground the answer next; execution/creation skills produce the requested work after that; verification/finishing skills check the result last.",
+    );
+    instructions.push(
+      "Do not ignore any required skill. If a required skill seems only partially relevant, apply its useful constraints as supporting guidance instead of dropping it. Auto-selected skills are high-confidence support; use them when they help the request and skip only if a safety/source contract conflicts.",
+    );
+    instructions.push(
+      "Do not reveal the skill order, skill loading, or internal orchestration in the visible reply. Do not start the visible reply with note-change status text such as `No note changes yet` unless you are reporting an actual patch/apply result.",
+    );
+  }
+
   if (context.pluginFeatureText) {
     instructions.push("A plugin feature guide is attached for this turn. Answer plugin-UI questions from that guide first.");
     instructions.push(
@@ -164,8 +196,8 @@ export function buildTurnPrompt(
   }
 
   if (mode === "skill" && skillNames.length > 0) {
-    instructions.push(`Explicit skill references present: ${skillNames.map((name) => `$${name}`).join(", ")}`);
-    instructions.push("Honor the explicit $skill references present in the user request.");
+    instructions.push(`Effective skill references present: ${skillNames.map((name) => `$${name}`).join(", ")}`);
+    instructions.push("Honor the required skill references and high-confidence auto-selected skills attached for this turn.");
   }
 
   if (context.sourceAcquisitionContractText) {
@@ -224,6 +256,7 @@ export function buildTurnPrompt(
     context.userAdaptationText,
     context.conversationSummaryText,
     context.pluginFeatureText,
+    skillOrchestrationText,
     ...studyOverlay.blocks,
     context.skillGuideText,
     context.mentionContextText,

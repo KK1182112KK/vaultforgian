@@ -23,6 +23,8 @@ import type {
   StudyMemoryUnderstoodConcept,
   StudyMemoryWeakConcept,
   StudyNextProblem,
+  StudyQuizQuestion,
+  StudyQuizSession,
   StudyWeakPoint,
   StudyWorkflowKind,
   StudyStuckPoint,
@@ -178,6 +180,89 @@ function normalizeStudyStuckPoint(point: StudyStuckPoint | null | undefined): St
     workflow: normalizeStudyContractWorkflow(point.workflow),
     createdAt,
   };
+}
+
+function normalizeStudyQuizQuestion(question: StudyQuizQuestion | null | undefined): StudyQuizQuestion | null {
+  if (!question) {
+    return null;
+  }
+  const index = typeof question.index === "number" && Number.isFinite(question.index) ? Math.floor(question.index) : 0;
+  if (index <= 0) {
+    return null;
+  }
+  const status =
+    question.status === "answered" || question.status === "reviewed" || question.status === "skipped" ? question.status : "pending";
+  return {
+    index,
+    prompt: typeof question.prompt === "string" ? question.prompt.trim() : "",
+    choices: Array.isArray(question.choices) ? question.choices.map((entry) => entry.trim()).filter(Boolean) : [],
+    answer: typeof question.answer === "string" && question.answer.trim() ? question.answer.trim() : null,
+    explanation: typeof question.explanation === "string" && question.explanation.trim() ? question.explanation.trim() : null,
+    status,
+  };
+}
+
+function normalizeStudyQuizSession(session: StudyQuizSession | null | undefined): StudyQuizSession | null {
+  if (!session) {
+    return null;
+  }
+  const id = typeof session.id === "string" ? session.id.trim() : "";
+  if (!id) {
+    return null;
+  }
+  const total = typeof session.total === "number" && Number.isFinite(session.total) ? Math.max(1, Math.floor(session.total)) : 5;
+  const currentIndex =
+    typeof session.currentIndex === "number" && Number.isFinite(session.currentIndex)
+      ? Math.max(1, Math.min(total, Math.floor(session.currentIndex)))
+      : 1;
+  const startedAt = typeof session.startedAt === "number" && Number.isFinite(session.startedAt) ? session.startedAt : Date.now();
+  const updatedAt = typeof session.updatedAt === "number" && Number.isFinite(session.updatedAt) ? session.updatedAt : startedAt;
+  const questions = Array.isArray(session.questions)
+    ? session.questions
+        .map((entry) => normalizeStudyQuizQuestion(entry))
+        .filter((entry): entry is StudyQuizQuestion => Boolean(entry))
+        .filter((entry) => entry.index <= total)
+    : [];
+  const answeredCount = questions.filter((entry) => entry.status === "answered" || entry.status === "skipped").length;
+  const lastUserResponseKind =
+    session.lastUserResponseKind === "start" ||
+    session.lastUserResponseKind === "answer" ||
+    session.lastUserResponseKind === "unknown" ||
+    session.lastUserResponseKind === "next" ||
+    session.lastUserResponseKind === "skip"
+      ? session.lastUserResponseKind
+      : null;
+  return {
+    id,
+    total,
+    currentIndex,
+    answeredCount,
+    status: session.status === "completed" ? "completed" : "active",
+    questions,
+    startedAt,
+    updatedAt,
+    ...(lastUserResponseKind ? { lastUserResponseKind } : {}),
+  };
+}
+
+function normalizeLearningCoachMode(value: unknown): NonNullable<StudyCoachState["lastCoachMode"]> | null {
+  return value === "hint_first" ||
+    value === "scaffold" ||
+    value === "explain" ||
+    value === "quiz" ||
+    value === "review" ||
+    value === "source_check" ||
+    value === "direct_answer"
+    ? value
+    : null;
+}
+
+function normalizeLearningCoachHintLevel(value: unknown): NonNullable<StudyCoachState["lastHintLevel"]> | null {
+  return value === "nudge" || value === "guided" || value === "worked_step" ? value : null;
+}
+
+function normalizeConsecutiveStuckCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
 function normalizeStudyNextProblem(problem: StudyNextProblem | null | undefined): StudyNextProblem | null {
@@ -390,7 +475,22 @@ function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | unde
         .filter((entry): entry is StudyNextProblem => Boolean(entry))
         .slice(0, MAX_STUDY_MEMORY_NEXT_PROBLEMS)
     : [];
-  if (!latestRecap && weakPointLedger.length === 0 && lastCheckpointAt === null && !latestContract && !lastStuckPoint && nextProblems.length === 0) {
+  const quizSession = normalizeStudyQuizSession(studyCoachState.quizSession ?? null);
+  const lastCoachMode = normalizeLearningCoachMode(studyCoachState.lastCoachMode ?? null);
+  const lastHintLevel = normalizeLearningCoachHintLevel(studyCoachState.lastHintLevel ?? null);
+  const consecutiveStuckCount = normalizeConsecutiveStuckCount(studyCoachState.consecutiveStuckCount ?? 0);
+  if (
+    !latestRecap &&
+    weakPointLedger.length === 0 &&
+    lastCheckpointAt === null &&
+    !latestContract &&
+    !lastStuckPoint &&
+    nextProblems.length === 0 &&
+    !quizSession &&
+    !lastCoachMode &&
+    !lastHintLevel &&
+    consecutiveStuckCount === 0
+  ) {
     return null;
   }
   return {
@@ -403,6 +503,10 @@ function normalizeStudyCoachState(studyCoachState: StudyCoachState | null | unde
     ...(latestContract ? { latestContract } : {}),
     ...(lastStuckPoint ? { lastStuckPoint } : {}),
     ...(nextProblems.length > 0 ? { nextProblems } : {}),
+    ...(quizSession ? { quizSession } : {}),
+    ...(lastCoachMode ? { lastCoachMode } : {}),
+    ...(lastHintLevel ? { lastHintLevel } : {}),
+    ...(consecutiveStuckCount > 0 ? { consecutiveStuckCount } : {}),
   };
 }
 
@@ -436,6 +540,20 @@ function cloneStudyCoachState(studyCoachState: StudyCoachState | null | undefine
       : {}),
     ...(normalized.lastStuckPoint ? { lastStuckPoint: { ...normalized.lastStuckPoint } } : {}),
     ...(normalized.nextProblems ? { nextProblems: normalized.nextProblems.map((entry) => ({ ...entry })) } : {}),
+    ...(normalized.quizSession
+      ? {
+          quizSession: {
+            ...normalized.quizSession,
+            questions: normalized.quizSession.questions.map((entry) => ({
+              ...entry,
+              choices: [...entry.choices],
+            })),
+          },
+        }
+      : {}),
+    ...(normalized.lastCoachMode ? { lastCoachMode: normalized.lastCoachMode } : {}),
+    ...(normalized.lastHintLevel ? { lastHintLevel: normalized.lastHintLevel } : {}),
+    ...(normalized.consecutiveStuckCount ? { consecutiveStuckCount: normalized.consecutiveStuckCount } : {}),
   };
 }
 

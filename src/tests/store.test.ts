@@ -829,6 +829,9 @@ describe("AgentStore", () => {
           createdAt: 777,
         },
       ],
+      lastCoachMode: "scaffold",
+      lastHintLevel: "guided",
+      consecutiveStuckCount: 2,
     });
 
     const serialized = store.serialize();
@@ -876,6 +879,9 @@ describe("AgentStore", () => {
           createdAt: 777,
         },
       ],
+      lastCoachMode: "scaffold",
+      lastHintLevel: "guided",
+      consecutiveStuckCount: 2,
     });
 
     const restored = new AgentStore(serialized, "/vault", true);
@@ -923,6 +929,9 @@ describe("AgentStore", () => {
           createdAt: 777,
         },
       ],
+      lastCoachMode: "scaffold",
+      lastHintLevel: "guided",
+      consecutiveStuckCount: 2,
     });
   });
 

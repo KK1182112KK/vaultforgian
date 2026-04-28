@@ -40,7 +40,7 @@ async function runNodeScript(
   const previousExitCode = process.exitCode;
   const previousEnv = new Map<string, string | undefined>();
   const mergedEnv: Record<string, string | undefined> = {
-    CODEX_NOTEFORGE_PROJECT_ROOT: projectRoot,
+    VAULTFORGIAN_PROJECT_ROOT: projectRoot,
     ...env,
   };
   for (const [key, value] of Object.entries(mergedEnv)) {
@@ -88,7 +88,7 @@ async function writePackageFixture(root: string, includeAvatarModule = true): Pr
     join(root, "package.json"),
     JSON.stringify(
       {
-        name: "codex-noteforge",
+        name: "vaultforgian",
         version: "0.1.0",
         scripts: {
           build: "noop",
@@ -117,7 +117,7 @@ async function writePackageFixture(root: string, includeAvatarModule = true): Pr
     JSON.stringify(
       {
         id: "obsidian-codex-study",
-        name: "Codex Noteforge",
+        name: "VaultForgian",
         version: "0.1.0",
       },
       null,
@@ -278,7 +278,7 @@ describe("release scripts", () => {
     const result = await runNodeScript(checkPackageScript, root);
 
     expect(result.exitCode).toBe(1);
-    expect(result.errors).toContain("expected product name (Codex Noteforge)");
+    expect(result.errors).toContain("expected product name (VaultForgian)");
   });
 
   it("builds styles from source files even when invoked outside the project root", async () => {
@@ -358,7 +358,7 @@ describe("release scripts", () => {
     const result = await runNodeScript(deployScript, root);
 
     expect(result.exitCode).toBe(1);
-    expect(result.errors).toContain("CODEX_NOTEFORGE_PLUGIN_DIR");
+    expect(result.errors).toContain("VAULTFORGIAN_PLUGIN_DIR");
   });
 
   it("copies the bundle into the explicit deploy target", async () => {
@@ -368,7 +368,7 @@ describe("release scripts", () => {
     await writeFile(join(sourceRoot, "assets", "note.txt"), "asset payload\n", "utf8");
 
     const result = await runNodeScript(deployScript, sourceRoot, {
-      CODEX_NOTEFORGE_PLUGIN_DIR: targetRoot,
+      VAULTFORGIAN_PLUGIN_DIR: targetRoot,
     });
 
     expect(result.exitCode).toBeUndefined();
@@ -389,7 +389,7 @@ describe("release scripts", () => {
     await writeFile(join(sourceRoot, "src", "app", "changed.ts"), "export const changed = true;\n", "utf8");
 
     const result = await runNodeScript(deployScript, sourceRoot, {
-      CODEX_NOTEFORGE_PLUGIN_DIR: targetRoot,
+      VAULTFORGIAN_PLUGIN_DIR: targetRoot,
     });
 
     expect(result.exitCode).toBe(1);

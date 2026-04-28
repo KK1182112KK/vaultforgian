@@ -45,6 +45,16 @@ const STUDY_TURN_PLAN: StudyTurnPlan = {
   recommendedSkills: [{ name: "bode-drill", reason: "Matches the weak concept." }],
   panelSignals: [{ kind: "skill", label: "bode-drill", reason: "Repeated weak concept match." }],
   visibleReplyGuidance: "Keep the answer short and natural; include at most one check question and at most one next action.",
+  learningCoachPlan: {
+    mode: "hint_first",
+    hintLevel: "nudge",
+    answerPolicy: "hint_first",
+    focusConcept: "frequency response",
+    stuckPoint: "Phase interpretation is unclear.",
+    scaffoldSteps: ["Connect the weak concept to one concrete cue before solving."],
+    checkQuestion: "What changes when only phase shifts?",
+    nextAction: "Try one Bode plot classification problem.",
+  },
 };
 
 describe("StudyLayer prompt overlays", () => {
@@ -93,8 +103,13 @@ describe("StudyLayer prompt overlays", () => {
     expect(overlay.instructions.join("\n")).toContain("obsidian-study-contract");
     expect(overlay.instructions.join("\n")).toContain("Do not show the contract JSON");
     expect(overlay.instructions.join("\n")).toContain("Do not show the StudyTurnPlan");
+    expect(overlay.instructions.join("\n")).toContain("LearningCoachPlan");
+    expect(overlay.instructions.join("\n")).toContain("one short hint");
+    expect(overlay.instructions.join("\n")).toContain("at most one scaffold");
     expect(overlay.instructions.join("\n")).toContain("at most one understanding-check question");
     expect(overlay.blocks.join("\n")).toContain("StudyTurnPlan");
+    expect(overlay.blocks.join("\n")).toContain("LearningCoachPlan");
+    expect(overlay.blocks.join("\n")).toContain("Hint level: nudge");
     expect(overlay.blocks.join("\n")).toContain("frequency response");
     expect(overlay.blocks).toContain("Study coach carry-forward:\n- Weak point: convolution.");
   });
@@ -160,6 +175,7 @@ describe("StudyLayer prompt overlays", () => {
     });
 
     expect(prompt).not.toContain("StudyTurnPlan");
+    expect(prompt).not.toContain("LearningCoachPlan");
     expect(prompt).not.toContain("at most one understanding-check question");
     expect(prompt).toContain("obsidian-patch");
   });

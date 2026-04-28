@@ -98,6 +98,117 @@ describe("StudyTurnPlanner", () => {
     expect(plan.checkQuestion).toBe("What changes when only phase shifts?");
     expect(plan.nextAction).toContain("Bode plot");
     expect(plan.recommendedSkills.map((skill) => skill.name)).toEqual(["bode-drill", "generic"]);
+    expect(plan.learningCoachPlan?.mode).toBe("hint_first");
+    expect(plan.learningCoachPlan?.hintLevel).toBe("nudge");
+    expect(plan.learningCoachPlan?.focusConcept).toBe("frequency response");
+  });
+
+  it("uses hint-first coaching as the default learning mode shape", () => {
+    const plan = buildStudyTurnPlan({
+      prompt: "Help me study this theorem.",
+      activePanel: REVIEW_PANEL,
+      panelMemory: null,
+      globalStudyMemory: null,
+      studyCoachState: null,
+      turnIntent: { kind: "answer_only" },
+      preflight: {
+        ready: true,
+        summary: "Ready",
+        missing: [],
+        advisories: [],
+        sourceStrategy: "use_note",
+        autoContextAdditions: [],
+        suggestedSkills: [],
+      },
+      selectedSkillNames: [],
+      availableSkills: [],
+      sourceState: {
+        hasAttachmentContent: false,
+        hasNoteSourcePack: true,
+        hasSelection: false,
+      },
+      learningMode: true,
+    });
+
+    expect(plan.learningCoachPlan).toEqual(
+      expect.objectContaining({
+        mode: "hint_first",
+        hintLevel: "nudge",
+        answerPolicy: "hint_first",
+      }),
+    );
+    expect(plan.learningCoachPlan?.scaffoldSteps).toHaveLength(1);
+  });
+
+  it("escalates unknown learner responses to guided or worked-step support", () => {
+    const plan = buildStudyTurnPlan({
+      prompt: "I don't know",
+      activePanel: REVIEW_PANEL,
+      panelMemory: REVIEW_MEMORY,
+      globalStudyMemory: null,
+      studyCoachState: {
+        latestRecap: null,
+        weakPointLedger: [],
+        lastCheckpointAt: null,
+        consecutiveStuckCount: 1,
+        lastHintLevel: "guided",
+      },
+      turnIntent: { kind: "answer_only" },
+      preflight: {
+        ready: true,
+        summary: "Ready",
+        missing: [],
+        advisories: [],
+        sourceStrategy: "continue_from_memory",
+        autoContextAdditions: [],
+        suggestedSkills: [],
+      },
+      selectedSkillNames: [],
+      availableSkills: [],
+      sourceState: {
+        hasAttachmentContent: false,
+        hasNoteSourcePack: true,
+        hasSelection: false,
+      },
+      learningMode: true,
+    });
+
+    expect(plan.learningCoachPlan?.mode).toBe("scaffold");
+    expect(plan.learningCoachPlan?.hintLevel).toBe("worked_step");
+    expect(plan.learningCoachPlan?.focusConcept).toBe("frequency response");
+    expect(plan.learningCoachPlan?.stuckPoint).toBe("Phase interpretation is unclear.");
+  });
+
+  it("uses direct-answer coach mode only when the user asks for it", () => {
+    const plan = buildStudyTurnPlan({
+      prompt: "Just give me the answer: what is the hypotenuse?",
+      activePanel: REVIEW_PANEL,
+      panelMemory: null,
+      globalStudyMemory: null,
+      studyCoachState: null,
+      turnIntent: { kind: "answer_only" },
+      preflight: {
+        ready: true,
+        summary: "Ready",
+        missing: [],
+        advisories: [],
+        sourceStrategy: "use_note",
+        autoContextAdditions: [],
+        suggestedSkills: [],
+      },
+      selectedSkillNames: [],
+      availableSkills: [],
+      sourceState: {
+        hasAttachmentContent: false,
+        hasNoteSourcePack: true,
+        hasSelection: false,
+      },
+      learningMode: true,
+    });
+
+    expect(plan.learningCoachPlan?.mode).toBe("direct_answer");
+    expect(plan.learningCoachPlan?.answerPolicy).toBe("answer_first");
+    expect(plan.learningCoachPlan?.hintLevel).toBe("worked_step");
   });
 
   it("asks for the problem source instead of solving when homework lacks problem text", () => {
@@ -203,5 +314,53 @@ describe("StudyTurnPlanner", () => {
     expect(plan.teachingMode).toBe("coach");
     expect(plan.focusConcepts).toEqual(["Laplace transform setup"]);
     expect(plan.checkQuestion).toBe("Where does the initial condition enter?");
+  });
+
+  it("keeps an active quiz session in quiz mode even after an unknown answer", () => {
+    const plan = buildStudyTurnPlan({
+      prompt: "I don't know",
+      activePanel: REVIEW_PANEL,
+      panelMemory: null,
+      globalStudyMemory: null,
+      studyCoachState: {
+        latestRecap: null,
+        weakPointLedger: [],
+        lastCheckpointAt: null,
+        quizSession: {
+          id: "quiz-1",
+          total: 5,
+          currentIndex: 1,
+          answeredCount: 0,
+          status: "active",
+          questions: [],
+          startedAt: 1,
+          updatedAt: 2,
+          lastUserResponseKind: "unknown",
+        },
+      },
+      turnIntent: { kind: "answer_only" },
+      preflight: {
+        ready: true,
+        summary: "Ready",
+        missing: [],
+        advisories: [],
+        sourceStrategy: "use_note",
+        autoContextAdditions: [],
+        suggestedSkills: [],
+      },
+      selectedSkillNames: [],
+      availableSkills: [],
+      sourceState: {
+        hasAttachmentContent: false,
+        hasNoteSourcePack: true,
+        hasSelection: false,
+      },
+      learningMode: true,
+    });
+
+    expect(plan.teachingMode).toBe("quiz");
+    expect(plan.learningCoachPlan?.mode).toBe("quiz");
+    expect(plan.learningCoachPlan?.hintLevel).toBe("guided");
+    expect(plan.learningCoachPlan?.answerPolicy).toBe("hint_first");
   });
 });

@@ -3,6 +3,15 @@ import type { RuntimeMode, WaitingFocus, WaitingPhase, WaitingState } from "../m
 export interface WaitingCopyOptions {
   focus?: WaitingFocus | null;
   locale?: "en" | "ja" | null;
+  skillUsage?: WaitingSkillUsage | null;
+}
+
+export interface WaitingSkillUsage {
+  requiredSkillNames?: readonly string[] | null;
+  autoSelectedSkillNames?: readonly string[] | null;
+  orderedSkillNames?: readonly string[] | null;
+  primarySkillName?: string | null;
+  skillCount?: number | null;
 }
 
 const WAITING_COPY: Record<"en" | "ja", Record<WaitingPhase, string[]>> = {
@@ -139,10 +148,60 @@ function normalizeWaitingLocale(locale: "en" | "ja" | null | undefined): "en" | 
   return locale === "ja" ? "ja" : "en";
 }
 
+function normalizeSkillName(value: string | null | undefined): string | null {
+  const normalized = value?.trim().replace(/^\/+/, "") ?? "";
+  return normalized || null;
+}
+
+function uniqueSkillNames(values: readonly (string | null | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeSkillName(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function resolveSkillUsageSummary(
+  skillUsage: WaitingSkillUsage | null | undefined,
+  locale: "en" | "ja",
+): string | null {
+  if (!skillUsage) {
+    return null;
+  }
+  const required = uniqueSkillNames(skillUsage.requiredSkillNames ?? []);
+  const auto = uniqueSkillNames(skillUsage.autoSelectedSkillNames ?? []);
+  const ordered = uniqueSkillNames([...(skillUsage.orderedSkillNames ?? []), ...required, ...auto]);
+  const primary = normalizeSkillName(skillUsage.primarySkillName) ?? ordered[0] ?? required[0] ?? auto[0] ?? null;
+  const count =
+    typeof skillUsage.skillCount === "number" && Number.isFinite(skillUsage.skillCount) && skillUsage.skillCount > 0
+      ? skillUsage.skillCount
+      : uniqueSkillNames([primary, ...ordered]).length;
+  if (!primary || count <= 0) {
+    return null;
+  }
+  const visibleSkills = uniqueSkillNames([primary, ...ordered.filter((skillName) => skillName !== primary)]).slice(0, 2);
+  const more = Math.max(0, count - visibleSkills.length);
+  const suffix = more > 0 ? ` +${more}` : "";
+  const skillLabel = visibleSkills.map((skillName) => `/${skillName}`).join(", ");
+  const autoOnly = required.length === 0 && auto.length > 0;
+  if (locale === "ja") {
+    return `${autoOnly ? "提案Skill使用中" : "Skill使用中"}: ${skillLabel}${suffix}`;
+  }
+  return `${autoOnly ? "Using suggested skills" : "Using skills"}: ${skillLabel}${suffix}`;
+}
+
 function stripSkillPrefix(text: string): string {
   return text
     .replace(/^Calling skill\s*·\s*/u, "")
     .replace(/^skill を呼び出しています\s*·\s*/u, "")
+    .replace(/^Using(?: suggested)?\s+\/.+?\s*·\s*/u, "")
+    .replace(/^(?:Skill使用中|提案Skill使用中):\s*\/.+?\s*·\s*/u, "")
     .trim();
 }
 
@@ -184,15 +243,46 @@ export function pickWaitingCopy(
   entropy = Date.now(),
   options: WaitingCopyOptions = {},
 ): string {
-  if (phase === "tools" && options.focus) {
-    return FOCUSED_WAITING_COPY[options.focus][normalizeWaitingLocale(options.locale)];
-  }
   const locale = normalizeWaitingLocale(options.locale);
+  const skillSummary = resolveSkillUsageSummary(options.skillUsage, locale);
+  if (phase === "tools" && options.focus) {
+    const focusedPhrase = FOCUSED_WAITING_COPY[options.focus][locale];
+    return skillSummary ? `${skillSummary} · ${focusedPhrase}` : focusedPhrase;
+  }
   const phrases = WAITING_COPY[locale][phase];
-  const prefix = mode === "skill" && phase === "tools" ? (locale === "en" ? "Calling skill" : "skill を呼び出しています") : "";
+  const prefix = skillSummary ?? (mode === "skill" && phase === "tools" ? (locale === "en" ? "Calling skill" : "skill を呼び出しています") : "");
   const seed = hash(`${phase}:${mode}:${entropy}`);
   const phrase = phrases[seed % phrases.length] ?? phrases[0] ?? (locale === "en" ? "Thinking" : "考えています");
   return prefix ? `${prefix} · ${phrase}` : phrase;
+}
+
+export function formatWaitingSkillUsageTitle(
+  waitingState: WaitingState | null | undefined,
+  locale: "en" | "ja" = "en",
+): string | null {
+  if (!waitingState) {
+    return null;
+  }
+  const required = uniqueSkillNames(waitingState.requiredSkillNames ?? []);
+  const auto = uniqueSkillNames(waitingState.autoSelectedSkillNames ?? []);
+  if (required.length === 0 && auto.length === 0) {
+    return null;
+  }
+  const format = (values: readonly string[]) => values.map((value) => `/${value}`).join(", ");
+  if (locale === "ja") {
+    return [
+      required.length > 0 ? `必須: ${format(required)}` : null,
+      auto.length > 0 ? `自動: ${format(auto)}` : null,
+    ]
+      .filter((entry): entry is string => Boolean(entry))
+      .join("。");
+  }
+  return [
+    required.length > 0 ? `Required: ${format(required)}` : null,
+    auto.length > 0 ? `Auto: ${format(auto)}` : null,
+  ]
+    .filter((entry): entry is string => Boolean(entry))
+    .join(". ");
 }
 
 export function resolveWaitingStateText(
@@ -214,5 +304,6 @@ export function resolveWaitingStateText(
   return pickWaitingCopy(waitingState.phase, waitingState.mode ?? fallbackMode, hash(waitingState.text), {
     focus,
     locale: nextLocale,
+    skillUsage: waitingState,
   });
 }

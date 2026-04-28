@@ -4,10 +4,16 @@ import { CHAT_AVATAR_DATA_URL } from "../../generated/chatAvatar";
 import type { ChatMessage, EditOutcome, PendingApproval, ToolCallRecord, WorkspaceState } from "../../model/types";
 import { normalizeVisibleUserPromptText } from "../../util/assistantChatter";
 import { extractAssistantProposals } from "../../util/assistantProposals";
+import {
+  normalizeAssistantMathForMarkdown,
+  prepareChatMarkdownForMathRender,
+  renderChatMathInElement,
+  renderPreparedChatMathInElement,
+} from "../../util/chatMath";
 import { TRANSCRIPT_SOFT_COLLAPSE_WINDOW } from "../../util/conversationCompaction";
 import { clampTranscriptScrollTop, shouldStickTranscriptToBottom } from "../../util/transcriptScroll";
 import { buildTranscriptEntries } from "../../util/transcriptEntries";
-import { resolveWaitingStateText } from "../../util/waiting";
+import { formatWaitingSkillUsageTitle, resolveWaitingStateText } from "../../util/waiting";
 import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "./types";
 import { buildStatusBarDisplayState, buildTranscriptRenderState } from "./viewModels/workspaceViewModels";
 import {
@@ -382,13 +388,27 @@ export class TranscriptRenderer {
     }
 
     const markdownEl = bodyEl.createDiv({ cls: "obsidian-codex__message-markdown" });
-    void MarkdownRenderer.render(
+    const preparedChatMath =
+      message.kind === "assistant" ? prepareChatMarkdownForMathRender(this.getRenderableMessageText(context, message)) : null;
+    const renderPromise = MarkdownRenderer.render(
       context.app,
-      this.getRenderableMessageText(context, message),
+      preparedChatMath?.markdown ?? this.getRenderableMessageText(context, message),
       markdownEl,
       "",
       this.callbacks.markdownComponent,
     );
+    if (preparedChatMath) {
+      renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders);
+    } else {
+      renderChatMathInElement(markdownEl);
+    }
+    void renderPromise.then(() => {
+      if (preparedChatMath) {
+        renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders);
+      } else {
+        renderChatMathInElement(markdownEl);
+      }
+    });
 
     if (
       message.kind === "assistant" &&
@@ -639,9 +659,14 @@ export class TranscriptRenderer {
     const avatar = msgEl.createDiv({ cls: "obsidian-codex__avatar obsidian-codex__avatar-assistant" });
     this.applyAssistantAvatar(avatar);
     const body = msgEl.createDiv({ cls: "obsidian-codex__message-content obsidian-codex__message-content--waiting" });
+    const skillTitle = formatWaitingSkillUsageTitle(waitingState, context.locale);
+    if (skillTitle) {
+      body.title = skillTitle;
+    }
     body.createSpan({
       cls: "obsidian-codex__waiting-copy",
       text: resolveWaitingStateText(waitingState, context.activeTab?.runtimeMode ?? "normal", context.locale),
+      attr: skillTitle ? { title: skillTitle } : undefined,
     });
     const dotsEl = body.createSpan({ cls: "obsidian-codex__waiting-dots" });
     for (let index = 0; index < 3; index += 1) {
@@ -734,16 +759,14 @@ export class TranscriptRenderer {
           ? rewriteQuestion
           : body;
 
-    if (!editStatusLine) {
-      return bodyWithQuestion;
-    }
-    if (!bodyWithQuestion.trim()) {
-      return editStatusLine;
-    }
-    if (bodyWithQuestion.startsWith(editStatusLine)) {
-      return bodyWithQuestion;
-    }
-    return `${editStatusLine}\n\n${bodyWithQuestion}`;
+    const renderedText = !editStatusLine
+      ? bodyWithQuestion
+      : !bodyWithQuestion.trim()
+        ? editStatusLine
+        : bodyWithQuestion.startsWith(editStatusLine)
+          ? bodyWithQuestion
+          : `${editStatusLine}\n\n${bodyWithQuestion}`;
+    return normalizeAssistantMathForMarkdown(renderedText);
   }
 
   private createApprovalButton(

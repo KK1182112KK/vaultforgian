@@ -54,6 +54,49 @@ describe("ThreadEventReducer", () => {
     expect(waiting.at(-1)?.phase).toBe("finalizing");
   });
 
+  it("does not overwrite an earlier assistant message when later turns reuse timestamp and phase", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer } = createReducer(store);
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "response_item",
+        timestamp: "2026-04-09T14:00:00Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "Quiz 1/5\n\nFirst question.",
+        },
+      },
+      "visible",
+      "turn-1",
+    );
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "response_item",
+        timestamp: "2026-04-09T14:00:00Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "Quiz 2/5\n\nSecond question.",
+        },
+      },
+      "visible",
+      "turn-2",
+    );
+
+    const messages = store.getState().tabs.find((tab) => tab.id === tabId)?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(messages.map((message) => message.text)).toEqual(["Quiz 1/5\n\nFirst question.", "Quiz 2/5\n\nSecond question."]);
+  });
+
   it("can queue assistant artifacts without inserting visible transcript messages", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

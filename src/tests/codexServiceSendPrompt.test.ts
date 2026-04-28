@@ -15,6 +15,8 @@ import {
   CALLOUT_MATH_SAMPLE,
 } from "./fixtures/calloutMathFixture";
 import { createEmptyAccountUsageSummary, createEmptyUsageSummary } from "../util/usage";
+import type { InstalledSkillDefinition } from "../util/skillCatalog";
+import type { SkillOrchestrationPlan } from "../util/skillOrchestration";
 
 const tempRoots: string[] = [];
 
@@ -171,6 +173,9 @@ type PrivateRunTurn = (
   watchdogRecoveryAttempted?: boolean,
   turnId?: string | null,
   userMessageId?: string | null,
+  proposalRepairPhase?: boolean,
+  proposalRepairFailureMode?: "error" | "silent",
+  skillOrchestrationPlan?: SkillOrchestrationPlan | null,
 ) => Promise<void>;
 
 function createNoteTurnContext(vaultRoot: string, overrides: Partial<TurnContextSnapshot> = {}): TurnContextSnapshot {
@@ -294,6 +299,7 @@ describe("CodexService sendPrompt skill context", () => {
     if (!tabId) {
       throw new Error("Missing tab");
     }
+    service.setTabFastMode(tabId, true);
 
     vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
     vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
@@ -352,7 +358,7 @@ describe("CodexService sendPrompt skill context", () => {
       images: [join(vaultRoot, "figure.png")],
       model: "gpt-5.4",
       reasoningEffort: "xhigh",
-      fastMode: false,
+      fastMode: true,
       contextBundle: expect.objectContaining({
         vaultRoot,
         activeNote: expect.objectContaining({ path: "notes/current.md" }),
@@ -531,18 +537,28 @@ describe("CodexService sendPrompt skill context", () => {
 
     const request = runCodexStreamSpy.mock.calls[0]?.[0] as { prompt?: string };
     expect(request.prompt).toContain("StudyTurnPlan");
+    expect(request.prompt).toContain("Skill orchestration plan");
+    expect(request.prompt).toContain("$review-coach [analyze]");
     expect(request.prompt).toContain("frequency response");
     expect(request.prompt).toContain("at most one understanding-check question");
   });
 
-  it("hydrates panel-selected skills before building the turn context", async () => {
+  it("hydrates all panel-selected skills before building the turn context", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-sendprompt-"));
     tempRoots.push(vaultRoot);
     const extraSkillRoot = join(vaultRoot, "extra-skills");
-    const skillDir = join(extraSkillRoot, "panel-test-skill");
-    const skillPath = join(skillDir, "SKILL.md");
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(skillPath, "# Panel Test Skill\nUse this guide.", "utf8");
+    const brainstormingDir = join(extraSkillRoot, "brainstorming");
+    const deepReadDir = join(extraSkillRoot, "deep-read");
+    const academicPaperDir = join(extraSkillRoot, "academic-paper");
+    await mkdir(brainstormingDir, { recursive: true });
+    await mkdir(deepReadDir, { recursive: true });
+    await mkdir(academicPaperDir, { recursive: true });
+    const brainstormingPath = join(brainstormingDir, "SKILL.md");
+    const deepReadPath = join(deepReadDir, "SKILL.md");
+    const academicPaperPath = join(academicPaperDir, "SKILL.md");
+    await writeFile(brainstormingPath, "# Brainstorming\nGenerate options first.", "utf8");
+    await writeFile(deepReadPath, "# Deep Read\nRead the source deeply.", "utf8");
+    await writeFile(academicPaperPath, "# Academic Paper\nWrite the academic paper output.", "utf8");
 
     const settings: PluginSettings = {
       ...DEFAULT_SETTINGS,
@@ -556,15 +572,27 @@ describe("CodexService sendPrompt skill context", () => {
       async () => {},
       async () => {},
     );
-    const panelSkillDefinition = {
-      name: "panel-test-skill",
-      description: "Panel-only skill.",
-      path: skillPath,
-    };
+    const panelSkillDefinitions = [
+      {
+        name: "brainstorming",
+        description: "Generate options before work.",
+        path: brainstormingPath,
+      },
+      {
+        name: "deep-read",
+        description: "Read source material deeply.",
+        path: deepReadPath,
+      },
+      {
+        name: "academic-paper",
+        description: "Academic paper writing skill.",
+        path: academicPaperPath,
+      },
+    ];
 
     vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
     const refreshSpy = vi.spyOn(service as never, "refreshCodexCatalogs").mockImplementation(async () => {
-      (service as unknown as { installedSkillCatalog: typeof panelSkillDefinition[] }).installedSkillCatalog = [panelSkillDefinition];
+      (service as unknown as { installedSkillCatalog: typeof panelSkillDefinitions }).installedSkillCatalog = panelSkillDefinitions;
     });
     const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
 
@@ -573,8 +601,8 @@ describe("CodexService sendPrompt skill context", () => {
       throw new Error("Missing tab");
     }
 
-    service.store.setStudyRecipes([createPanel("panel-1", ["panel-test-skill"])]);
-    service.store.setActiveStudyPanel(tabId, "panel-1", ["panel-test-skill"]);
+    service.store.setStudyRecipes([createPanel("panel-1", ["brainstorming", "deep-read", "academic-paper"])]);
+    service.store.setActiveStudyPanel(tabId, "panel-1", ["academic-paper", "brainstorming", "deep-read"]);
 
     await service.sendPrompt(tabId, "Explain this paper carefully.");
 
@@ -583,12 +611,172 @@ describe("CodexService sendPrompt skill context", () => {
 
     const skillNames = runTurnSpy.mock.calls[0]?.[4] as string[];
     const turnContext = runTurnSpy.mock.calls[0]?.[5] as TurnContextSnapshot;
-    expect(skillNames).toEqual(["panel-test-skill"]);
-    expect(turnContext.skillGuideText).toContain("Skill guide: $panel-test-skill");
-    expect(turnContext.skillGuideText).toContain("# Panel Test Skill\nUse this guide.");
+    expect(skillNames).toEqual(["academic-paper", "brainstorming", "deep-read"]);
+    expect(turnContext.skillGuideText).toContain("Skill guide: $academic-paper");
+    expect(turnContext.skillGuideText).toContain("Skill guide: $brainstorming");
+    expect(turnContext.skillGuideText).toContain("Skill guide: $deep-read");
+    expect(turnContext.skillGuideText).toContain("# Academic Paper\nWrite the academic paper output.");
     const userMessage = service.getActiveTab()?.messages.find((message) => message.kind === "user");
-    expect(userMessage?.meta?.effectiveSkillsCsv).toBe("panel-test-skill");
-    expect(userMessage?.meta?.effectiveSkillCount).toBe(1);
+    expect(userMessage?.meta?.effectiveSkillsCsv).toBe("academic-paper,brainstorming,deep-read");
+    expect(userMessage?.meta?.effectiveSkillCount).toBe(3);
+  });
+
+  it("auto-selects high-confidence panel-linked user skills without explicit selection", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-auto-skills-"));
+    tempRoots.push(vaultRoot);
+    const extraSkillRoot = join(vaultRoot, "extra-skills");
+    const skillNames = ["brainstorming", "deep-read", "academic-paper", "verification-before-completion"];
+    const skillDefinitions: InstalledSkillDefinition[] = [];
+    for (const skillName of skillNames) {
+      const skillDir = join(extraSkillRoot, skillName);
+      await mkdir(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      const body =
+        skillName === "brainstorming"
+          ? "# Brainstorming\nGenerate options first."
+          : skillName === "deep-read"
+            ? "# Deep Read\nRead lecture source material deeply."
+            : skillName === "academic-paper"
+              ? "# Academic Paper\nCreate the requested study output."
+              : "# Verification Before Completion\nVerify the answer before finishing.";
+      await writeFile(skillPath, body, "utf8");
+      skillDefinitions.push({
+        name: skillName,
+        description: body.replace(/\n/gu, " "),
+        path: skillPath,
+      });
+    }
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => ({ ...DEFAULT_SETTINGS, extraSkillRoots: [extraSkillRoot] }),
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    vi.spyOn(service as never, "refreshCodexCatalogs").mockImplementation(async () => {
+      (service as unknown as { installedSkillCatalog: typeof skillDefinitions }).installedSkillCatalog = skillDefinitions;
+    });
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.setStudyRecipes([createPanel("panel-1", skillNames)]);
+    service.store.setActiveStudyPanel(tabId, "panel-1", []);
+
+    await service.sendPrompt(tabId, "Help me study this lecture material.");
+
+    expect(runTurnSpy).toHaveBeenCalledTimes(1);
+    expect(runTurnSpy.mock.calls[0]?.[2]).toBe("skill");
+    expect(runTurnSpy.mock.calls[0]?.[4]).toEqual(["brainstorming", "deep-read", "academic-paper"]);
+    const plan = runTurnSpy.mock.calls[0]?.[19] as { autoSelectedSkillNames?: string[]; skippedSkillNames?: string[] } | null;
+    expect(plan?.autoSelectedSkillNames).toEqual(["brainstorming", "deep-read", "academic-paper"]);
+    expect(plan?.skippedSkillNames).toContain("verification-before-completion");
+    const userMessage = service.getActiveTab()?.messages.find((message) => message.kind === "user");
+    expect(userMessage?.meta?.effectiveSkillsCsv).toBe("brainstorming,deep-read,academic-paper");
+    expect(userMessage?.meta?.effectiveSkillCount).toBe(3);
+  });
+
+  it("stores required and auto-selected skill usage in waiting states across phase changes", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-waiting-skills-"));
+    tempRoots.push(vaultRoot);
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const plan: SkillOrchestrationPlan = {
+      selectedSkills: ["brainstorming", "lecture-read", "paper-visualizer"],
+      requiredSkillNames: ["brainstorming", "lecture-read"],
+      autoSelectedSkillNames: ["paper-visualizer"],
+      orderedSteps: [
+        { skillName: "brainstorming", phase: "brainstorm", reason: "Use first." },
+        { skillName: "lecture-read", phase: "source_read", reason: "Read source." },
+        { skillName: "paper-visualizer", phase: "execute", reason: "Create visual support." },
+      ],
+      primarySkillNames: ["brainstorming", "lecture-read", "paper-visualizer"],
+      supportingSkillNames: [],
+      deferredSkillNames: [],
+      candidateScores: [],
+      selectionReasons: {},
+      confidence: "high",
+      skippedSkillNames: [],
+      visiblePolicy: "Do not narrate skill loading.",
+    };
+    const privateService = service as unknown as {
+      buildWaitingSkillUsageMetadata(plan: SkillOrchestrationPlan, skillNames: string[]): object | null;
+      createWaitingState(phase: "boot" | "reasoning", mode: "skill", focus: null, usage: object | null): {
+        phase: "boot" | "reasoning";
+        text: string;
+        requiredSkillNames?: string[];
+        autoSelectedSkillNames?: string[];
+        orderedSkillNames?: string[];
+      };
+      setWaitingPhase(tabId: string, phase: "reasoning", mode: "skill"): void;
+    };
+    const usage = privateService.buildWaitingSkillUsageMetadata(plan, ["brainstorming", "lecture-read", "paper-visualizer"]);
+    const waitingState = privateService.createWaitingState("boot", "skill", null, usage);
+
+    expect(waitingState.requiredSkillNames).toEqual(["brainstorming", "lecture-read"]);
+    expect(waitingState.autoSelectedSkillNames).toEqual(["paper-visualizer"]);
+    expect(waitingState.orderedSkillNames).toEqual(["brainstorming", "lecture-read", "paper-visualizer"]);
+    expect(waitingState.text).toMatch(/^Using skills: \/brainstorming, \/lecture-read \+1 · /u);
+
+    service.store.setWaitingState(tabId, waitingState);
+    privateService.setWaitingPhase(tabId, "reasoning", "skill");
+
+    const nextWaitingState = service.getActiveTab()?.waitingState;
+    expect(nextWaitingState?.requiredSkillNames).toEqual(["brainstorming", "lecture-read"]);
+    expect(nextWaitingState?.autoSelectedSkillNames).toEqual(["paper-visualizer"]);
+    expect(nextWaitingState?.text).toMatch(/^Using skills: \/brainstorming, \/lecture-read \+1 · /u);
+  });
+
+  it("blocks unresolved panel-selected skills without clearing the draft", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-missing-skill-"));
+    tempRoots.push(vaultRoot);
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    vi.spyOn(service as never, "refreshCodexCatalogs").mockImplementation(async () => {
+      (service as unknown as { installedSkillCatalog: unknown[] }).installedSkillCatalog = [];
+    });
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.setStudyRecipes([createPanel("panel-1", ["missing-skill"])]);
+    service.store.setActiveStudyPanel(tabId, "panel-1", ["missing-skill"]);
+    service.store.setDraft(tabId, "Explain this paper carefully.");
+
+    await service.sendPrompt(tabId, "Explain this paper carefully.");
+
+    expect(runTurnSpy).not.toHaveBeenCalled();
+    expect(service.getActiveTab()?.draft).toBe("Explain this paper carefully.");
+    const warning = service.getActiveTab()?.messages.find((message) => message.kind === "system");
+    expect(warning?.text).toContain("Selected skill not found: /missing-skill");
+    expect(warning?.meta?.tone).toBe("warning");
   });
 
   it("syncs learning mode across open tabs", async () => {
@@ -1185,13 +1373,13 @@ describe("CodexService sendPrompt skill context", () => {
     )["syncAssistantArtifacts"];
     await syncAssistantArtifacts.call(service, tabId, "assistant-diagram-1", assistantText);
 
-    expect(writable.files.get("assets/noteforge/diagrams/average-load-power.svg")).toContain("<svg");
+    expect(writable.files.get("assets/vaultforgian/diagrams/average-load-power.svg")).toContain("<svg");
     expect(writable.files.get("notes/current.md")).toContain("## Generated visuals");
-    expect(writable.files.get("notes/current.md")).toContain("![[assets/noteforge/diagrams/average-load-power.svg]]");
+    expect(writable.files.get("notes/current.md")).toContain("![[assets/vaultforgian/diagrams/average-load-power.svg]]");
     expect(writable.files.get("notes/current.md")).toContain("*Average load power follows from the RMS voltage across the load.*");
     expect(service.getActiveTab()?.generatedDiagrams).toEqual([
       expect.objectContaining({
-        assetPath: "assets/noteforge/diagrams/average-load-power.svg",
+        assetPath: "assets/vaultforgian/diagrams/average-load-power.svg",
         targetNotePath: "notes/current.md",
         status: "inserted",
       }),
@@ -1199,6 +1387,103 @@ describe("CodexService sendPrompt skill context", () => {
     expect(service.getActiveTab()?.messages.at(-1)).toMatchObject({
       kind: "system",
       meta: { tone: "success" },
+    });
+  });
+
+  it("stores Learning Mode coach state and escalates repeated stuck responses", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-learning-coach-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.setTabLearningMode(tabId, true);
+    service.store.setTabStudyWorkflow(tabId, "review");
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi.spyOn(service as never, "runCodexStream").mockImplementation(async (request) => {
+      const callbacks = request as {
+        onJsonEvent: (event: unknown) => void;
+      };
+      callbacks.onJsonEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "Try one small hint first.",
+        },
+      });
+      return { threadId: "thread-learning-coach" };
+    });
+
+    const context = createNoteTurnContext(vaultRoot, {
+      studyWorkflow: "review",
+      workflowText: "Active study workflow: Review\nResponse contract:",
+    });
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "I don't know",
+      "normal",
+      "chat",
+      [],
+      context,
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "I don't know",
+      false,
+      false,
+      "turn-learning-coach-1",
+      "user-learning-coach-1",
+    );
+
+    expect(service.getActiveTab()?.studyCoachState).toMatchObject({
+      lastCoachMode: "scaffold",
+      lastHintLevel: "guided",
+      consecutiveStuckCount: 1,
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "I don't know",
+      "normal",
+      "chat",
+      [],
+      context,
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "I don't know",
+      false,
+      false,
+      "turn-learning-coach-2",
+      "user-learning-coach-2",
+    );
+
+    const secondRuntimePrompt = (runCodexStreamSpy.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt ?? "";
+    expect(secondRuntimePrompt).toContain("LearningCoachPlan");
+    expect(secondRuntimePrompt).toContain("Hint level: worked_step");
+    expect(service.getActiveTab()?.studyCoachState).toMatchObject({
+      lastCoachMode: "scaffold",
+      lastHintLevel: "worked_step",
+      consecutiveStuckCount: 2,
     });
   });
 
@@ -1240,7 +1525,7 @@ describe("CodexService sendPrompt skill context", () => {
     await syncAssistantArtifacts.call(service, tabId, "assistant-diagram-selection", assistantText);
 
     expect(writable.files.get("notes/current.md")).toContain(
-      "Selected equation\n\n![[assets/noteforge/diagrams/signal-chain.svg]]\n\nAfter",
+      "Selected equation\n\n![[assets/vaultforgian/diagrams/signal-chain.svg]]\n\nAfter",
     );
   });
 
@@ -1273,9 +1558,9 @@ describe("CodexService sendPrompt skill context", () => {
     )["syncAssistantArtifacts"];
     await syncAssistantArtifacts.call(service, tabId, "assistant-diagram-no-target", assistantText);
 
-    expect(writable.files.get("assets/noteforge/diagrams/standalone-concept-map.svg")).toContain("<svg");
+    expect(writable.files.get("assets/vaultforgian/diagrams/standalone-concept-map.svg")).toContain("<svg");
     expect(service.getActiveTab()?.generatedDiagrams?.[0]).toMatchObject({
-      assetPath: "assets/noteforge/diagrams/standalone-concept-map.svg",
+      assetPath: "assets/vaultforgian/diagrams/standalone-concept-map.svg",
       targetNotePath: null,
       status: "saved",
     });

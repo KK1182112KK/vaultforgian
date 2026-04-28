@@ -7,3 +7,5 @@ coverage
 release/
 site/vite.config.js
 site/vite.config.d.ts
+site/dist/demo/obsidian-noteforge-demo.mp4
+site/public/demo/obsidian-noteforge-demo.mp4

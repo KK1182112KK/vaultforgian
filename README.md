@@ -1,4 +1,4 @@
-# Codex Noteforge
+# VaultForgian
 
 A desktop-only Obsidian plugin that wires the official [Codex CLI](https://github.com/openai/codex) into your vault as a study-and-editing assistant. It gives you persistent chat tabs backed by real Codex threads, a **Plan / Chat** toggle for the same conversation, a reviewable patch queue for note edits, and session-aware ingest flows for papers and lecture material.
 
@@ -47,33 +47,33 @@ Before installing the plugin, you need:
 
 ### Naming and compatibility
 
-The product name is **Codex Noteforge**. The stable Obsidian plugin id and install folder remain `obsidian-codex-study` for early beta compatibility, so existing installs, settings, and BRAT/manual update paths keep working without a rename migration.
+The product name is **VaultForgian**. The stable Obsidian plugin id and install folder remain `obsidian-codex-study` for early beta compatibility, so existing installs, settings, and BRAT/manual update paths keep working without a rename migration.
 
 ### Via BRAT (recommended during beta)
 
 1. Install the **BRAT** (Beta Reviewers Auto-update Tool) community plugin in Obsidian.
-2. Open BRAT settings → *Add Beta Plugin* → paste `https://github.com/KK1182112KK/codex-noteforge`.
-3. Enable **Codex Noteforge** under *Community plugins*.
+2. Open BRAT settings → *Add Beta Plugin* → paste `https://github.com/KK1182112KK/vaultforgian`.
+3. Enable **VaultForgian** under *Community plugins*.
 
 ### Manual
 
-1. Download `obsidian-codex-study-v<version>.zip` from the latest [release](https://github.com/KK1182112KK/codex-noteforge/releases).
+1. Download `obsidian-codex-study-v<version>.zip` from the latest [release](https://github.com/KK1182112KK/vaultforgian/releases).
 2. Extract the folder `obsidian-codex-study/` into `<your-vault>/.obsidian/plugins/`.
-3. Restart Obsidian, open *Settings → Community plugins*, enable **Codex Noteforge**.
+3. Restart Obsidian, open *Settings → Community plugins*, enable **VaultForgian**.
 
 The release also ships standalone `manifest.json`, `main.js`, and `styles.css` assets if you prefer a manual copy instead of the zip.
 
 ### From source
 
 ```bash
-git clone https://github.com/KK1182112KK/codex-noteforge.git
-cd codex-noteforge
+git clone https://github.com/KK1182112KK/vaultforgian.git
+cd vaultforgian
 npm install
 npm run build
-CODEX_NOTEFORGE_PLUGIN_DIR="<your-vault>/.obsidian/plugins/obsidian-codex-study" npm run deploy
+VAULTFORGIAN_PLUGIN_DIR="<your-vault>/.obsidian/plugins/obsidian-codex-study" npm run deploy
 ```
 
-`npm run build` now produces the production bundle only. Set `CODEX_NOTEFORGE_PLUGIN_DIR` explicitly before `npm run deploy`; the deploy script no longer guesses a local vault path. The plugin folder itself remains `.obsidian/plugins/obsidian-codex-study/` for install compatibility.
+`npm run build` now produces the production bundle only. Set `VAULTFORGIAN_PLUGIN_DIR` explicitly before `npm run deploy`; the deploy script no longer guesses a local vault path. `CODEX_NOTEFORGE_PLUGIN_DIR` is still accepted as a legacy alias. The plugin folder itself remains `.obsidian/plugins/obsidian-codex-study/` for install compatibility.
 
 For friend testing and beta feedback, see [TESTING.md](./TESTING.md).
 
@@ -82,7 +82,7 @@ For friend testing and beta feedback, see [TESTING.md](./TESTING.md).
 ## Quick start
 
 1. Run `codex login` in your terminal if you haven't already. Verify with `codex --version`.
-2. Open the plugin's workspace view (**Command palette → "Open Codex Noteforge workspace"**).
+2. Open the plugin's workspace view (**Command palette → "Open VaultForgian workspace"**).
 3. Type a request — e.g. "Summarize the key equations in this paper."
 4. If the request implies editing a note ("clean up the formatting", "convert all math to LaTeX", "add a section on X"), Codex will emit a patch block that appears as an **approval panel**. Review the diff and click **Apply**.
 5. Use the **Plan / Chat** toggle in the composer to switch modes. In plan mode, Codex asks clarifying questions instead of editing.
@@ -93,7 +93,7 @@ For friend testing and beta feedback, see [TESTING.md](./TESTING.md).
 
 ## Settings
 
-Open *Settings → Codex Noteforge*:
+Open *Settings → VaultForgian*:
 
 - **Codex runtime** — choose whether the plugin launches Codex from the native desktop environment or from WSL.
 - **Codex executable path** — the `codex` executable to launch for the selected runtime. Leave this as `codex` to auto-detect a standard install. Absolute executable paths are supported too, including Windows-native `codex.cmd` / `codex.exe`.
@@ -140,7 +140,7 @@ npm run lint
 npm run build:avatar  # regenerate tracked avatar module (requires Python 3 + Pillow)
 npm run build      # production bundle only
 npm run release:bundle
-npm run deploy     # requires CODEX_NOTEFORGE_PLUGIN_DIR to be set explicitly
+npm run deploy     # requires VAULTFORGIAN_PLUGIN_DIR to be set explicitly
 ```
 
 The plugin entry is `src/main.ts`. Service logic lives in `src/app/`, UI in `src/views/`, shared utilities in `src/util/`. Tests live alongside sources in `src/tests/`.

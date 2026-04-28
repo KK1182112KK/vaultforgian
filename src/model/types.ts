@@ -264,6 +264,11 @@ export interface WaitingState {
   locale?: "en" | "ja";
   mode?: RuntimeMode;
   focus?: WaitingFocus | null;
+  requiredSkillNames?: string[];
+  autoSelectedSkillNames?: string[];
+  orderedSkillNames?: string[];
+  primarySkillName?: string | null;
+  skillCount?: number;
 }
 
 export interface ModelCatalogEntry {
@@ -416,6 +421,27 @@ export interface PanelStudyMemory extends UserStudyMemory {
 
 export type StudyTeachingMode = "explain" | "coach" | "quiz" | "source_check" | "ask_for_source";
 export type StudySourceStrategy = "use_note" | "use_attachment" | "continue_from_memory" | "ask_for_source";
+export type LearningCoachMode =
+  | "hint_first"
+  | "scaffold"
+  | "explain"
+  | "quiz"
+  | "review"
+  | "source_check"
+  | "direct_answer";
+export type LearningCoachHintLevel = "nudge" | "guided" | "worked_step";
+export type LearningCoachAnswerPolicy = "hint_first" | "answer_first";
+
+export interface LearningCoachPlan {
+  mode: LearningCoachMode;
+  hintLevel: LearningCoachHintLevel;
+  answerPolicy: LearningCoachAnswerPolicy;
+  focusConcept: string | null;
+  stuckPoint: string | null;
+  scaffoldSteps: string[];
+  checkQuestion: string | null;
+  nextAction: string;
+}
 
 export interface StudyTurnPlanSkillRecommendation {
   name: string;
@@ -436,9 +462,11 @@ export interface StudyTurnPlan {
   sourceStrategy: StudySourceStrategy;
   checkQuestion: string | null;
   nextAction: string;
+  selectedSkillNames?: string[];
   recommendedSkills: StudyTurnPlanSkillRecommendation[];
   panelSignals: StudyTurnPlanSignal[];
   visibleReplyGuidance: string;
+  learningCoachPlan?: LearningCoachPlan | null;
 }
 
 export interface PanelAutoAdjustment {
@@ -458,6 +486,31 @@ export interface StudyWeakPoint {
   resolved: boolean;
 }
 
+export type StudyQuizQuestionStatus = "pending" | "answered" | "reviewed" | "skipped";
+export type StudyQuizSessionStatus = "active" | "completed";
+export type StudyQuizUserResponseKind = "start" | "answer" | "unknown" | "next" | "skip";
+
+export interface StudyQuizQuestion {
+  index: number;
+  prompt: string;
+  choices: string[];
+  answer: string | null;
+  explanation: string | null;
+  status: StudyQuizQuestionStatus;
+}
+
+export interface StudyQuizSession {
+  id: string;
+  total: number;
+  currentIndex: number;
+  answeredCount: number;
+  status: StudyQuizSessionStatus;
+  questions: StudyQuizQuestion[];
+  startedAt: number;
+  updatedAt: number;
+  lastUserResponseKind?: StudyQuizUserResponseKind | null;
+}
+
 export interface StudyCoachState {
   latestRecap: StudyCheckpoint | null;
   weakPointLedger: StudyWeakPoint[];
@@ -465,6 +518,10 @@ export interface StudyCoachState {
   latestContract?: StudyTurnContract | null;
   lastStuckPoint?: StudyStuckPoint | null;
   nextProblems?: StudyNextProblem[];
+  quizSession?: StudyQuizSession | null;
+  lastCoachMode?: LearningCoachMode | null;
+  lastHintLevel?: LearningCoachHintLevel | null;
+  consecutiveStuckCount?: number;
 }
 
 export interface UserAdaptationProfile {

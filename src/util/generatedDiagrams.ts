@@ -1,4 +1,4 @@
-export const GENERATED_DIAGRAM_FOLDER = "assets/noteforge/diagrams";
+export const GENERATED_DIAGRAM_FOLDER = "assets/vaultforgian/diagrams";
 export const MAX_GENERATED_SVG_CHARS = 256_000;
 
 export type SvgSanitizeResult =

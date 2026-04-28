@@ -196,6 +196,64 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(avatar?.dataset.icon).toBe("sparkles");
   });
 
+  it("renders raw assistant derivation math without visible markdown math delimiters", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: ["Close.", "", "- 6^2 + 8^2 = 36 + 64 = 100", "- That means c^2 = 100", "- So c = \\sqrt{100} = 10"].join("\n"),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    expect(text).not.toContain("$6^2");
+    expect(text).not.toContain("$c^2");
+    expect(text).not.toContain("$c =");
+    expect(text).toContain("- 6² + 8² = 36 + 64 = 100");
+    expect(text).toContain("- That means c² = 100");
+    expect(text).toContain("- So c = √100 = 10");
+    expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(3);
+  });
+
+  it("hides existing assistant markdown math delimiters in chat output", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: [
+          "The answer is:",
+          "",
+          "$a^2 + b^2 = c^2$",
+          "",
+          "$$c = \\sqrt{100}$$",
+          "",
+          "Skill /deep-read stays visible.",
+        ].join("\n"),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    expect(text).not.toContain("$a");
+    expect(text).not.toContain("$$");
+    expect(text).toContain("a² + b² = c²");
+    expect(text).toContain("c = √100");
+    expect(text).toContain("/deep-read");
+    expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(2);
+    expect(markdown.querySelectorAll(".obsidian-codex__chat-math--display")).toHaveLength(1);
+  });
+
   it("keeps the welcome logo on the fallback icon", () => {
     const state = createState();
     const root = document.createElement("div");
@@ -274,6 +332,33 @@ describe("TranscriptRenderer avatar safety", () => {
     image?.dispatchEvent(new Event("load"));
     expect(root.querySelector(".obsidian-codex__waiting-copy")?.textContent).toContain("Thinking");
     expect(avatar?.dataset.hasImage).toBe("true");
+  });
+
+  it("renders waiting skill usage text and tooltip", () => {
+    const state = createState();
+    state.tabs[0]!.status = "busy";
+    state.tabs[0]!.runtimeMode = "skill";
+    state.tabs[0]!.waitingState = {
+      phase: "boot",
+      text: "Using skills: /brainstorming, /lecture-read +1 · Gathering clues",
+      locale: "en",
+      mode: "skill",
+      requiredSkillNames: ["brainstorming", "lecture-read"],
+      autoSelectedSkillNames: ["paper-visualizer"],
+      orderedSkillNames: ["brainstorming", "lecture-read", "paper-visualizer"],
+      primarySkillName: "brainstorming",
+      skillCount: 3,
+    };
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    const waitingCopy = root.querySelector(".obsidian-codex__waiting-copy") as HTMLElement | null;
+    const waitingBody = root.querySelector(".obsidian-codex__message-content--waiting") as HTMLElement | null;
+    expect(waitingCopy?.textContent).toContain("Using skills: /brainstorming, /lecture-read +1");
+    expect(waitingCopy?.title).toBe("Required: /brainstorming, /lecture-read. Auto: /paper-visualizer");
+    expect(waitingBody?.title).toBe("Required: /brainstorming, /lecture-read. Auto: /paper-visualizer");
   });
 
   it("renders stale generated waiting copy in the current display language", () => {

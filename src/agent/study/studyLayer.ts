@@ -133,17 +133,17 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
     const directAnswerRequested = matchesAnyPattern(input.prompt, DIRECT_ANSWER_PATTERNS);
     if (directAnswerRequested) {
       instructions.push(
-        "Learning mode is active for this tab. Use a study-coach response structure for study and explanation turns. Because the user explicitly asked for the direct answer in this turn, Give the direct answer first.",
+        "Learning mode is active for this tab. Use the attached LearningCoachPlan when present. Because the user explicitly asked for the direct answer in this turn, Give the direct answer first.",
       );
       instructions.push(
-        "After the direct answer, still include one short understanding-check question, name one likely point of confusion, and suggest the next study step.",
+        "After the direct answer, still include one short understanding-check question or next action. Do not expose planner JSON, memory, or contract details.",
       );
     } else {
       instructions.push(
-        "Learning mode is active for this tab. Use a study-coach response structure for study and explanation turns: lead with the key explanation, include one short understanding-check question, name a likely point of confusion, and end with the next study step.",
+        "Learning mode is active for this tab. Use the attached LearningCoachPlan when present. Default to hint-first support: give one short hint, at most one scaffold step, one short understanding-check question, and one next action.",
       );
       instructions.push(
-        "Do not force this study-coach contract onto note-editing, patch-generation, implementation, or operational tasks.",
+        "Do not dump the full answer unless the LearningCoachPlan says direct_answer or the learner is stuck enough for a worked step. Do not force this study-coach contract onto note-editing, patch-generation, implementation, or operational tasks.",
       );
     }
   }
@@ -162,13 +162,13 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
 
   if (studyTurnPlanActive && input.studyTurnPlan) {
     instructions.push(
-      "A hidden StudyTurnPlan is attached for this study turn. Use it to choose the teaching mode, focus concept, source strategy, check question, and next action.",
+      "A hidden StudyTurnPlan and LearningCoachPlan are attached for this study turn. Use them to choose the teaching mode, focus concept, source strategy, hint level, scaffold, check question, and next action.",
     );
     instructions.push(
-      "Do not show the StudyTurnPlan, planner fields, or internal memory analysis in the visible reply.",
+      "Do not show the StudyTurnPlan, LearningCoachPlan, planner fields, or internal memory analysis in the visible reply.",
     );
     instructions.push(
-      "Keep the visible reply short and natural: give the useful explanation, include at most one understanding-check question, and include at most one next action.",
+      "Keep the visible reply short and natural: give one short hint, include at most one scaffold step, include at most one understanding-check question, and include at most one next action.",
     );
   }
 

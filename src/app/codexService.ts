@@ -17,6 +17,7 @@ import type {
   EditOutcome,
   GeneratedDiagramRecord,
   ModelCatalogEntry,
+  PanelStudyMemory,
   PendingApproval,
   PatchProposal,
   RecentStudySource,
@@ -34,6 +35,7 @@ import type {
   TurnContextSnapshot,
   WaitingFocus,
   WaitingPhase,
+  WaitingState,
 } from "../model/types";
 import { DEFAULT_PRIMARY_MODEL as DEFAULT_MODEL } from "../model/types";
 import { getLocalizedCopy, type SupportedLocale } from "../util/i18n";
@@ -126,6 +128,7 @@ import {
 import { buildUnifiedDiff } from "../util/unifiedDiff";
 import {
   buildStudyMemoryCarryForwardText,
+  getStablePanelImprovementSignals,
   mergeStudyContractIntoPanelMemory,
   mergeStudyContractIntoUserAdaptationMemory,
   updateUserAdaptationMemory,
@@ -174,6 +177,11 @@ import { shouldAttachPaperStudyGuide } from "../util/studyTurnGuides";
 import { shouldSuppressImmediateDuplicateUserPrompt } from "../util/messageDedup";
 import { getRecoveredDraftValue } from "../util/draftRecovery";
 import {
+  formatStudyQuizSessionForPrompt,
+  prepareStudyQuizSessionForUserPrompt,
+  syncStudyQuizSessionFromAssistantText,
+} from "../util/studyQuiz";
+import {
   extractPromptMetadata,
   formatPlanModePrompt,
   normalizePromptInput,
@@ -181,6 +189,11 @@ import {
   type ParsedMention,
 } from "./promptPipeline";
 import { buildTurnPrompt } from "./turnPrompt";
+import {
+  buildSkillOrchestrationPlan,
+  type SkillOrchestrationCandidate,
+  type SkillOrchestrationPlan,
+} from "../util/skillOrchestration";
 import type { ComposerHistoryState } from "../util/composerHistory";
 import {
   StudyPanelCoordinator,
@@ -277,9 +290,15 @@ interface RuntimeMetadataSnapshot {
 
 const MAX_AUTO_APPLY_PROPOSALS_PER_TURN = 5;
 
+type WaitingSkillUsageMetadata = Pick<
+  WaitingState,
+  "requiredSkillNames" | "autoSelectedSkillNames" | "orderedSkillNames" | "primarySkillName" | "skillCount"
+>;
+
 interface ResolvedTurnSkillContext {
   skillNames: string[];
   resolvedSkillDefinitions: InstalledSkillDefinition[];
+  unresolvedPanelSelectedSkillNames: string[];
 }
 
 type TranscriptSyncResult =
@@ -1194,7 +1213,7 @@ export class CodexService {
     if (!tab) {
       return null;
     }
-    const shouldAttach = tab.learningMode || Boolean(tab.studyWorkflow) || tab.activeStudySkillNames.length > 0;
+    const shouldAttach = tab.learningMode || Boolean(tab.studyWorkflow) || tab.activeStudySkillNames.length > 0 || Boolean(tab.studyCoachState?.quizSession);
     if (!shouldAttach) {
       return null;
     }
@@ -1227,6 +1246,10 @@ export class CodexService {
       return lines.length > 1 ? lines.join("\n") : null;
     }
 
+    const quizSessionText = formatStudyQuizSessionForPrompt(studyCoachState.quizSession ?? null, locale);
+    if (quizSessionText) {
+      lines.push(quizSessionText);
+    }
     if (studyCoachState.latestContract?.objective) {
       lines.push(`- Latest objective: ${studyCoachState.latestContract.objective}`);
     }
@@ -1249,11 +1272,78 @@ export class CodexService {
     if (studyCoachState.lastStuckPoint) {
       lines.push(`- Previous stuck point: ${studyCoachState.lastStuckPoint.detail}`);
     }
+    if (studyCoachState.lastCoachMode) {
+      lines.push(`- Last learning coach mode: ${studyCoachState.lastCoachMode}`);
+    }
+    if (studyCoachState.lastHintLevel) {
+      lines.push(`- Last hint level: ${studyCoachState.lastHintLevel}`);
+    }
+    if ((studyCoachState.consecutiveStuckCount ?? 0) > 0) {
+      lines.push(`- Consecutive stuck responses: ${studyCoachState.consecutiveStuckCount}`);
+    }
     if (studyCoachState.nextProblems?.length) {
       lines.push(`- Next problems: ${studyCoachState.nextProblems.slice(0, 3).map((entry) => entry.prompt).join(" / ")}`);
     }
 
     return lines.length > 1 ? lines.join("\n") : null;
+  }
+
+  private prepareStudyQuizSessionForPrompt(tabId: string, prompt: string): void {
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return;
+    }
+    const currentCoachState = tab.studyCoachState ?? {
+      latestRecap: null,
+      weakPointLedger: [],
+      lastCheckpointAt: null,
+    };
+    const nextSession = prepareStudyQuizSessionForUserPrompt(currentCoachState.quizSession ?? null, prompt, {
+      id: makeId("quiz"),
+      now: Date.now(),
+    });
+    if (nextSession === (currentCoachState.quizSession ?? null)) {
+      return;
+    }
+    this.store.setStudyCoachState(tabId, {
+      ...currentCoachState,
+      quizSession: nextSession,
+    });
+  }
+
+  private isLearnerUnknownResponse(prompt: string): boolean {
+    return /\bi\s+don'?t\s+know\b/i.test(prompt) ||
+      /\bidk\b/i.test(prompt) ||
+      /\bnot\s+sure\b/i.test(prompt) ||
+      /\bno\s+idea\b/i.test(prompt) ||
+      /わからない/.test(prompt) ||
+      /分からない/.test(prompt) ||
+      /知らない/.test(prompt) ||
+      /不明/.test(prompt);
+  }
+
+  private recordLearningCoachPlan(tabId: string, prompt: string, plan: StudyTurnPlan | null): void {
+    const learningCoachPlan = plan?.learningCoachPlan ?? null;
+    if (!learningCoachPlan) {
+      return;
+    }
+    const tab = this.findTab(tabId);
+    if (!tab) {
+      return;
+    }
+    const currentCoachState = tab.studyCoachState ?? {
+      latestRecap: null,
+      weakPointLedger: [],
+      lastCheckpointAt: null,
+    };
+    const previousStuckCount = currentCoachState.consecutiveStuckCount ?? 0;
+    const consecutiveStuckCount = this.isLearnerUnknownResponse(prompt) ? previousStuckCount + 1 : 0;
+    this.store.setStudyCoachState(tabId, {
+      ...currentCoachState,
+      lastCoachMode: learningCoachPlan.mode,
+      lastHintLevel: learningCoachPlan.hintLevel,
+      ...(consecutiveStuckCount > 0 ? { consecutiveStuckCount } : { consecutiveStuckCount: 0 }),
+    });
   }
 
   private buildStudyTurnPlanForPrompt(params: {
@@ -1562,7 +1652,11 @@ export class CodexService {
         : stage === "stall_warn"
           ? "Still working. The plugin will keep waiting before attempting recovery."
           : "This turn went quiet, so the plugin is attempting recovery on the same thread.";
-    this.store.setWaitingState(tabId, { phase, text });
+    this.store.setWaitingState(tabId, {
+      phase,
+      text,
+      ...this.extractWaitingSkillUsageMetadata(current),
+    });
   }
 
   private async collectTurnOutcome(params: {
@@ -2866,6 +2960,7 @@ export class CodexService {
         throw new Error(this.getLocalizedCopy().service.promptEmptyAfterExpansion);
       }
       const visiblePrompt = (context?.transcriptPrompt?.trim() || prompt).trim();
+      this.prepareStudyQuizSessionForPrompt(tabId, executionPromptBase);
 
       this.studyPanels.capturePanelSessionOrigin(tabId, normalizedInput);
 
@@ -2878,12 +2973,59 @@ export class CodexService {
       if (currentTab && this.shouldAutoCompactTab(currentTab)) {
         this.compactTab(tabId, "auto");
       }
-      const { skillNames, resolvedSkillDefinitions } = await this.resolveRequestedSkillContext(
+      const requestedSkillContext = await this.resolveRequestedSkillContext(
         getCurrentTab(),
         expanded.skillPrompt.trim() ? [expanded.skillPrompt.trim()] : [],
         mentionResolution.skillNames.map((name) => `$${name}`),
         workflowSkillRefs,
       );
+      const unresolvedPanelSelectedSkillNames = this.getUnresolvedPanelSelectedSkillNames(
+        getCurrentTab(),
+        requestedSkillContext.skillNames,
+        requestedSkillContext.resolvedSkillDefinitions,
+      );
+      if (unresolvedPanelSelectedSkillNames.length > 0) {
+        this.store.addMessage(tabId, {
+          id: makeId("skill-warning"),
+          kind: "system",
+          text: this.formatMissingPanelSelectedSkillMessage(unresolvedPanelSelectedSkillNames),
+          meta: { tone: "warning" },
+          createdAt: Date.now(),
+        });
+        return;
+      }
+      await this.ensureSkillCatalogLoadedForAutoSelection();
+      let skillOrchestrationPlan = this.buildSkillOrchestrationPlanForTurn({
+        tab: getCurrentTab(),
+        prompt: executionPromptBase,
+        requiredSkillNames: requestedSkillContext.skillNames,
+        preflight: this.getActivePanelPreflightForSkillOrchestration(getCurrentTab(), tabId),
+      });
+      let skillNames = skillOrchestrationPlan?.selectedSkills ?? requestedSkillContext.skillNames;
+      let resolvedSkillDefinitions = requestedSkillContext.resolvedSkillDefinitions;
+      if (skillOrchestrationPlan?.autoSelectedSkillNames.length) {
+        resolvedSkillDefinitions = await resolveRequestedSkillDefinitions(skillNames, this.installedSkillCatalog, {
+          refreshInstalledSkills: async () => {
+            await this.refreshCodexCatalogs();
+            return this.installedSkillCatalog;
+          },
+        });
+        const resolvedNames = new Set(resolvedSkillDefinitions.map((definition) => definition.name));
+        const resolvedAutoSkillNames = skillOrchestrationPlan.autoSelectedSkillNames.filter((skillName) =>
+          resolvedNames.has(skillName),
+        );
+        if (resolvedAutoSkillNames.length !== skillOrchestrationPlan.autoSelectedSkillNames.length) {
+          skillOrchestrationPlan = this.buildSkillOrchestrationPlanForTurn({
+            tab: getCurrentTab(),
+            prompt: executionPromptBase,
+            requiredSkillNames: requestedSkillContext.skillNames,
+            preflight: this.getActivePanelPreflightForSkillOrchestration(getCurrentTab(), tabId),
+            autoSkillNameAllowlist: resolvedAutoSkillNames,
+          });
+          skillNames = skillOrchestrationPlan?.selectedSkills ?? requestedSkillContext.skillNames;
+          resolvedSkillDefinitions = resolvedSkillDefinitions.filter((definition) => skillNames.includes(definition.name));
+        }
+      }
       const paperStudyGuideNeeded = shouldAttachPaperStudyGuide({
         locale: this.getLocale(),
         studyWorkflow: currentTab?.studyWorkflow ?? null,
@@ -2989,6 +3131,9 @@ export class CodexService {
         false,
         turnId,
         userMessageId,
+        false,
+        "error",
+        skillOrchestrationPlan,
       ).finally(() => {
         this.pendingPromptSends.delete(tabId);
       });
@@ -3131,11 +3276,13 @@ export class CodexService {
     userMessageId: string | null = null,
     proposalRepairPhase = false,
     proposalRepairFailureMode: ProposalRepairFailureMode = "error",
+    skillOrchestrationPlan: SkillOrchestrationPlan | null = null,
   ): Promise<void> {
     if (turnId && userMessageId && !this.pendingTurns.has(tabId)) {
       this.armPendingTurn(tabId, turnId, userMessageId, Date.now());
     }
     const controller = new AbortController();
+    const waitingSkillUsage = this.buildWaitingSkillUsageMetadata(skillOrchestrationPlan, skillNames);
     const turnIntent = classifyTurnIntent({
       prompt,
       composeMode,
@@ -3161,7 +3308,7 @@ export class CodexService {
     this.usageSync.armActiveRun(tabId, this.shouldStartFreshThread(tabId) ? null : this.findTab(tabId)?.codexThreadId ?? null);
     this.store.setRuntimeMode(tabId, mode);
     this.store.setStatus(tabId, "busy");
-    this.store.setWaitingState(tabId, this.createWaitingState("boot", mode));
+    this.store.setWaitingState(tabId, this.createWaitingState("boot", mode, null, waitingSkillUsage));
     this.store.clearApprovals(tabId);
 
     let terminalError: string | null = null;
@@ -3185,8 +3332,9 @@ export class CodexService {
         : getPermissionModeProfile(this.settingsProvider().permissionMode);
 
     try {
+      const messageIdScope = turnId ?? makeId("turn-scope");
       const handleJsonEvent = (event: JsonRecord) => {
-        terminalError = this.threadEventReducer.handleThreadEvent(tabId, event, assistantOutputVisibility) ?? terminalError;
+        terminalError = this.threadEventReducer.handleThreadEvent(tabId, event, assistantOutputVisibility, messageIdScope) ?? terminalError;
       };
       const studyTurnPlan = this.buildStudyTurnPlanForPrompt({
         tabId,
@@ -3198,6 +3346,7 @@ export class CodexService {
         composeMode,
         proposalRepairPhase,
       });
+      this.recordLearningCoachPlan(tabId, prompt, studyTurnPlan);
       const runtimePrompt = buildTurnPrompt(prompt, turnContext, mode, skillNames, composeMode, allowVaultWrite, this.getNoteApplyPolicy(composeMode), {
         preferredName: this.settingsProvider().preferredName,
         customSystemPrompt: this.settingsProvider().customSystemPrompt,
@@ -3205,6 +3354,7 @@ export class CodexService {
         noteSuggestionPolicy,
         diagramGeneration: turnIntent.kind === "diagram_generation",
         studyTurnPlan,
+        skillOrchestrationPlan,
         turnIntentKind: turnIntent.kind,
         locale: this.getLocale(),
         shellBlocklist: this.settingsProvider().securityPolicy.commandBlacklistEnabled
@@ -3665,11 +3815,120 @@ export class CodexService {
     return {
       skillNames,
       resolvedSkillDefinitions,
+      unresolvedPanelSelectedSkillNames: this.getUnresolvedPanelSelectedSkillNames(tab, skillNames, resolvedSkillDefinitions),
     };
+  }
+
+  private async ensureSkillCatalogLoadedForAutoSelection(): Promise<void> {
+    if (this.installedSkillCatalog.length > 0 || this.allInstalledSkillCatalog.length > 0) {
+      return;
+    }
+    await this.refreshCodexCatalogs();
+  }
+
+  private getActivePanelPreflightForSkillOrchestration(
+    tab: ConversationTabState | null,
+    tabId: string,
+  ): StudyRecipePreflight | null {
+    if (!tab?.activeStudyRecipeId) {
+      return null;
+    }
+    return this.studyPanels.getStudyRecipePreflight(tab.activeStudyRecipeId, tabId);
+  }
+
+  private buildSkillOrchestrationPlanForTurn(params: {
+    tab: ConversationTabState | null;
+    prompt: string;
+    requiredSkillNames: readonly string[];
+    preflight: StudyRecipePreflight | null;
+    autoSkillNameAllowlist?: readonly string[];
+  }): SkillOrchestrationPlan | null {
+    const panelId = params.tab?.activeStudyRecipeId ?? null;
+    const activePanel = panelId ? this.getHubPanels().find((panel) => panel.id === panelId) ?? null : null;
+    const memory = this.store.getState().userAdaptationMemory ?? null;
+    const panelOverlay = activePanel ? memory?.panelOverlays?.[activePanel.id] ?? null : null;
+    const panelMemory = panelOverlay?.studyMemory ?? null;
+    const stableSkillNames = new Set(
+      getStablePanelImprovementSignals(panelMemory)
+        .filter((signal) => signal.kind === "skill")
+        .map((signal) => signal.label.trim())
+        .filter(Boolean),
+    );
+    const linkedSkillNames = new Set((activePanel?.linkedSkillNames ?? []).map((entry) => entry.trim()).filter(Boolean));
+    const preferredSkillNames = new Set((panelOverlay?.preferredSkillNames ?? []).map((entry) => entry.trim()).filter(Boolean));
+    const hasAutoAllowlist = params.autoSkillNameAllowlist !== undefined;
+    const autoAllowlist = new Set((params.autoSkillNameAllowlist ?? []).map((entry) => entry.trim()).filter(Boolean));
+    const candidates: SkillOrchestrationCandidate[] = this.installedSkillCatalog
+      .filter((skill) => !hasAutoAllowlist || params.requiredSkillNames.includes(skill.name) || autoAllowlist.has(skill.name))
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        userOwned: isUserOwnedSkillDefinition(skill),
+        panelLinked: linkedSkillNames.has(skill.name),
+        panelPreferred: preferredSkillNames.has(skill.name),
+        stableSignal: stableSkillNames.has(skill.name),
+      }));
+
+    return buildSkillOrchestrationPlan(params.requiredSkillNames, {
+      candidates,
+      prompt: params.prompt,
+      panelWorkflow: activePanel?.workflow ?? params.tab?.studyWorkflow ?? null,
+      weakConceptLabels: this.collectSkillOrchestrationWeakConceptLabels(params.tab, panelMemory),
+      sourceStrategy: params.preflight?.sourceStrategy ?? null,
+      maxAutoSkills: hasAutoAllowlist ? autoAllowlist.size : 3,
+      autoThreshold: 10,
+    });
+  }
+
+  private collectSkillOrchestrationWeakConceptLabels(
+    tab: ConversationTabState | null,
+    panelMemory: PanelStudyMemory | null,
+  ): string[] {
+    const memory = this.store.getState().userAdaptationMemory ?? null;
+    const labels = [
+      ...(panelMemory?.weakConcepts ?? []).map((entry) => entry.conceptLabel),
+      ...(memory?.studyMemory?.weakConcepts ?? []).map((entry) => entry.conceptLabel),
+      ...(tab?.studyCoachState?.weakPointLedger ?? []).filter((entry) => !entry.resolved).map((entry) => entry.conceptLabel),
+      ...(tab?.studyCoachState?.latestRecap?.unclear ?? []),
+    ];
+    return [...new Set(labels.map((entry) => entry.trim()).filter(Boolean))];
   }
 
   private resolveTurnSkillNames(requestedSkills: string[]): string[] {
     return [...new Set(requestedSkills)];
+  }
+
+  private getPanelSelectedSkillNames(tab: ConversationTabState | null): string[] {
+    if (!tab?.activeStudyRecipeId) {
+      return [];
+    }
+    return [
+      ...new Set(
+        [
+          ...(tab.activeStudySkillNames ?? []),
+          ...(tab.panelSessionOrigin?.panelId === tab.activeStudyRecipeId ? tab.panelSessionOrigin.selectedSkillNames : []),
+        ]
+          .map((entry) => entry.trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+
+  private getUnresolvedPanelSelectedSkillNames(
+    tab: ConversationTabState | null,
+    skillNames: readonly string[],
+    resolvedSkillDefinitions: readonly InstalledSkillDefinition[],
+  ): string[] {
+    const requested = new Set(skillNames.map((entry) => entry.trim()).filter(Boolean));
+    const resolved = new Set(resolvedSkillDefinitions.map((entry) => entry.name.trim()).filter(Boolean));
+    return this.getPanelSelectedSkillNames(tab).filter((skillName) => requested.has(skillName) && !resolved.has(skillName));
+  }
+
+  private formatMissingPanelSelectedSkillMessage(skillNames: readonly string[]): string {
+    const labels = skillNames.map((name) => `/${name}`).join(", ");
+    return this.getLocale() === "ja"
+      ? `選択した skill が見つかりません: ${labels}。Panel Studio の skill 選択を更新してください。`
+      : `Selected skill not found: ${labels}. Update the Panel Studio skill selection and try again.`;
   }
 
   private async listInstalledSkills(): Promise<Set<string>> {
@@ -3787,7 +4046,10 @@ export class CodexService {
     });
     const parsed = routed.parsed;
     if (parsed.patches.length > 0 && this.activeRuns.has(tabId)) {
-      this.store.setWaitingState(tabId, this.createWaitingState("tools", tab.runtimeMode, "patch_safety"));
+      this.store.setWaitingState(
+        tabId,
+        this.createWaitingState("tools", tab.runtimeMode, "patch_safety", this.extractWaitingSkillUsageMetadata(tab.waitingState)),
+      );
     }
     const patchBasket = (
       await Promise.all(
@@ -3798,6 +4060,9 @@ export class CodexService {
 
     const approvals = await this.approvalCoordinator.buildVaultOpApprovals(tabId, messageId, parsed.ops, true, originTurnId);
     this.store.replaceProposalApprovals(tabId, messageId, approvals);
+    if (visibility === "visible") {
+      this.maybeSyncStudyQuizSessionFromAssistantText(tabId, text);
+    }
     this.maybeStoreStudyLearningArtifacts(tabId, parsed);
     this.maybeStorePlanExecutionSuggestion(tabId, messageId, parsed.plan);
     await this.saveGeneratedDiagramsAndInsert(tabId, messageId, parsed.diagrams, originTurnId);
@@ -4460,16 +4725,33 @@ export class CodexService {
     const panelId = tab.activeStudyRecipeId ?? null;
     const panel = panelId ? this.getHubPanels().find((entry) => entry.id === panelId) ?? null : null;
     if (panel) {
+      const turnSkillNames = this.resolveSelectedSkillNamesForApprovedEdit(tabId, this.getCurrentTurnUserPromptMessage(tabId));
       const panelMemory = mergeStudyContractIntoPanelMemory(nextMemory, panel.id, contract, {
         panelWorkflow: panel.workflow,
         occurredAt: Date.now(),
-        preferredSkillNames: tab.activeStudySkillNames,
+        preferredSkillNames: turnSkillNames,
       });
       this.store.setUserAdaptationMemory(panelMemory);
-      this.studyPanels.applyStablePanelMemoryAdjustments(tabId, panel.id);
       return;
     }
     this.store.setUserAdaptationMemory(nextMemory);
+  }
+
+  private maybeSyncStudyQuizSessionFromAssistantText(tabId: string, text: string): void {
+    const tab = this.findTab(tabId);
+    const quizSession = tab?.studyCoachState?.quizSession ?? null;
+    if (!tab || !quizSession) {
+      return;
+    }
+    const nextSession = syncStudyQuizSessionFromAssistantText(quizSession, this.getVisibleAssistantText(text), Date.now());
+    this.store.setStudyCoachState(tabId, {
+      ...(tab.studyCoachState ?? {
+        latestRecap: null,
+        weakPointLedger: [],
+        lastCheckpointAt: null,
+      }),
+      quizSession: nextSession,
+    });
   }
 
   private studyCheckpointToContract(
@@ -5938,13 +6220,87 @@ export class CodexService {
     return buildContextPackText(sources);
   }
 
-  private createWaitingState(phase: WaitingPhase, mode: RuntimeMode, focus: WaitingFocus | null = null) {
+  private buildWaitingSkillUsageMetadata(
+    plan: SkillOrchestrationPlan | null,
+    skillNames: readonly string[],
+  ): WaitingSkillUsageMetadata | null {
+    const requiredSkillNames = this.normalizeWaitingSkillNames(plan?.requiredSkillNames ?? skillNames);
+    const autoSelectedSkillNames = this.normalizeWaitingSkillNames(plan?.autoSelectedSkillNames ?? []);
+    const orderedSkillNames = this.normalizeWaitingSkillNames([
+      ...(plan?.orderedSteps.map((step) => step.skillName) ?? []),
+      ...(plan?.selectedSkills ?? []),
+      ...skillNames,
+    ]);
+    const allSkillNames = this.normalizeWaitingSkillNames([...orderedSkillNames, ...requiredSkillNames, ...autoSelectedSkillNames]);
+    if (allSkillNames.length === 0) {
+      return null;
+    }
+    return {
+      requiredSkillNames,
+      autoSelectedSkillNames,
+      orderedSkillNames: allSkillNames,
+      primarySkillName: allSkillNames[0] ?? null,
+      skillCount: allSkillNames.length,
+    };
+  }
+
+  private extractWaitingSkillUsageMetadata(
+    source: WaitingSkillUsageMetadata | WaitingState | null | undefined,
+  ): WaitingSkillUsageMetadata | null {
+    if (!source) {
+      return null;
+    }
+    const requiredSkillNames = this.normalizeWaitingSkillNames(source.requiredSkillNames ?? []);
+    const autoSelectedSkillNames = this.normalizeWaitingSkillNames(source.autoSelectedSkillNames ?? []);
+    const orderedSkillNames = this.normalizeWaitingSkillNames([
+      ...(source.orderedSkillNames ?? []),
+      ...requiredSkillNames,
+      ...autoSelectedSkillNames,
+    ]);
+    const primarySkillName = this.normalizeWaitingSkillNames([source.primarySkillName ?? "", ...orderedSkillNames])[0] ?? null;
+    const skillCount =
+      typeof source.skillCount === "number" && Number.isFinite(source.skillCount) && source.skillCount > 0
+        ? source.skillCount
+        : orderedSkillNames.length;
+    if (!primarySkillName || skillCount <= 0) {
+      return null;
+    }
+    return {
+      requiredSkillNames,
+      autoSelectedSkillNames,
+      orderedSkillNames,
+      primarySkillName,
+      skillCount,
+    };
+  }
+
+  private normalizeWaitingSkillNames(values: readonly string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const value of values) {
+      const normalized = value.trim().replace(/^\/+/, "");
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      result.push(normalized);
+    }
+    return result;
+  }
+
+  private createWaitingState(
+    phase: WaitingPhase,
+    mode: RuntimeMode,
+    focus: WaitingFocus | null = null,
+    skillUsage: WaitingSkillUsageMetadata | null = null,
+  ) {
     return {
       phase,
-      text: pickWaitingCopy(phase, mode, Date.now(), { focus, locale: this.getLocale() }),
+      text: pickWaitingCopy(phase, mode, Date.now(), { focus, locale: this.getLocale(), skillUsage }),
       locale: this.getLocale(),
       mode,
       focus,
+      ...this.extractWaitingSkillUsageMetadata(skillUsage),
     };
   }
 
@@ -5953,7 +6309,7 @@ export class CodexService {
     if (current?.phase === phase) {
       return;
     }
-    this.store.setWaitingState(tabId, this.createWaitingState(phase, mode));
+    this.store.setWaitingState(tabId, this.createWaitingState(phase, mode, null, this.extractWaitingSkillUsageMetadata(current)));
   }
 
   private resolveModeDefaults() {

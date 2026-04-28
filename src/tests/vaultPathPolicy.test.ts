@@ -44,21 +44,21 @@ describe("vaultPathPolicy", () => {
   });
 
   it("allows generated SVG assets only in the managed diagram folder", () => {
-    expect(validateManagedAssetPath(createApp("/vault"), "assets/noteforge/diagrams/power-flow.svg")).toEqual({
+    expect(validateManagedAssetPath(createApp("/vault"), "assets/vaultforgian/diagrams/power-flow.svg")).toEqual({
       ok: true,
-      normalizedPath: "assets/noteforge/diagrams/power-flow.svg",
+      normalizedPath: "assets/vaultforgian/diagrams/power-flow.svg",
       reason: "empty",
     });
 
-    expect(validateManagedAssetPath(createApp("/vault"), "assets/noteforge/power-flow.svg")).toMatchObject({
+    expect(validateManagedAssetPath(createApp("/vault"), "assets/vaultforgian/power-flow.svg")).toMatchObject({
       ok: false,
       reason: "outside_managed_assets",
     });
-    expect(validateManagedAssetPath(createApp("/vault"), "assets/noteforge/diagrams/power-flow.png")).toMatchObject({
+    expect(validateManagedAssetPath(createApp("/vault"), "assets/vaultforgian/diagrams/power-flow.png")).toMatchObject({
       ok: false,
       reason: "unsupported_extension",
     });
-    expect(validateManagedAssetPath(createApp("/vault"), "assets/noteforge/diagrams/.hidden.svg")).toMatchObject({
+    expect(validateManagedAssetPath(createApp("/vault"), "assets/vaultforgian/diagrams/.hidden.svg")).toMatchObject({
       ok: false,
       reason: "hidden_segment",
     });

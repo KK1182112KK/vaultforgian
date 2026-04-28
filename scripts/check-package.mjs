@@ -6,9 +6,9 @@ import { resolveProjectRoot } from "./lib/project-root.mjs";
 const projectRoot = resolveProjectRoot(import.meta.url);
 const avatarSourcePath = path.join(projectRoot, "assets", "chat-avatar-source.png");
 const avatarGeneratedPath = path.join(projectRoot, "src", "generated", "chatAvatar.ts");
-const expectedPackageName = "codex-noteforge";
+const expectedPackageName = "vaultforgian";
 const expectedManifestId = "obsidian-codex-study";
-const expectedManifestName = "Codex Noteforge";
+const expectedManifestName = "VaultForgian";
 
 async function assertReadable(filePath) {
   await access(filePath);

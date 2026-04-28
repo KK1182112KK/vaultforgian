@@ -25,8 +25,8 @@ describe("i18n helpers", () => {
   });
 
   it("returns localized copy tables", () => {
-    expect(getLocalizedCopy("en").commands.openWorkspace).toBe("Open Codex Noteforge workspace");
-    expect(getLocalizedCopy("ja").commands.openWorkspace).toBe("Codex Noteforge ワークスペースを開く");
+    expect(getLocalizedCopy("en").commands.openWorkspace).toBe("Open VaultForgian workspace");
+    expect(getLocalizedCopy("ja").commands.openWorkspace).toBe("VaultForgian ワークスペースを開く");
     expect(getLocalizedCopy("en").workspace.ingestHubTitle).toBe("Panel Studio");
     expect(getLocalizedCopy("ja").workspace.ingestHubSubtitle).toContain("編集ハブ");
     expect(getLocalizedCopy("ja").workspace.panelPromptPlaceholder).toContain("講義");

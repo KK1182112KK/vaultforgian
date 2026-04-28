@@ -26,13 +26,13 @@ describe("syncWorkspaceLeafBranding", () => {
       tabHeaderIconEl: iconEl,
     };
 
-    await syncWorkspaceLeafBranding(leaf as never, "Codex Noteforge", "sparkles", { persist: true });
+    await syncWorkspaceLeafBranding(leaf as never, "VaultForgian", "sparkles", { persist: true });
 
-    expect(titleEl.textContent).toBe("Codex Noteforge");
+    expect(titleEl.textContent).toBe("VaultForgian");
     expect(iconEl.dataset.icon).toBe("sparkles");
     expect(setViewState).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "Codex Noteforge",
+        title: "VaultForgian",
         icon: "sparkles",
       }),
     );
@@ -49,7 +49,7 @@ describe("syncWorkspaceLeafBranding", () => {
       getViewState: vi.fn(() => ({
         type: "obsidian-codex-study-workspace",
         state: {},
-        title: "Codex Noteforge",
+        title: "VaultForgian",
         icon: "sparkles",
       })),
       setViewState,
@@ -57,9 +57,9 @@ describe("syncWorkspaceLeafBranding", () => {
       tabHeaderIconEl: document.createElement("div"),
     };
 
-    await syncWorkspaceLeafBranding(leaf as never, "Codex Noteforge", "sparkles", { persist: true });
+    await syncWorkspaceLeafBranding(leaf as never, "VaultForgian", "sparkles", { persist: true });
 
-    expect(setText).toHaveBeenCalledWith("Codex Noteforge");
+    expect(setText).toHaveBeenCalledWith("VaultForgian");
     expect(setViewState).not.toHaveBeenCalled();
   });
 });

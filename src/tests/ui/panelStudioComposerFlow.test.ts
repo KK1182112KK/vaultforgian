@@ -217,6 +217,11 @@ function createHarness(
       path: "/home/tester/.agents/skills/grill-me/SKILL.md",
     },
     {
+      name: "study-drill",
+      description: "Create short study drills.",
+      path: "/home/tester/.agents/skills/study-drill/SKILL.md",
+    },
+    {
       name: "github:gh-fix-ci",
       description: "Fix failing GitHub Actions checks.",
       path: "/home/tester/.codex/plugins/cache/openai-curated/github/hash123/skills/gh-fix-ci/SKILL.md",
@@ -1161,7 +1166,7 @@ describe("Panel Studio composer flow", () => {
     expect(harness.hubRoot.querySelector('[data-smoke="panel-skill-popover"]')).toBeNull();
   });
 
-  it("keeps the edited skill row anchored when moving a skill between available and linked sections", async () => {
+  it("keeps the exact Hub scroll position when moving a skill between editor sections", async () => {
     const harness = createHarness();
     await tick();
 
@@ -1206,9 +1211,184 @@ describe("Panel Studio composer flow", () => {
 
     const rerenderedBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
     expect(rerenderedBody).not.toBeNull();
-    expect(rerenderedBody!.scrollTop).toBe(260);
+    expect(rerenderedBody!.scrollTop).toBe(180);
     const sections = Array.from(harness.hubRoot.querySelectorAll('[data-smoke^="panel-skill-section-"]')).map((element) => element.getAttribute("data-smoke"));
     expect(sections).toEqual(["panel-skill-section-linked", "panel-skill-section-available"]);
+  });
+
+  it("preserves the inline editor available skills scroll position after selecting a skill", async () => {
+    const harness = createHarness();
+    await tick();
+
+    let skillOffsetTop = 140;
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get(this: HTMLElement) {
+        const skillName = this.dataset.skillName;
+        if (skillName === "grill-me") {
+          return 110;
+        }
+        if (skillName === "study-drill") {
+          return skillOffsetTop;
+        }
+        return 0;
+      },
+    });
+    const originalRequestRender = harness.callbacks.requestRender;
+    let renderCount = 0;
+    harness.callbacks.requestRender = () => {
+      renderCount += 1;
+      if (renderCount >= 2) {
+        skillOffsetTop = 220;
+      }
+      originalRequestRender();
+    };
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]')?.click();
+    await tick();
+
+    const availableList = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__panel-skill-picker-list--available");
+    expect(availableList).not.toBeNull();
+    const hubBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
+    expect(hubBody).not.toBeNull();
+    hubBody!.scrollTop = 180;
+    hubBody!.dispatchEvent(new Event("scroll"));
+    availableList!.scrollTop = 120;
+    availableList!.dispatchEvent(new Event("scroll"));
+
+    const checkbox = Array.from(availableList!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
+      (input) => input.parentElement?.dataset.skillName === "grill-me",
+    );
+    expect(checkbox).not.toBeNull();
+    checkbox!.checked = true;
+    checkbox!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+
+    const rerenderedAvailableList = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__panel-skill-picker-list--available");
+    expect(rerenderedAvailableList).not.toBeNull();
+    expect(rerenderedAvailableList!.scrollTop).toBe(200);
+    const rerenderedBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
+    expect(rerenderedBody).not.toBeNull();
+    expect(rerenderedBody!.scrollTop).toBe(180);
+  });
+
+  it("preserves the inline editor linked skills scroll position after moving a skill back to available", async () => {
+    const harness = createHarness();
+    await tick();
+
+    let skillOffsetTop = 100;
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.skillName === "lecture-read") {
+          return skillOffsetTop;
+        }
+        return this.dataset.skillName === "grill-me" ? 120 : 0;
+      },
+    });
+    const originalRequestRender = harness.callbacks.requestRender;
+    let renderCount = 0;
+    harness.callbacks.requestRender = () => {
+      renderCount += 1;
+      if (renderCount >= 3) {
+        skillOffsetTop = 180;
+      }
+      originalRequestRender();
+    };
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-edit-toggle"]')?.click();
+    await tick();
+
+    const availableCheckbox = Array.from(
+      harness.hubRoot.querySelectorAll<HTMLInputElement>(".obsidian-codex__panel-skill-picker-list--available input[type='checkbox']"),
+    ).find((input) => input.parentElement?.dataset.skillName === "grill-me");
+    expect(availableCheckbox).not.toBeNull();
+    availableCheckbox!.checked = true;
+    availableCheckbox!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+
+    const linkedList = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__panel-skill-picker-list--linked");
+    expect(linkedList).not.toBeNull();
+    const hubBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
+    expect(hubBody).not.toBeNull();
+    hubBody!.scrollTop = 180;
+    hubBody!.dispatchEvent(new Event("scroll"));
+    linkedList!.scrollTop = 90;
+    linkedList!.dispatchEvent(new Event("scroll"));
+
+    const linkedCheckbox = Array.from(linkedList!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
+      (input) => input.parentElement?.dataset.skillName === "grill-me",
+    );
+    expect(linkedCheckbox).not.toBeNull();
+    linkedCheckbox!.checked = false;
+    linkedCheckbox!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+
+    const rerenderedLinkedList = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__panel-skill-picker-list--linked");
+    expect(rerenderedLinkedList).not.toBeNull();
+    expect(rerenderedLinkedList!.scrollTop).toBe(170);
+    const rerenderedBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
+    expect(rerenderedBody).not.toBeNull();
+    expect(rerenderedBody!.scrollTop).toBe(180);
+  });
+
+  it("preserves the create-panel available skills scroll position after selecting a skill", async () => {
+    const harness = createHarness();
+    await tick();
+
+    let skillOffsetTop = 150;
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get(this: HTMLElement) {
+        const skillName = this.dataset.skillName;
+        if (skillName === "lecture-read") {
+          return 130;
+        }
+        if (skillName === "grill-me") {
+          return skillOffsetTop;
+        }
+        return 0;
+      },
+    });
+    const originalRequestRender = harness.callbacks.requestRender;
+    let renderCount = 0;
+    harness.callbacks.requestRender = () => {
+      renderCount += 1;
+      if (renderCount >= 2) {
+        skillOffsetTop = 260;
+      }
+      originalRequestRender();
+    };
+
+    harness.hubRoot.querySelector<HTMLButtonElement>('[data-smoke="panel-studio-add"]')?.click();
+    await tick();
+
+    const popover = harness.hubRoot.querySelector<HTMLElement>('[data-smoke="panel-create-popover"]');
+    expect(popover).not.toBeNull();
+    const availableList = popover!.querySelector<HTMLDivElement>(".obsidian-codex__panel-skill-picker-list--available");
+    expect(availableList).not.toBeNull();
+    const hubBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
+    expect(hubBody).not.toBeNull();
+    hubBody!.scrollTop = 180;
+    hubBody!.dispatchEvent(new Event("scroll"));
+    availableList!.scrollTop = 140;
+    availableList!.dispatchEvent(new Event("scroll"));
+
+    const checkbox = Array.from(availableList!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
+      (input) => input.parentElement?.dataset.skillName === "lecture-read",
+    );
+    expect(checkbox).not.toBeNull();
+    checkbox!.checked = true;
+    checkbox!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+
+    const rerenderedPopover = harness.hubRoot.querySelector<HTMLElement>('[data-smoke="panel-create-popover"]');
+    const rerenderedAvailableList = rerenderedPopover?.querySelector<HTMLDivElement>(".obsidian-codex__panel-skill-picker-list--available");
+    expect(rerenderedAvailableList).not.toBeNull();
+    expect(rerenderedAvailableList!.scrollTop).toBe(250);
+    const rerenderedBody = harness.hubRoot.querySelector<HTMLDivElement>(".obsidian-codex__ingest-hub-body");
+    expect(rerenderedBody).not.toBeNull();
+    expect(rerenderedBody!.scrollTop).toBe(180);
   });
 
   it("sends once, shows busy state, and collapses Panel Studio only after success", async () => {
