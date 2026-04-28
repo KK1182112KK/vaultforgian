@@ -4,6 +4,8 @@ A desktop-only Obsidian plugin that wires the official [Codex CLI](https://githu
 
 > Status: early release. Desktop-only. Targets macOS, Windows, and Linux on Obsidian Desktop, with Windows-native Codex installs preferred and WSL kept as an optional fallback.
 
+Demo site development now lives in the separate public repository [KK1182112KK/vaultforgian-site](https://github.com/KK1182112KK/vaultforgian-site). The production demo URL is managed from that site repository's Vercel deployment.
+
 ---
 
 ## What you get
