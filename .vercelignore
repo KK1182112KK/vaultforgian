@@ -1,0 +1,4 @@
+node_modules
+site/node_modules
+site/dist/demo/obsidian-noteforge-demo.mp4
+site/public/demo/obsidian-noteforge-demo.mp4
