@@ -44,9 +44,26 @@ export function hasRepairablePatchSafetyIssue(proposal: Pick<PatchProposal, "saf
   return Boolean(proposal.safetyIssues?.some((issue) => issue.code === "unsafe_full_update"));
 }
 
+export function canApplyUnsafeFullUpdateWithConfirmation(
+  proposal: Pick<PatchProposal, "intent" | "safetyIssues">,
+): boolean {
+  if (proposal.intent === "delete") {
+    return false;
+  }
+  const issues = proposal.safetyIssues ?? [];
+  return (
+    issues.length > 0 &&
+    issues.every((issue) => issue.code === "unsafe_full_update" || issue.code === "full_replace_requires_review")
+  );
+}
+
 export function shouldBlockExplicitPatchApply(
   proposal: Pick<PatchProposal, "status" | "intent" | "safetyIssues">,
+  options: { allowUnsafeFullReplace?: boolean } = {},
 ): boolean {
+  if (options.allowUnsafeFullReplace && canApplyUnsafeFullUpdateWithConfirmation(proposal)) {
+    return false;
+  }
   return (
     proposal.status === "blocked" ||
     proposal.intent === "delete" ||

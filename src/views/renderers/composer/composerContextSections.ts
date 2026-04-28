@@ -3,7 +3,10 @@ import { basename } from "node:path";
 import type { PatchQualityIssue, PatchSafetyIssue } from "../../../model/types";
 import type { LocalizedCopy } from "../../../util/i18n";
 import { PatchConflictError } from "../../../util/patchConflicts";
-import { shouldBlockExplicitPatchApply } from "../../../util/patchSafety";
+import {
+  canApplyUnsafeFullUpdateWithConfirmation,
+  shouldBlockExplicitPatchApply,
+} from "../../../util/patchSafety";
 import { openPatchConflictModal } from "../../patchConflictUi";
 import type { ComposerContextSectionDeps, ComposerSectionRenderState } from "./types";
 
@@ -325,18 +328,32 @@ export class ComposerContextSections {
       });
       applyButton.type = "button";
       const explicitApplyBlocked = shouldBlockExplicitPatchApply(proposal);
-      applyButton.disabled = patchActionInFlight || explicitApplyBlocked;
+      const canConfirmUnsafeFullReplace =
+        explicitApplyBlocked && canApplyUnsafeFullUpdateWithConfirmation(proposal);
+      applyButton.disabled = patchActionInFlight || (explicitApplyBlocked && !canConfirmUnsafeFullReplace);
       if (explicitApplyBlocked) {
-        applyButton.title = context.copy.workspace.patchSafetyBlocked;
+        applyButton.title = canConfirmUnsafeFullReplace
+          ? context.copy.workspace.patchSafetyApplyConfirm
+          : context.copy.workspace.patchSafetyBlocked;
       }
       applyButton.addEventListener("click", () => {
-        if (this.deps.state.applyingPatchIds.has(proposal.id) || explicitApplyBlocked) {
+        if (this.deps.state.applyingPatchIds.has(proposal.id)) {
           return;
+        }
+        if (explicitApplyBlocked) {
+          if (!canConfirmUnsafeFullReplace) {
+            return;
+          }
+          if (!window.confirm(context.copy.workspace.patchSafetyApplyConfirm)) {
+            return;
+          }
         }
         this.deps.state.applyingPatchIds.add(proposal.id);
         applyButton.disabled = true;
         this.deps.callbacks.requestRender();
-        void context.service.applyPatchProposal(context.activeTab!.id, proposal.id).catch((error: unknown) => {
+        void context.service.applyPatchProposal(context.activeTab!.id, proposal.id, {
+          allowUnsafeFullReplace: canConfirmUnsafeFullReplace,
+        }).catch((error: unknown) => {
           if (error instanceof PatchConflictError) {
             openPatchConflictModal(context.app, context.service, context.copy.workspace, error);
             return;

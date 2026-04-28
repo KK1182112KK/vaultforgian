@@ -3023,8 +3023,15 @@ export class CodexService {
     await this.approvalCoordinator.respondToAllApprovals(tabId, decision);
   }
 
-  async applyPatchProposal(tabId: string, patchId: string): Promise<void> {
-    await this.approvalCoordinator.applyPatchProposal(tabId, patchId, { allowReadabilityRisk: true });
+  async applyPatchProposal(
+    tabId: string,
+    patchId: string,
+    options: { allowUnsafeFullReplace?: boolean } = {},
+  ): Promise<void> {
+    await this.approvalCoordinator.applyPatchProposal(tabId, patchId, {
+      allowReadabilityRisk: true,
+      allowUnsafeFullReplace: options.allowUnsafeFullReplace,
+    });
   }
 
   async overwritePatchProposal(

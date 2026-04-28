@@ -31,6 +31,7 @@ type AbortReason = "user_interrupt" | "approval_abort" | "tab_close" | "plugin_u
 export type PatchOverwriteResult = "applied" | "changed";
 export interface PatchApplyOptions {
   allowReadabilityRisk?: boolean;
+  allowUnsafeFullReplace?: boolean;
 }
 
 interface VaultTaskMatchResult {
@@ -488,7 +489,7 @@ export class ApprovalCoordinator {
     if (!tab || !proposal) {
       return;
     }
-    if (shouldBlockExplicitPatchApply(proposal)) {
+    if (shouldBlockExplicitPatchApply(proposal, { allowUnsafeFullReplace: options.allowUnsafeFullReplace })) {
       throw new Error(this.deps.getLocalizedCopy().workspace.patchSafetyBlocked);
     }
     this.patchApplyActionsInFlight.add(patchActionKey);
@@ -565,7 +566,7 @@ export class ApprovalCoordinator {
     if (!tab || !proposal) {
       return "applied";
     }
-    if (shouldBlockExplicitPatchApply(proposal)) {
+    if (shouldBlockExplicitPatchApply(proposal, { allowUnsafeFullReplace: force })) {
       throw new Error(this.deps.getLocalizedCopy().workspace.patchSafetyBlocked);
     }
     const targetPath = this.assertManagedNotePath(proposal.targetPath, (path) => this.getUnsafeNotePathMessage(path));

@@ -198,6 +198,7 @@ export interface LocalizedCopy {
     patchQualityIssue: (code: PatchQualityIssueCode, line?: number | null, detail?: string | null) => string;
     patchQualityIssueGroup: (code: PatchQualityIssueCode, detail?: string | null) => string;
     patchSafetyBlocked: string;
+    patchSafetyApplyConfirm: string;
     patchSafetyReview: string;
     patchSafetyIssue: (code: PatchSafetyIssueCode, detail?: string | null, deletedPercent?: number | null) => string;
     openedAt: (text: string) => string;
@@ -686,6 +687,7 @@ const EN_COPY: LocalizedCopy = {
     patchQualityIssue: (code, line, detail) => formatEnglishPatchQualityIssue(code, line, detail),
     patchQualityIssueGroup: (code, detail) => formatEnglishPatchQualityIssueGroup(code, detail),
     patchSafetyBlocked: "Blocked: this patch could remove existing note content.",
+    patchSafetyApplyConfirm: "Apply this full-note replacement? Existing note content may be removed.",
     patchSafetyReview: "Review required: this patch changes or removes protected note content.",
     patchSafetyIssue: (code, detail, deletedPercent) => formatEnglishPatchSafetyIssue(code, detail, deletedPercent),
     openedAt: (text) => `Opened ${text}`,
@@ -1038,6 +1040,7 @@ const JA_COPY: LocalizedCopy = {
     patchQualityIssue: (code, line, detail) => formatJapanesePatchQualityIssue(code, line, detail),
     patchQualityIssueGroup: (code, detail) => formatJapanesePatchQualityIssueGroup(code, detail),
     patchSafetyBlocked: "ブロック: この patch は既存ノート本文を削除する可能性があります。",
+    patchSafetyApplyConfirm: "このノート全体の置換を適用しますか？既存の本文が削除される可能性があります。",
     patchSafetyReview: "確認必須: この patch は保護対象のノート本文を変更または削除します。",
     patchSafetyIssue: (code, detail, deletedPercent) => formatJapanesePatchSafetyIssue(code, detail, deletedPercent),
     openedAt: (text) => `Opened ${text}`,

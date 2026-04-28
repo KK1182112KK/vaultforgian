@@ -331,7 +331,7 @@ function createHarness(
     getTabPatchBasket: (): PatchProposal[] => [],
     openPatchTarget: vi.fn(),
     rejectPatchProposal: vi.fn(),
-    applyPatchProposal: vi.fn(),
+    applyPatchProposal: vi.fn(async () => {}),
     clearActivePanelContext: vi.fn((tabId: string) => {
       if (tabId === activeTab.id) {
         activeTab.activeStudyRecipeId = null;
@@ -530,7 +530,7 @@ function createMultiTabComposerHarness() {
     getTabPatchBasket: () => [],
     openPatchTarget: vi.fn(),
     rejectPatchProposal: vi.fn(),
-    applyPatchProposal: vi.fn(),
+    applyPatchProposal: vi.fn(async () => {}),
     clearActivePanelContext: vi.fn(),
     getPermissionMode: () => "suggest" as const,
     getAvailableModels: () => state.availableModels,
@@ -1541,7 +1541,7 @@ describe("Panel Studio composer flow", () => {
     expect(harness.composerRoot.textContent).toContain("Plugin normalized Markdown structure. Review it before applying.");
   });
 
-  it("shows blocked patch safety copy and disables apply without moving controls", async () => {
+  it("shows blocked patch safety copy and allows confirmed full replacement apply without moving controls", async () => {
     const harness = createHarness();
     const proposal: PatchProposal = {
       id: "patch-blocked-1",
@@ -1567,7 +1567,18 @@ describe("Panel Studio composer flow", () => {
     expect(harness.composerRoot.textContent).toContain("Existing note content is protected unless full replacement is explicit.");
     const buttons = Array.from(harness.composerRoot.querySelectorAll<HTMLButtonElement>(".obsidian-codex__change-card-btn"));
     expect(buttons.map((button) => button.textContent)).toEqual(["Open", "Reject", "Apply"]);
-    expect(buttons.find((button) => button.textContent === "Apply")?.disabled).toBe(true);
+    const applyButton = buttons.find((button) => button.textContent === "Apply");
+    expect(applyButton?.disabled).toBe(false);
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    applyButton?.click();
+    await tick();
+
+    expect(confirmSpy).toHaveBeenCalledWith("Apply this full-note replacement? Existing note content may be removed.");
+    expect(harness.service.applyPatchProposal).toHaveBeenCalledWith("tab-1", "patch-blocked-1", {
+      allowUnsafeFullReplace: true,
+    });
+    confirmSpy.mockRestore();
   });
 
   it("summarizes many patch issues compactly while keeping patch actions reachable", async () => {

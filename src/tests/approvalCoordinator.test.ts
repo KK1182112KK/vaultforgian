@@ -459,6 +459,37 @@ describe("ApprovalCoordinator", () => {
     expect(store.getActiveTab()?.patchBasket[0]?.status).toBe("pending");
   });
 
+  it("applies unsafe full-update patches after explicit replacement confirmation", async () => {
+    const { store, files, coordinator } = createDeps({}, { "notes/source.md": "# Source\n\nOriginal" });
+    const tabId = store.getActiveTab()!.id;
+    store.setPatchBasket(tabId, [
+      {
+        id: "patch-confirmed-full-update",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-1",
+        targetPath: "notes/source.md",
+        kind: "update",
+        intent: "augment",
+        baseSnapshot: "# Source\n\nOriginal",
+        proposedText: "# Rewritten",
+        unifiedDiff: "@@",
+        summary: "Rewrite the whole note",
+        status: "blocked",
+        safetyIssues: [{ code: "unsafe_full_update", detail: "content_update_without_anchors" }],
+        createdAt: 1,
+      },
+    ]);
+
+    await coordinator.applyPatchProposal(tabId, "patch-confirmed-full-update", {
+      allowReadabilityRisk: true,
+      allowUnsafeFullReplace: true,
+    });
+
+    expect(files.get("notes/source.md")).toBe("# Rewritten");
+    expect(store.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
+  });
+
   it("adds an audit breadcrumb after applying an auto-healed patch", async () => {
     const { store, files, coordinator } = createDeps({}, { "notes/source.md": "Intro\nTail" });
     const tabId = store.getActiveTab()!.id;
