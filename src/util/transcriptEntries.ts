@@ -37,9 +37,24 @@ function isGenericMcpActivity(activity: ToolCallRecord): boolean {
   return visibleTokens.length > 0 && visibleTokens.every((token) => token === "mcp_tool" || token === "mcp");
 }
 
+function isCompletedPluginManagedApplyActivity(activity: ToolCallRecord): boolean {
+  if (activity.status !== "completed" || activity.kind !== "file") {
+    return false;
+  }
+  const name = normalizeActivityToken(activity.name);
+  const title = normalizeActivityToken(activity.title);
+  if (name === "skill_update" && title.startsWith("update skill:")) {
+    return true;
+  }
+  return name === "write_note" && (title === "apply note patch" || title === "create note");
+}
+
 export function shouldRenderActivity(activity: ToolCallRecord): boolean {
   if (activity.status === "failed") {
     return true;
+  }
+  if (isCompletedPluginManagedApplyActivity(activity)) {
+    return false;
   }
   return !isGenericMcpActivity(activity);
 }

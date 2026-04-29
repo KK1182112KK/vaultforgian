@@ -8,6 +8,9 @@ const NEXT_RE = /^(?:next|continue|go on|次|次へ|進んで)$/iu;
 const SKIP_RE = /^(?:skip|pass|スキップ|飛ばして)$/iu;
 const QUIZ_HEADING_RE = /^\s{0,3}#{0,6}\s*Quiz\s+(\d+)(?:\s*\/\s*(\d+))?\b/im;
 const CHOICE_RE = /^\s*(?:[-*]\s+|\d+[.)]\s+)/u;
+const CORRECT_FEEDBACK_RE = /^\s*(?:(?:correct|right|yes|good|nice|exactly)(?![A-Za-z0-9_])|正解|その通り)/iu;
+const INCORRECT_FEEDBACK_RE = /^\s*(?:(?:not\s+quite|incorrect|wrong|close|no)(?![A-Za-z0-9_])|惜しい|違います|不正解)/iu;
+const QUESTION_SENTENCE_RE = /(?:^|[\s。.!！？])([^?？\n]+[?？])/gu;
 
 export function createStudyQuizSession(id: string, now: number, total = DEFAULT_STUDY_QUIZ_TOTAL): StudyQuizSession {
   return {
@@ -81,14 +84,53 @@ export function syncStudyQuizSessionFromAssistantText(current: StudyQuizSession,
   const parsedTotal = match?.[2] ? Number.parseInt(match[2], 10) : null;
   const total = parsedTotal && Number.isFinite(parsedTotal) ? normalizeQuizTotal(parsedTotal) : current.total;
   const questionPrompt = parsedIndex ? extractQuestionPrompt(text, parsedIndex) : null;
+  const headinglessQuestionPrompt = parsedIndex ? null : extractHeadinglessQuestionPrompt(text);
 
   if (!parsedIndex || !Number.isFinite(parsedIndex)) {
-    return current.lastUserResponseKind === "unknown"
-      ? markCurrentQuestion(current, {
+    if (current.lastUserResponseKind === "unknown") {
+      return {
+        ...markCurrentQuestion(current, {
           status: "reviewed",
+          prompt: headinglessQuestionPrompt,
           now,
-        })
-      : { ...current, updatedAt: now };
+        }),
+        lastUserResponseKind: null,
+      };
+    }
+
+    if (current.lastUserResponseKind === "answer" && isCorrectAssistantFeedback(text)) {
+      const advanced = advanceStudyQuizSession(current, "next", now);
+      if (advanced.status === "completed") {
+        return {
+          ...advanced,
+          lastUserResponseKind: null,
+        };
+      }
+      return {
+        ...advanced,
+        questions: headinglessQuestionPrompt
+          ? upsertQuestion(advanced.questions, {
+              index: advanced.currentIndex,
+              prompt: headinglessQuestionPrompt,
+              status: "pending",
+            })
+          : advanced.questions,
+        lastUserResponseKind: null,
+      };
+    }
+
+    if (current.lastUserResponseKind === "answer" && isIncorrectAssistantFeedback(text)) {
+      return {
+        ...markCurrentQuestion(current, {
+          status: "reviewed",
+          prompt: headinglessQuestionPrompt,
+          now,
+        }),
+        lastUserResponseKind: null,
+      };
+    }
+
+    return { ...current, updatedAt: now };
   }
 
   if (parsedIndex > total) {
@@ -139,6 +181,8 @@ export function formatStudyQuizSessionForPrompt(session: StudyQuizSession | null
     return null;
   }
   const currentLabel = `Quiz ${session.currentIndex}/${session.total}`;
+  const nextLabel =
+    session.currentIndex < session.total ? `Quiz ${session.currentIndex + 1}/${session.total}` : `Quiz ${session.total}/${session.total}`;
   const lines = [
     "Study quiz session:",
     `- Total questions: ${session.total}.`,
@@ -163,12 +207,14 @@ export function formatStudyQuizSessionForPrompt(session: StudyQuizSession | null
     lines.push(
       `- Evaluate the learner's answer to ${currentLabel}. Advance only if it is correct or the learner explicitly asked to skip/continue.`,
     );
+    lines.push(`- If the answer is correct, advance with "${nextLabel}". If it is not correct, keep "${currentLabel}".`);
   } else {
     lines.push(`- Ask exactly one question as ${currentLabel}.`);
   }
   lines.push(
     `- Use the visible heading "${currentLabel}" for the current question. Never reuse this heading for a different question.`,
   );
+  lines.push(`- Every visible quiz question must include a "Quiz n/${session.total}" heading.`);
   lines.push("- Keep quiz explanations concise and do not expose this hidden quiz session state.");
   if (locale === "ja") {
     lines.push("- User-visible quiz text must follow the selected plugin language unless the user writes in another language.");
@@ -256,4 +302,54 @@ function extractQuestionPrompt(text: string, quizIndex: number): string | null {
     return trimmed.replace(/^\*\*(.+)\*\*$/u, "$1");
   }
   return null;
+}
+
+function isCorrectAssistantFeedback(text: string): boolean {
+  return CORRECT_FEEDBACK_RE.test(getLeadingFeedbackLine(text));
+}
+
+function isIncorrectAssistantFeedback(text: string): boolean {
+  return INCORRECT_FEEDBACK_RE.test(getLeadingFeedbackLine(text));
+}
+
+function getLeadingFeedbackLine(text: string): string {
+  return text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean) ?? "";
+}
+
+function extractHeadinglessQuestionPrompt(text: string): string | null {
+  const blocks = text
+    .split(/\n{2,}/u)
+    .map((block) =>
+      block
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(" "),
+    )
+    .filter(Boolean);
+
+  for (const block of blocks.reverse()) {
+    const question = extractLastQuestionSentence(block);
+    if (question) {
+      return question;
+    }
+  }
+
+  return null;
+}
+
+function extractLastQuestionSentence(text: string): string | null {
+  const matches = [...text.matchAll(QUESTION_SENTENCE_RE)];
+  const raw = matches.at(-1)?.[1]?.trim();
+  if (!raw) {
+    return null;
+  }
+  return raw
+    .replace(/^\s*(?:[-*]\s+|\d+[.)]\s+)/u, "")
+    .replace(/^\*\*(.+)\*\*$/u, "$1")
+    .replace(/^Quiz\s+\d+(?:\s*\/\s*\d+)?\s*/iu, "")
+    .trim();
 }

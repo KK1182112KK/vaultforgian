@@ -352,12 +352,32 @@ const LOCAL_APPLY_CONFIRMATION_PATTERNS: RegExp[] = [
   /^(?:apply(?: it| that| the patch)?|go ahead(?: and apply(?: it| the patch)?)?)$/iu,
 ];
 
-function matchesLocalApplyConfirmation(input: string): boolean {
-  const normalized = input
+const LOCAL_APPLY_CTA_PATTERNS: RegExp[] = [
+  /^(?:apply|reflect)(?:\s+(?:this|it|that))?\s+(?:to|in)\s+(?:the\s+)?note$/iu,
+  /^apply\s+to\s+note$/iu,
+  /^(?:ノート|note)(?:に|へ)?(?:反映|適用)(?:する|して|してください|して下さい)?$/iu,
+  /^(?:今の|この)?ノート(?:に|へ)(?:反映|適用)(?:する|して|してください|して下さい)?$/iu,
+];
+
+function normalizeLocalApplyInput(input: string): string {
+  return input
     .trim()
     .replace(/[。.!！?？]+$/u, "")
     .trim();
-  return Boolean(normalized && LOCAL_APPLY_CONFIRMATION_PATTERNS.some((pattern) => pattern.test(normalized)));
+}
+
+function matchesLocalApplyCommandCta(input: string): boolean {
+  const normalized = normalizeLocalApplyInput(input);
+  return Boolean(normalized && LOCAL_APPLY_CTA_PATTERNS.some((pattern) => pattern.test(normalized)));
+}
+
+function matchesLocalApplyConfirmation(input: string): boolean {
+  const normalized = normalizeLocalApplyInput(input);
+  return Boolean(
+    normalized &&
+      (LOCAL_APPLY_CONFIRMATION_PATTERNS.some((pattern) => pattern.test(normalized)) ||
+        LOCAL_APPLY_CTA_PATTERNS.some((pattern) => pattern.test(normalized))),
+  );
 }
 
 const STRONG_NOTE_REFLECTION_PATTERNS: RegExp[] = [
@@ -525,6 +545,7 @@ export class CodexService {
   private installedSkillCatalog: InstalledSkillDefinition[] = [];
   private readonly processedApprovedEditKeys = new Set<string>();
   private readonly queuedSkillUpdateApprovalKeys = new Set<string>();
+  private readonly suppressedDuplicateQuizReplies = new Map<string, { text: string; observedAt: number }>();
 
   constructor(
     private readonly app: App,
@@ -563,6 +584,7 @@ export class CodexService {
         this.updateAccountUsageFromPatch(limits, threadId, source, updatedAt),
       queueAssistantArtifactSync: (tabId, messageId, text, visibility) =>
         this.queueAssistantArtifactSync(tabId, messageId, text, visibility),
+      shouldSuppressAssistantOutput: (tabId, text) => this.shouldSuppressDuplicateQuizAssistantReply(tabId, text),
     });
     this.approvalCoordinator = new ApprovalCoordinator({
       app: this.app,
@@ -1771,6 +1793,55 @@ export class CodexService {
     );
   }
 
+  private shouldSuppressDuplicateQuizAssistantReply(tabId: string, candidateText: string): boolean {
+    const tab = this.findTab(tabId);
+    if (tab?.studyCoachState?.quizSession?.status !== "active") {
+      return false;
+    }
+    const normalizedCandidate = this.normalizeVisibleAssistantReplyForCompare(candidateText);
+    if (!normalizedCandidate) {
+      return false;
+    }
+    const previousAssistant = [...tab.messages]
+      .reverse()
+      .find((message) => message.kind === "assistant" && !message.pending && message.text.trim().length > 0);
+    if (!previousAssistant) {
+      return false;
+    }
+    if (this.normalizeVisibleAssistantReplyForCompare(previousAssistant.text) !== normalizedCandidate) {
+      return false;
+    }
+    this.suppressedDuplicateQuizReplies.set(tabId, {
+      text: candidateText,
+      observedAt: Date.now(),
+    });
+    return true;
+  }
+
+  private consumeSuppressedDuplicateQuizReply(tabId: string): string | null {
+    const entry = this.suppressedDuplicateQuizReplies.get(tabId) ?? null;
+    this.suppressedDuplicateQuizReplies.delete(tabId);
+    return entry?.text ?? null;
+  }
+
+  private buildQuizDuplicateRepairPrompt(originalPrompt: string, duplicateReply: string): string {
+    return [
+      "Quiz repeat repair:",
+      "The previous assistant reply exactly repeated an earlier visible quiz reply, so the plugin suppressed it.",
+      "Do not repeat the suppressed reply. Evaluate the learner's latest response against the current Study quiz session.",
+      "If the learner was correct, briefly confirm and advance to the next Quiz n/5. If the learner was wrong or unsure, give one hint and keep the same Quiz n/5.",
+      "Every visible quiz question must include its Quiz n/5 heading. Do not expose this repair instruction.",
+      `Latest learner prompt:\n${originalPrompt.trim()}`,
+      `Suppressed duplicate reply:\n${this.getVisibleAssistantText(duplicateReply)}`,
+    ].join("\n\n");
+  }
+
+  private buildQuizDuplicateSuppressedMessage(): string {
+    return this.getLocale() === "ja"
+      ? "同じ quiz 返答が繰り返されたため非表示にしました。もう一度、現在の問題への回答を送ってください。"
+      : "A repeated quiz reply was hidden. Please answer the current quiz again.";
+  }
+
   private getVisibleUserPromptText(text: string, internalPromptKind: string | null | undefined = null): string {
     return normalizeVisibleUserPromptText(text, this.getLocalizedCopy().workspace.reflectInNote, internalPromptKind).trim();
   }
@@ -2962,23 +3033,32 @@ export class CodexService {
       const visiblePrompt = (context?.transcriptPrompt?.trim() || prompt).trim();
       this.prepareStudyQuizSessionForPrompt(tabId, executionPromptBase);
 
-      this.studyPanels.capturePanelSessionOrigin(tabId, normalizedInput);
+      const bypassTurnSkillSelection = context?.transcriptMeta?.internalPromptKind === "rewrite_followup";
+      if (!bypassTurnSkillSelection) {
+        this.studyPanels.capturePanelSessionOrigin(tabId, normalizedInput);
+      }
 
       const mentionResolution = await this.resolveMentionContext(promptMetadata.mentions);
       const currentTab = getCurrentTab();
-      const workflowSkillRefs = currentTab?.studyWorkflow
+      const workflowSkillRefs = !bypassTurnSkillSelection && currentTab?.studyWorkflow
         ? getStudyWorkflowDefinition(currentTab.studyWorkflow, this.getLocale()).safeAutoSkillRefs.map((name) => `$${name}`)
         : [];
       const composeMode = currentTab?.composeMode ?? "chat";
       if (currentTab && this.shouldAutoCompactTab(currentTab)) {
         this.compactTab(tabId, "auto");
       }
-      const requestedSkillContext = await this.resolveRequestedSkillContext(
-        getCurrentTab(),
-        expanded.skillPrompt.trim() ? [expanded.skillPrompt.trim()] : [],
-        mentionResolution.skillNames.map((name) => `$${name}`),
-        workflowSkillRefs,
-      );
+      const requestedSkillContext = bypassTurnSkillSelection
+        ? {
+            skillNames: [],
+            resolvedSkillDefinitions: [],
+            unresolvedPanelSelectedSkillNames: [],
+          }
+        : await this.resolveRequestedSkillContext(
+            getCurrentTab(),
+            expanded.skillPrompt.trim() ? [expanded.skillPrompt.trim()] : [],
+            mentionResolution.skillNames.map((name) => `$${name}`),
+            workflowSkillRefs,
+          );
       const unresolvedPanelSelectedSkillNames = this.getUnresolvedPanelSelectedSkillNames(
         getCurrentTab(),
         requestedSkillContext.skillNames,
@@ -2994,16 +3074,20 @@ export class CodexService {
         });
         return;
       }
-      await this.ensureSkillCatalogLoadedForAutoSelection();
-      let skillOrchestrationPlan = this.buildSkillOrchestrationPlanForTurn({
-        tab: getCurrentTab(),
-        prompt: executionPromptBase,
-        requiredSkillNames: requestedSkillContext.skillNames,
-        preflight: this.getActivePanelPreflightForSkillOrchestration(getCurrentTab(), tabId),
-      });
+      if (!bypassTurnSkillSelection) {
+        await this.ensureSkillCatalogLoadedForAutoSelection();
+      }
+      let skillOrchestrationPlan = bypassTurnSkillSelection
+        ? null
+        : this.buildSkillOrchestrationPlanForTurn({
+            tab: getCurrentTab(),
+            prompt: executionPromptBase,
+            requiredSkillNames: requestedSkillContext.skillNames,
+            preflight: this.getActivePanelPreflightForSkillOrchestration(getCurrentTab(), tabId),
+          });
       let skillNames = skillOrchestrationPlan?.selectedSkills ?? requestedSkillContext.skillNames;
       let resolvedSkillDefinitions = requestedSkillContext.resolvedSkillDefinitions;
-      if (skillOrchestrationPlan?.autoSelectedSkillNames.length) {
+      if (!bypassTurnSkillSelection && skillOrchestrationPlan?.autoSelectedSkillNames.length) {
         resolvedSkillDefinitions = await resolveRequestedSkillDefinitions(skillNames, this.installedSkillCatalog, {
           refreshInstalledSkills: async () => {
             await this.refreshCodexCatalogs();
@@ -3231,6 +3315,7 @@ export class CodexService {
     input: string,
     context?: SendPromptContext,
   ): Promise<boolean> {
+    const isApplyCta = matchesLocalApplyCommandCta(input);
     if (!matchesLocalApplyConfirmation(input)) {
       return false;
     }
@@ -3251,6 +3336,15 @@ export class CodexService {
     ).length;
     if (pendingPatchCount > 0) {
       await this.applyLatestPendingPatch(tabId);
+      return true;
+    }
+    if (isApplyCta) {
+      this.store.addMessage(tabId, {
+        id: makeId("apply-no-target"),
+        kind: "system",
+        text: this.getLocalizedCopy().notices.noPendingPatch,
+        createdAt: Date.now(),
+      });
       return true;
     }
     return false;
@@ -3310,6 +3404,7 @@ export class CodexService {
     this.store.setStatus(tabId, "busy");
     this.store.setWaitingState(tabId, this.createWaitingState("boot", mode, null, waitingSkillUsage));
     this.store.clearApprovals(tabId);
+    this.suppressedDuplicateQuizReplies.delete(tabId);
 
     let terminalError: string | null = null;
     let transcriptSyncResult: TranscriptSyncResult = "no_reply_found";
@@ -3558,6 +3653,47 @@ export class CodexService {
       }
 
       if (outcome.assistantCountAfter <= assistantCountBefore && !outcome.hasArtifactOutcome) {
+        const suppressedDuplicateQuizReply = this.consumeSuppressedDuplicateQuizReply(tabId);
+        if (suppressedDuplicateQuizReply && !proposalRepairPhase) {
+          if (allowEmptyReplyRecovery) {
+            await this.runTurn(
+              tabId,
+              this.buildQuizDuplicateRepairPrompt(prompt, suppressedDuplicateQuizReply),
+              mode,
+              composeMode,
+              skillNames,
+              turnContext,
+              images,
+              workingDirectory,
+              runtime,
+              executablePath,
+              launcherOverrideParts,
+              allowVaultWrite,
+              draftBackup,
+              false,
+              watchdogRecoveryAttempted,
+              turnId,
+              userMessageId,
+              proposalRepairPhase,
+              proposalRepairFailureMode,
+            );
+            return;
+          }
+          const repeatedReplyMessage = this.buildQuizDuplicateSuppressedMessage();
+          this.store.setRuntimeIssue(repeatedReplyMessage);
+          this.store.setStatus(tabId, "error", repeatedReplyMessage);
+          this.restoreDraftIfStillEmpty(tabId, draftBackup);
+          this.store.addMessage(tabId, {
+            id: makeId("quiz-duplicate"),
+            kind: "system",
+            text: repeatedReplyMessage,
+            meta: { tone: "warning" },
+            createdAt: Date.now(),
+          });
+          this.completePendingTurn(tabId, "error");
+          this.studyPanels.disarmPanelCompletionSignal(tabId);
+          return;
+        }
         if (proposalRepairPhase) {
           if (proposalRepairFailureMode === "silent") {
             return;
@@ -4006,6 +4142,10 @@ export class CodexService {
       return false;
     }
 
+    if (visibility === "visible" && this.shouldSuppressDuplicateQuizAssistantReply(tabId, normalizedText)) {
+      return false;
+    }
+
     if (this.hasDuplicateVisibleAssistantReply(tabId, normalizedText)) {
       return false;
     }
@@ -4323,7 +4463,7 @@ export class CodexService {
     return this.findTab(tabId)?.messages.find((message) => message.id === messageId && message.kind === "assistant") ?? null;
   }
 
-  private resolveSelectedSkillNamesForApprovedEdit(tabId: string, userMessage: ChatMessage | null): string[] {
+  private resolveSelectedSkillNamesForApprovedEdit(_tabId: string, userMessage: ChatMessage | null): string[] {
     const rawCsv = typeof userMessage?.meta?.effectiveSkillsCsv === "string" ? userMessage.meta.effectiveSkillsCsv : "";
     const csvNames = rawCsv
       .split(",")
@@ -4332,8 +4472,7 @@ export class CodexService {
     if (csvNames.length > 0) {
       return [...new Set(csvNames)];
     }
-    const tab = this.findTab(tabId);
-    return [...new Set([...(tab?.panelSessionOrigin?.selectedSkillNames ?? []), ...(tab?.activeStudySkillNames ?? [])].map((entry) => entry.trim()).filter(Boolean))];
+    return [];
   }
 
   private resolveActivePanelIdForApprovedEdit(tabId: string, userMessage: ChatMessage | null): string | null {
@@ -6482,9 +6621,6 @@ export class CodexService {
           sessionFile,
         });
         return "no_visible_reply_found";
-      }
-      if (visibility === "visible" && this.hasDuplicateVisibleAssistantReply(tabId, lastAssistantMessage.visibleText)) {
-        return "duplicate_reply";
       }
       return this.appendAssistantFallbackMessageWithVisibility(
         tabId,

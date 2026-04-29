@@ -84,4 +84,35 @@ describe("patchReadability", () => {
     expect(result.text).toBe(source);
     expect(result.qualityIssues).toEqual([]);
   });
+
+  it("flags same-line duplicate Markdown headings as review-required", () => {
+    const result = assessPatchReadability(
+      [
+        "# Pythagorean Theorem",
+        "",
+        "## Core Idea## Core Idea",
+        "### Nested Idea## Nested Idea",
+        "",
+        "Simple Example: 3-4-5## Simple Example: 3-4-5",
+      ].join("\n"),
+    );
+
+    expect(result.qualityState).toBe("review_required");
+    expect(result.qualityIssues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "duplicate_heading_fragment",
+          line: 3,
+        }),
+        expect.objectContaining({
+          code: "duplicate_heading_fragment",
+          line: 4,
+        }),
+        expect.objectContaining({
+          code: "duplicate_heading_fragment",
+          line: 6,
+        }),
+      ]),
+    );
+  });
 });

@@ -54,6 +54,127 @@ describe("study quiz session", () => {
     expect(next.questions[1]?.prompt).toBe("Which side is the hypotenuse?");
   });
 
+  it("syncs headingless correct feedback to the next quiz", () => {
+    const session = {
+      ...createStudyQuizSession("quiz-1", 1),
+      questions: [
+        {
+          index: 1,
+          prompt: "If the hypotenuse is 13 and one leg is 5, what is the other leg?",
+          choices: [],
+          answer: null,
+          explanation: null,
+          status: "pending" as const,
+        },
+      ],
+      lastUserResponseKind: "answer" as const,
+    };
+    const next = syncStudyQuizSessionFromAssistantText(
+      session,
+      [
+        "Correct.",
+        "Hint: for a missing leg, use b = sqrt(c^2 - a^2).",
+        "If the hypotenuse is 10 and one leg is 6, what is the other leg?",
+      ].join("\n\n"),
+      3,
+    );
+
+    expect(next.currentIndex).toBe(2);
+    expect(next.questions[0]?.status).toBe("answered");
+    expect(next.questions[1]?.prompt).toBe("If the hypotenuse is 10 and one leg is 6, what is the other leg?");
+    expect(next.lastUserResponseKind).toBeNull();
+  });
+
+  it("does not advance on headingless incorrect feedback", () => {
+    const session = {
+      ...createStudyQuizSession("quiz-1", 1),
+      questions: [
+        {
+          index: 1,
+          prompt: "Which side is the hypotenuse?",
+          choices: [],
+          answer: null,
+          explanation: null,
+          status: "pending" as const,
+        },
+      ],
+      lastUserResponseKind: "answer" as const,
+    };
+    const next = syncStudyQuizSessionFromAssistantText(
+      session,
+      "Not quite.\n\nHint: the hypotenuse is opposite the right angle.\n\nWhich side is the hypotenuse?",
+      3,
+    );
+
+    expect(next.currentIndex).toBe(1);
+    expect(next.questions[0]?.status).toBe("reviewed");
+    expect(next.lastUserResponseKind).toBeNull();
+  });
+
+  it("syncs Japanese headingless correct feedback to the next quiz", () => {
+    const session = {
+      ...createStudyQuizSession("quiz-1", 1),
+      questions: [
+        {
+          index: 1,
+          prompt: "斜辺が 13、一辺が 5 のとき、もう一辺は？",
+          choices: [],
+          answer: null,
+          explanation: null,
+          status: "pending" as const,
+        },
+      ],
+      lastUserResponseKind: "answer" as const,
+    };
+    const next = syncStudyQuizSessionFromAssistantText(
+      session,
+      ["正解です。", "次の問題です。", "斜辺が 10、一辺が 6 のとき、もう一辺は？"].join("\n\n"),
+      3,
+    );
+
+    expect(next.currentIndex).toBe(2);
+    expect(next.questions[0]?.status).toBe("answered");
+    expect(next.questions[1]?.prompt).toBe("斜辺が 10、一辺が 6 のとき、もう一辺は？");
+    expect(next.lastUserResponseKind).toBeNull();
+  });
+
+  it("does not advance on Japanese headingless incorrect feedback", () => {
+    const session = {
+      ...createStudyQuizSession("quiz-1", 1),
+      questions: [
+        {
+          index: 1,
+          prompt: "斜辺はどの辺ですか？",
+          choices: [],
+          answer: null,
+          explanation: null,
+          status: "pending" as const,
+        },
+      ],
+      lastUserResponseKind: "answer" as const,
+    };
+    const next = syncStudyQuizSessionFromAssistantText(
+      session,
+      "違います。\n\nヒント: 斜辺は直角の向かい側です。\n\n斜辺はどの辺ですか？",
+      3,
+    );
+
+    expect(next.currentIndex).toBe(1);
+    expect(next.questions[0]?.status).toBe("reviewed");
+    expect(next.lastUserResponseKind).toBeNull();
+  });
+
+  it("requires visible quiz headings in the prompt contract", () => {
+    const session = {
+      ...createStudyQuizSession("quiz-1", 1),
+      lastUserResponseKind: "answer" as const,
+    };
+    const prompt = formatStudyQuizSessionForPrompt(session, "en");
+
+    expect(prompt).toContain('Every visible quiz question must include a "Quiz n/5" heading.');
+    expect(prompt).toContain('If the answer is correct, advance with "Quiz 2/5".');
+  });
+
   it("completes instead of advancing beyond five questions", () => {
     const session = {
       ...createStudyQuizSession("quiz-1", 1),

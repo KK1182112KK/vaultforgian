@@ -359,6 +359,8 @@ function formatEnglishPatchQualityIssue(code: PatchQualityIssueCode, line?: numb
       return `${prefix}keep unmatched \`$$\` delimiters off prose lines; use standalone delimiter lines for multi-line display math.`;
     case "unquoted_callout_header":
       return `${prefix}quote the callout header with \`>\` so it belongs to the callout block.`;
+    case "duplicate_heading_fragment":
+      return `${prefix}separate or remove the duplicated heading fragment${detail ? ` (${detail}).` : "."}`;
     default:
       return `${prefix}review the Markdown structure before applying this patch.`;
   }
@@ -385,6 +387,8 @@ function formatJapanesePatchQualityIssue(code: PatchQualityIssueCode, line?: num
       return `${prefix}不完全な \`$$\` を本文行に置かず、複数行の式は単独行の区切りで囲ってください。`;
     case "unquoted_callout_header":
       return `${prefix}callout header も \`>\` で quote し、callout block に含めてください。`;
+    case "duplicate_heading_fragment":
+      return `${prefix}重複して連結された heading 断片を分けるか削除してください${detail ? ` (${detail})。` : "。"}`;
     default:
       return `${prefix}適用前に Markdown 構造を確認してください。`;
   }
@@ -408,6 +412,8 @@ function formatEnglishPatchQualityIssueGroup(code: PatchQualityIssueCode, detail
       return "Use standalone `$$` lines for multi-line display math.";
     case "unquoted_callout_header":
       return "Quote callout headers with `>`.";
+    case "duplicate_heading_fragment":
+      return "Fix duplicated heading fragments.";
     default:
       return "Review the Markdown structure before applying.";
   }
@@ -431,6 +437,8 @@ function formatJapanesePatchQualityIssueGroup(code: PatchQualityIssueCode, detai
       return "複数行の式は単独の `$$` 行で囲ってください。";
     case "unquoted_callout_header":
       return "callout header を `>` で quote してください。";
+    case "duplicate_heading_fragment":
+      return "重複した heading 断片を修正してください。";
     default:
       return "適用前に Markdown 構造を確認してください。";
   }

@@ -17,6 +17,7 @@ import {
 import { createEmptyAccountUsageSummary, createEmptyUsageSummary } from "../util/usage";
 import type { InstalledSkillDefinition } from "../util/skillCatalog";
 import type { SkillOrchestrationPlan } from "../util/skillOrchestration";
+import { createStudyQuizSession } from "../util/studyQuiz";
 
 const tempRoots: string[] = [];
 
@@ -1101,6 +1102,90 @@ describe("CodexService sendPrompt skill context", () => {
     expect(userMessages.at(-1)?.meta?.internalPromptKind).toBe("rewrite_followup");
   });
 
+  it("treats the visible Apply to note CTA as a local rewrite action without carrying stale panel skills", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-apply-cta-stale-skills-"));
+    tempRoots.push(vaultRoot);
+    const extraSkillRoot = join(vaultRoot, "extra-skills");
+    const figmaGenerateDir = join(extraSkillRoot, "figma-generate-design");
+    const figmaUseDir = join(extraSkillRoot, "figma-use");
+    await mkdir(figmaGenerateDir, { recursive: true });
+    await mkdir(figmaUseDir, { recursive: true });
+    const figmaGeneratePath = join(figmaGenerateDir, "SKILL.md");
+    const figmaUsePath = join(figmaUseDir, "SKILL.md");
+    await writeFile(figmaGeneratePath, "# Figma Generate Design\nUse only for Figma design generation.", "utf8");
+    await writeFile(figmaUsePath, "# Figma Use\nUse only when fetching Figma context.", "utf8");
+    const figmaSkills: InstalledSkillDefinition[] = [
+      {
+        name: "figma-generate-design",
+        description: "Use only for Figma design generation.",
+        path: figmaGeneratePath,
+      },
+      {
+        name: "figma-use",
+        description: "Use only when fetching Figma context.",
+        path: figmaUsePath,
+      },
+    ];
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => ({ ...DEFAULT_SETTINGS, extraSkillRoots: [extraSkillRoot] }),
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    vi.spyOn(service as never, "refreshCodexCatalogs").mockImplementation(async () => {
+      (service as unknown as { installedSkillCatalog: InstalledSkillDefinition[]; allInstalledSkillCatalog: InstalledSkillDefinition[] }).installedSkillCatalog = figmaSkills;
+      (service as unknown as { installedSkillCatalog: InstalledSkillDefinition[]; allInstalledSkillCatalog: InstalledSkillDefinition[] }).allInstalledSkillCatalog = figmaSkills;
+    });
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = createPanel("panel-figma", ["figma-generate-design", "figma-use"]);
+    service.store.setStudyRecipes([panel]);
+    service.store.setActiveStudyPanel(tabId, panel.id, ["figma-generate-design", "figma-use"]);
+    service.store.setTargetNotePath(tabId, "notes/current.md");
+    service.store.addMessage(tabId, {
+      id: "assistant-apply-cta",
+      kind: "assistant",
+      text: "Want me to apply this to the note now?",
+      createdAt: Date.now(),
+    });
+    service.store.setChatSuggestion(tabId, {
+      id: "rewrite-suggestion-apply-cta",
+      kind: "rewrite_followup",
+      status: "pending",
+      messageId: "assistant-apply-cta",
+      panelId: null,
+      panelTitle: null,
+      promptSnapshot: "Clarify the right-triangle condition.",
+      matchedSkillName: null,
+      canUpdatePanel: false,
+      canSaveCopy: false,
+      planSummary: null,
+      planStatus: null,
+      rewriteSummary: "Clarify the right-triangle condition.",
+      rewriteQuestion: "Want me to apply this to the note now?",
+      createdAt: Date.now(),
+    });
+
+    await service.sendPrompt(tabId, "Apply to note", { file: null, editor: null });
+
+    expect(runTurnSpy).toHaveBeenCalledTimes(1);
+    expect(runTurnSpy.mock.calls[0]?.[1]).toContain("Turn your immediately previous assistant answer");
+    expect(runTurnSpy.mock.calls[0]?.[4]).toEqual([]);
+    expect(runTurnSpy.mock.calls[0]?.[19]).toBeNull();
+    const userMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "user") ?? [];
+    expect(userMessages.at(-1)?.text).toBe("Apply to note");
+    expect(userMessages.at(-1)?.meta?.internalPromptKind).toBe("rewrite_followup");
+    expect(userMessages.at(-1)?.meta?.effectiveSkillsCsv).toBeNull();
+  });
+
   it("applies the only pending patch when the user sends an affirmative reply", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-pending-patch-affirmation-"));
     tempRoots.push(vaultRoot);
@@ -1136,6 +1221,60 @@ describe("CodexService sendPrompt skill context", () => {
     expect(runTurnSpy).not.toHaveBeenCalled();
     expect(writable.files.get("notes/current.md")).toBe("# Current\n\nOriginal\n\nAdded line.");
     expect(service.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
+  });
+
+  it("applies typed Apply to note to the only pending patch without starting a skilled turn", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-pending-patch-apply-cta-"));
+    tempRoots.push(vaultRoot);
+    const skillRoot = join(vaultRoot, "extra-skills");
+    const figmaSkillDir = join(skillRoot, "figma-generate-design");
+    await mkdir(figmaSkillDir, { recursive: true });
+    const figmaSkillPath = join(figmaSkillDir, "SKILL.md");
+    await writeFile(figmaSkillPath, "# Figma Generate Design\nUse only for Figma work.", "utf8");
+
+    const writable = createWritableApp(vaultRoot, { "notes/current.md": "# Current\n\nOriginal" });
+    const service = new CodexService(writable.app, () => ({ ...DEFAULT_SETTINGS, extraSkillRoots: [skillRoot] }), () => "en", null, async () => {}, async () => {});
+    const userOwnedSkill: InstalledSkillDefinition = {
+      name: "figma-generate-design",
+      description: "Use only for Figma work.",
+      path: figmaSkillPath,
+    };
+    (service as unknown as { installedSkillCatalog: InstalledSkillDefinition[]; allInstalledSkillCatalog: InstalledSkillDefinition[] }).installedSkillCatalog = [userOwnedSkill];
+    (service as unknown as { installedSkillCatalog: InstalledSkillDefinition[]; allInstalledSkillCatalog: InstalledSkillDefinition[] }).allInstalledSkillCatalog = [userOwnedSkill];
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = createPanel("panel-figma", ["figma-generate-design"]);
+    service.store.setStudyRecipes([panel]);
+    service.store.setActiveStudyPanel(tabId, panel.id, ["figma-generate-design"]);
+    service.store.setPatchBasket(tabId, [
+      {
+        id: "patch-apply-cta-1",
+        threadId: null,
+        sourceMessageId: "assistant-1",
+        originTurnId: "turn-original",
+        targetPath: "notes/current.md",
+        kind: "update",
+        baseSnapshot: "# Current\n\nOriginal",
+        proposedText: "# Current\n\nOriginal\n\nAdded line.",
+        unifiedDiff: "@@",
+        summary: "Update note",
+        status: "pending",
+        createdAt: Date.now(),
+      },
+    ]);
+
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    await service.sendPrompt(tabId, "Apply to note", { file: null, editor: null });
+
+    expect(runTurnSpy).not.toHaveBeenCalled();
+    expect(writable.files.get("notes/current.md")).toBe("# Current\n\nOriginal\n\nAdded line.");
+    expect(service.getActiveTab()?.patchBasket[0]?.status).toBe("applied");
+    expect(service.getActiveTab()?.pendingApprovals.some((approval) => approval.toolName === "skill_update")).toBe(false);
+    expect(service.getActiveTab()?.messages.some((message) => message.kind === "user" && message.text === "Apply to note")).toBe(false);
   });
 
   it("treats affirmative replies to Panel Studio suggestions as local panel updates", async () => {
@@ -2792,6 +2931,86 @@ describe("CodexService sendPrompt skill context", () => {
     const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
     expect(assistantMessages).toHaveLength(1);
     expect(assistantMessages[0]?.text).toBe("Already visible answer.");
+  });
+
+  it("suppresses active quiz backfill that exactly repeats the previous assistant bubble", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-quiz-session-duplicate-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const repeatedReply = [
+      "Correct.",
+      "Hint: for a missing leg, use b = sqrt(c^2 - a^2).",
+      "If the hypotenuse is 13 and one leg is 5, what is the other leg?",
+    ].join("\n\n");
+    service.store.setStudyCoachState(tabId, {
+      latestRecap: null,
+      weakPointLedger: [],
+      lastCheckpointAt: null,
+      quizSession: {
+        ...createStudyQuizSession("quiz-1", 1),
+        currentIndex: 2,
+      },
+    });
+    service.store.addMessage(tabId, {
+      id: "assistant-previous-quiz",
+      kind: "assistant",
+      text: repeatedReply,
+      createdAt: Date.now(),
+    });
+    service.store.addMessage(tabId, {
+      id: "user-answer",
+      kind: "user",
+      text: "10",
+      createdAt: Date.now(),
+    });
+
+    const sessionFile = join(vaultRoot, "quiz-session-duplicate-thread.jsonl");
+    await writeFile(
+      sessionFile,
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ text: repeatedReply }],
+        },
+      }),
+      "utf8",
+    );
+
+    vi.spyOn(service as never, "resolveSessionFile").mockResolvedValue(sessionFile);
+
+    await expect(
+      (
+        service as unknown as {
+          syncTranscriptFromSession: (tabId: string, threadId: string, visibility: "visible" | "artifact_only") => Promise<string>;
+        }
+      ).syncTranscriptFromSession(tabId, "thread-duplicate-quiz", "visible"),
+    ).resolves.toBe("duplicate_reply");
+
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages.map((message) => message.text)).toEqual([repeatedReply]);
+    expect(
+      (
+        service as unknown as {
+          consumeSuppressedDuplicateQuizReply: (tabId: string) => string | null;
+        }
+      ).consumeSuppressedDuplicateQuizReply(tabId),
+    ).toBe(repeatedReply);
   });
 
   it("waits for a late session reply before compact retrying", async () => {

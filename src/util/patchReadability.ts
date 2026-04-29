@@ -112,6 +112,28 @@ function countInlineDisplayDelimiterTokens(trimmedContent: string): number {
   return (trimmedContent.match(/\$\$/g) ?? []).length;
 }
 
+function normalizeHeadingFragment(value: string): string {
+  return value
+    .replace(/^#{1,6}\s*/u, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function parseDuplicateHeadingFragment(trimmedContent: string): string | null {
+  const openingMarker = trimmedContent.match(/^#{1,6}\s*/u)?.[0] ?? "";
+  const markerIndex = trimmedContent.indexOf("##", Math.max(1, openingMarker.length));
+  if (markerIndex < 0) {
+    return null;
+  }
+  const before = normalizeHeadingFragment(trimmedContent.slice(0, markerIndex));
+  const after = normalizeHeadingFragment(trimmedContent.slice(markerIndex + 2));
+  if (!before || before !== after) {
+    return null;
+  }
+  return before;
+}
+
 function buildMixedContextDetail(fromDepth: number, toDepth: number): string {
   return `${fromDepth === 0 ? "plain" : `quote_${fromDepth}`}->${toDepth === 0 ? "plain" : `quote_${toDepth}`}`;
 }
@@ -220,6 +242,10 @@ function collectIssues(lines: readonly string[]): PatchQualityIssue[] {
     if (marker) {
       const detail = line.quoteDepth > 0 ? `quoted:${marker}` : marker;
       issues.push(createIssue("math_delimiter_marker_collision", line.lineNumber, detail));
+    }
+    const duplicateHeadingFragment = parseDuplicateHeadingFragment(line.trimmedContent);
+    if (duplicateHeadingFragment) {
+      issues.push(createIssue("duplicate_heading_fragment", line.lineNumber, duplicateHeadingFragment));
     }
     const inlineDisplayTokenCount = countInlineDisplayDelimiterTokens(line.trimmedContent);
     if (inlineDisplayTokenCount > 0 && !isStandaloneDisplayDelimiter(line) && inlineDisplayTokenCount % 2 === 1) {

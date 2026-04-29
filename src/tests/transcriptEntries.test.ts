@@ -152,6 +152,45 @@ describe("transcript entry helpers", () => {
     expect(shouldRenderActivity(failedGenericMcp)).toBe(true);
   });
 
+  it("hides completed plugin-managed note apply activity while keeping failures visible", () => {
+    const completedApply: ToolCallRecord = {
+      id: "patch-1",
+      callId: "patch-1",
+      kind: "file",
+      name: "write_note",
+      title: "Apply note patch",
+      summary: "Clarify the right-triangle condition.",
+      argsJson: "@@",
+      createdAt: 15,
+      updatedAt: 16,
+      status: "completed",
+      resultText: "Pythagorean Theorem.md",
+    };
+    const failedApply: ToolCallRecord = {
+      ...completedApply,
+      id: "patch-failed",
+      callId: "patch-failed",
+      status: "failed",
+      resultText: "Patch conflict",
+    };
+    const completedSkillUpdate: ToolCallRecord = {
+      ...completedApply,
+      id: "skill-update-1",
+      callId: "skill-update-1",
+      name: "skill_update",
+      title: "Update skill: figma-generate-design",
+      summary: "Update learned refinements.",
+      resultText: "/vault/skills/figma-generate-design/SKILL.md",
+    };
+
+    expect(shouldRenderActivity(completedApply)).toBe(false);
+    expect(shouldRenderActivity(completedSkillUpdate)).toBe(false);
+    expect(shouldRenderActivity(failedApply)).toBe(true);
+
+    const entries = buildTranscriptEntries(messages, true, [completedApply, completedSkillUpdate], [], null, "ready");
+    expect(entries.some((entry) => entry.type === "activity")).toBe(false);
+  });
+
   it("appends a waiting row when no activity is available", () => {
     const entries = buildTranscriptEntries(messages, true, [], [], waitingState, "busy");
     expect(entries.at(-1)?.type).toBe("waiting");

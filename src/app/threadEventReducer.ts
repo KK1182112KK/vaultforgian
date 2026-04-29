@@ -248,6 +248,7 @@ export interface ThreadEventReducerDeps {
     text: string,
     visibility?: AssistantOutputVisibility,
   ) => void;
+  shouldSuppressAssistantOutput?: (tabId: string, text: string) => boolean;
 }
 
 export class ThreadEventReducer {
@@ -601,6 +602,9 @@ export class ThreadEventReducer {
       if (!pending) {
         this.deps.queueAssistantArtifactSync(tabId, messageId, text, visibility);
       }
+      return;
+    }
+    if (!pending && this.deps.shouldSuppressAssistantOutput?.(tabId, text)) {
       return;
     }
     this.deps.store.upsertMessage(tabId, messageId, (current) => ({

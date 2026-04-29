@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Notice } from "obsidian";
+import { MarkdownRenderer, Notice } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalResult } from "../../app/approvalCoordinator";
 import type { WorkspaceState } from "../../model/types";
@@ -156,6 +156,7 @@ function createCallbacks(): Pick<
 
 describe("TranscriptRenderer avatar safety", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     document.body.innerHTML = "";
     installObsidianDomHelpers();
     testNotice.reset();
@@ -252,6 +253,59 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(text).toContain("/deep-read");
     expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(2);
     expect(markdown.querySelectorAll(".obsidian-codex__chat-math--display")).toHaveLength(1);
+  });
+
+  it("removes Obsidian math postprocessor delimiter text around rendered math", async () => {
+    const renderSpy = vi.spyOn(MarkdownRenderer, "render").mockImplementation(async (_app, _markdown, element) => {
+      element.textContent = "";
+      element.appendChild(document.createTextNode("$"));
+      const katex = document.createElement("span");
+      katex.className = "katex";
+      katex.textContent = "c = √289 = 17";
+      element.appendChild(katex);
+      element.appendChild(document.createTextNode("$"));
+    });
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "Correct.\n\n$c = \\sqrt{8^2 + 15^2} = \\sqrt{64 + 225} = \\sqrt{289} = 17$",
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    expect(renderSpy).toHaveBeenCalled();
+    expect(text).not.toContain("$c =");
+    expect(text).not.toMatch(/\$\s*$/u);
+    expect(text).toContain("c = √289 = 17");
+  });
+
+  it("does not convert user-authored markdown math in chat bubbles", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "user",
+        text: "$a^2 + b^2 = c^2$",
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    expect(markdown.textContent).toContain("$a^2 + b^2 = c^2$");
+    expect(markdown.querySelector(".obsidian-codex__chat-math")).toBeNull();
   });
 
   it("keeps the welcome logo on the fallback icon", () => {

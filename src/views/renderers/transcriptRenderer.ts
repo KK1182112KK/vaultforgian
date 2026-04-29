@@ -7,7 +7,6 @@ import { extractAssistantProposals } from "../../util/assistantProposals";
 import {
   normalizeAssistantMathForMarkdown,
   prepareChatMarkdownForMathRender,
-  renderChatMathInElement,
   renderPreparedChatMathInElement,
 } from "../../util/chatMath";
 import { TRANSCRIPT_SOFT_COLLAPSE_WINDOW } from "../../util/conversationCompaction";
@@ -390,6 +389,9 @@ export class TranscriptRenderer {
     const markdownEl = bodyEl.createDiv({ cls: "obsidian-codex__message-markdown" });
     const preparedChatMath =
       message.kind === "assistant" ? prepareChatMarkdownForMathRender(this.getRenderableMessageText(context, message)) : null;
+    const finalizeAssistantChatMath = preparedChatMath
+      ? () => renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders)
+      : null;
     const renderPromise = MarkdownRenderer.render(
       context.app,
       preparedChatMath?.markdown ?? this.getRenderableMessageText(context, message),
@@ -397,17 +399,12 @@ export class TranscriptRenderer {
       "",
       this.callbacks.markdownComponent,
     );
-    if (preparedChatMath) {
-      renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders);
-    } else {
-      renderChatMathInElement(markdownEl);
-    }
+    finalizeAssistantChatMath?.();
     void renderPromise.then(() => {
-      if (preparedChatMath) {
-        renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders);
-      } else {
-        renderChatMathInElement(markdownEl);
-      }
+      finalizeAssistantChatMath?.();
+      window.requestAnimationFrame(() => {
+        finalizeAssistantChatMath?.();
+      });
     });
 
     if (

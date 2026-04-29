@@ -296,7 +296,8 @@ export type PatchQualityIssueCode =
   | "adjacent_block_spacing"
   | "mixed_display_math_context"
   | "display_math_same_line_delimiter"
-  | "unquoted_callout_header";
+  | "unquoted_callout_header"
+  | "duplicate_heading_fragment";
 export type PatchSafetyIssueCode =
   | "unsafe_full_update"
   | "full_replace_requires_review"

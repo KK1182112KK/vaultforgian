@@ -49,6 +49,22 @@ describe("chat math normalization", () => {
     ]);
   });
 
+  it("splits long inline derivations without leaking dollar delimiters", () => {
+    const segments = splitChatMathSegments(
+      "Correct. $c = \\sqrt{8^2 + 15^2} = \\sqrt{64 + 225} = \\sqrt{289} = 17$ One more.",
+    );
+
+    expect(segments).toEqual([
+      { kind: "text", text: "Correct. " },
+      {
+        kind: "math",
+        text: "c = \\sqrt{8^2 + 15^2} = \\sqrt{64 + 225} = \\sqrt{289} = 17",
+        display: false,
+      },
+      { kind: "text", text: " One more." },
+    ]);
+  });
+
   it("formats math fallback without markdown delimiters", () => {
     expect(formatChatMathFallback("a^2 + b^2 = c^2")).toBe("a² + b² = c²");
     expect(formatChatMathFallback("c = \\sqrt{100}")).toBe("c = √100");
@@ -67,6 +83,7 @@ describe("chat math normalization", () => {
 
     expect(prepared.markdown).not.toContain("$a^2");
     expect(prepared.markdown).toContain(prepared.placeholders[0]?.token);
+    expect(prepared.placeholders[0]?.token).toMatch(/^__NOTEFORGE_CHAT_MATH_[a-z0-9]+_0_TOKEN__$/iu);
     expect(prepared.markdown).toContain("$c^2$ stays code");
     expect(prepared.markdown).toContain("Price is $5.");
     expect(prepared.placeholders).toEqual([
@@ -75,5 +92,23 @@ describe("chat math normalization", () => {
         display: false,
       }),
     ]);
+  });
+
+  it("keeps literal placeholder-like text scoped away from generated math tokens", () => {
+    const prepared = prepareChatMarkdownForMathRender(
+      [
+        "Literal old token NOTEFORGECHATMATH0TOKEN stays text.",
+        "Literal new token __NOTEFORGE_CHAT_MATH_manual_0_TOKEN__ stays text.",
+        "Actual math is $a^2 + b^2 = c^2$.",
+      ].join("\n"),
+    );
+
+    const generatedToken = prepared.placeholders[0]?.token;
+    expect(generatedToken).toBeDefined();
+    expect(generatedToken).not.toBe("NOTEFORGECHATMATH0TOKEN");
+    expect(generatedToken).not.toBe("__NOTEFORGE_CHAT_MATH_manual_0_TOKEN__");
+    expect(prepared.markdown).toContain("NOTEFORGECHATMATH0TOKEN stays text");
+    expect(prepared.markdown).toContain("__NOTEFORGE_CHAT_MATH_manual_0_TOKEN__ stays text");
+    expect(prepared.markdown).toContain(generatedToken);
   });
 });

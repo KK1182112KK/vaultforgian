@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { AgentStore } from "../model/store";
-import { ThreadEventReducer } from "../app/threadEventReducer";
+import { ThreadEventReducer, type ThreadEventReducerDeps } from "../app/threadEventReducer";
 
-function createReducer(store: AgentStore) {
+function createReducer(store: AgentStore, overrides: Partial<Pick<ThreadEventReducerDeps, "shouldSuppressAssistantOutput">> = {}) {
   const queued: Array<{ tabId: string; messageId: string; text: string }> = [];
   const waiting: Array<{ tabId: string; phase: string }> = [];
 
@@ -22,6 +22,7 @@ function createReducer(store: AgentStore) {
     queueAssistantArtifactSync: (tabId, messageId, text) => {
       queued.push({ tabId, messageId, text });
     },
+    ...overrides,
   });
 
   return { reducer, queued, waiting };
@@ -95,6 +96,37 @@ describe("ThreadEventReducer", () => {
 
     const messages = store.getState().tabs.find((tab) => tab.id === tabId)?.messages.filter((message) => message.kind === "assistant") ?? [];
     expect(messages.map((message) => message.text)).toEqual(["Quiz 1/5\n\nFirst question.", "Quiz 2/5\n\nSecond question."]);
+  });
+
+  it("can suppress a duplicate visible assistant output before it reaches transcript history", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer, queued } = createReducer(store, {
+      shouldSuppressAssistantOutput: (_tabId, text) => text === "Repeated quiz reply.",
+    });
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "response_item",
+        timestamp: "2026-04-09T14:00:00Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: "Repeated quiz reply.",
+        },
+      },
+      "visible",
+      "turn-2",
+    );
+
+    const messages = store.getState().tabs.find((tab) => tab.id === tabId)?.messages ?? [];
+    expect(messages).toHaveLength(0);
+    expect(queued).toHaveLength(0);
   });
 
   it("can queue assistant artifacts without inserting visible transcript messages", () => {
