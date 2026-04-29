@@ -4,7 +4,15 @@ A desktop-only Obsidian plugin that wires the official [Codex CLI](https://githu
 
 > Status: early release. Desktop-only. Targets macOS, Windows, and Linux on Obsidian Desktop, with Windows-native Codex installs preferred and WSL kept as an optional fallback.
 
-Demo site development now lives in the separate public repository [KK1182112KK/vaultforgian-site](https://github.com/KK1182112KK/vaultforgian-site). The production demo URL is managed from that site repository's Vercel deployment.
+## Quick links
+
+- **Live demo:** <https://vaultforgian-site.vercel.app>
+- **Demo site repo:** <https://github.com/KK1182112KK/vaultforgian-site>
+- **Install:** use BRAT with `https://github.com/KK1182112KK/vaultforgian`, or download the latest release.
+- **Requirements:** Obsidian Desktop, Codex CLI, and a completed `codex login`.
+- **Repository split:** this repo is the Obsidian plugin; the Vercel demo site lives in `vaultforgian-site`.
+
+Demo site development lives in the separate public repository [KK1182112KK/vaultforgian-site](https://github.com/KK1182112KK/vaultforgian-site). This repo contains the Obsidian plugin source and release tooling.
 
 ---
 
@@ -146,6 +154,11 @@ npm run deploy     # requires VAULTFORGIAN_PLUGIN_DIR to be set explicitly
 ```
 
 The plugin entry is `src/main.ts`. Service logic lives in `src/app/`, UI in `src/views/`, shared utilities in `src/util/`. Tests live alongside sources in `src/tests/`.
+
+Repository support files:
+
+- `assets/` contains source imagery used by the tracked plugin avatar build.
+- `docs/creator-challenge/` contains the archived Creator Challenge submission copy and preview image.
 
 GitHub Actions is configured to run cross-platform CI on macOS, Windows, and Linux with `typecheck`, `test`, and `build`, and Ubuntu also runs `npm run check`.
 

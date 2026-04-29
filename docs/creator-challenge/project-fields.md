@@ -6,16 +6,16 @@ VaultForgian
 
 ## URL
 
-https://github.com/KK1182112KK/vaultforgian
+https://vaultforgian-site.vercel.app
 
-Use this GitHub fallback unless a public live demo site is deployed before submission.
+Use the live demo site for submission. The plugin source remains available at https://github.com/KK1182112KK/vaultforgian.
 
 ## Preview
 
 Upload:
 
 ```text
-submission/vaultforgian-preview.png
+docs/creator-challenge/vaultforgian-preview.png
 ```
 
 The preview is a sanitized Obsidian workflow frame showing lecture context, Codex chat, evidence markers, a reviewable patch, and an approval action.
