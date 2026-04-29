@@ -3013,6 +3013,78 @@ describe("CodexService sendPrompt skill context", () => {
     ).toBe(repeatedReply);
   });
 
+  it("allows exact repeat quiz replies when the learner asks to repeat the question", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-quiz-session-repeat-request-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const repeatedReply = [
+      "Quiz 2/5",
+      "If the hypotenuse is 13 and one leg is 5, what is the other leg?",
+    ].join("\n\n");
+    service.store.setStudyCoachState(tabId, {
+      latestRecap: null,
+      weakPointLedger: [],
+      lastCheckpointAt: null,
+      quizSession: {
+        ...createStudyQuizSession("quiz-1", 1),
+        currentIndex: 2,
+      },
+    });
+    service.store.addMessage(tabId, {
+      id: "assistant-previous-quiz",
+      kind: "assistant",
+      text: repeatedReply,
+      createdAt: Date.now(),
+    });
+    service.store.addMessage(tabId, {
+      id: "user-repeat",
+      kind: "user",
+      text: "repeat the question",
+      createdAt: Date.now(),
+    });
+
+    const sessionFile = join(vaultRoot, "quiz-session-repeat-request-thread.jsonl");
+    await writeFile(
+      sessionFile,
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ text: repeatedReply }],
+        },
+      }),
+      "utf8",
+    );
+
+    vi.spyOn(service as never, "resolveSessionFile").mockResolvedValue(sessionFile);
+
+    await expect(
+      (
+        service as unknown as {
+          syncTranscriptFromSession: (tabId: string, threadId: string, visibility: "visible" | "artifact_only") => Promise<string>;
+        }
+      ).syncTranscriptFromSession(tabId, "thread-repeat-quiz", "visible"),
+    ).resolves.toBe("appended_reply");
+
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages.map((message) => message.text)).toEqual([repeatedReply, repeatedReply]);
+  });
+
   it("waits for a late session reply before compact retrying", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-late-session-reply-"));
     tempRoots.push(vaultRoot);

@@ -359,6 +359,11 @@ const LOCAL_APPLY_CTA_PATTERNS: RegExp[] = [
   /^(?:今の|この)?ノート(?:に|へ)(?:反映|適用)(?:する|して|してください|して下さい)?$/iu,
 ];
 
+const QUIZ_REPEAT_REQUEST_PATTERNS: RegExp[] = [
+  /^(?:repeat(?:\s+(?:it|that|the\s+question))?|say\s+it\s+again|ask\s+again|again|one\s+more\s+time)$/iu,
+  /^(?:もう一度|もういちど|もっかい|もう一回|再度|繰り返して|問題をもう一度|問題をもう一回)$/iu,
+];
+
 function normalizeLocalApplyInput(input: string): string {
   return input
     .trim()
@@ -1798,6 +1803,9 @@ export class CodexService {
     if (tab?.studyCoachState?.quizSession?.status !== "active") {
       return false;
     }
+    if (this.isQuizRepeatRequest(tabId)) {
+      return false;
+    }
     const normalizedCandidate = this.normalizeVisibleAssistantReplyForCompare(candidateText);
     if (!normalizedCandidate) {
       return false;
@@ -1816,6 +1824,15 @@ export class CodexService {
       observedAt: Date.now(),
     });
     return true;
+  }
+
+  private isQuizRepeatRequest(tabId: string): boolean {
+    const promptText = this.getCurrentTurnUserPromptMessage(tabId)?.text.trim() ?? "";
+    if (!promptText) {
+      return false;
+    }
+    const normalized = promptText.replace(/[。.!！?？]+$/u, "").trim();
+    return Boolean(normalized && QUIZ_REPEAT_REQUEST_PATTERNS.some((pattern) => pattern.test(normalized)));
   }
 
   private consumeSuppressedDuplicateQuizReply(tabId: string): string | null {

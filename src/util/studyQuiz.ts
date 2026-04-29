@@ -10,6 +10,8 @@ const QUIZ_HEADING_RE = /^\s{0,3}#{0,6}\s*Quiz\s+(\d+)(?:\s*\/\s*(\d+))?\b/im;
 const CHOICE_RE = /^\s*(?:[-*]\s+|\d+[.)]\s+)/u;
 const CORRECT_FEEDBACK_RE = /^\s*(?:(?:correct|right|yes|good|nice|exactly)(?![A-Za-z0-9_])|正解|その通り)/iu;
 const INCORRECT_FEEDBACK_RE = /^\s*(?:(?:not\s+quite|incorrect|wrong|close|no)(?![A-Za-z0-9_])|惜しい|違います|不正解)/iu;
+const QUALIFIED_INCORRECT_FEEDBACK_RE =
+  /^\s*(?:(?:good|nice|right|yes)(?![A-Za-z0-9_])|良い|いい|惜しい)[^.!?。！？]{0,100}(?:\bbut\b|\bhowever\b|not\s+quite|wrong|incorrect|違|不正解|惜しい)/iu;
 const QUESTION_SENTENCE_RE = /(?:^|[\s。.!！？])([^?？\n]+[?？])/gu;
 
 export function createStudyQuizSession(id: string, now: number, total = DEFAULT_STUDY_QUIZ_TOTAL): StudyQuizSession {
@@ -98,6 +100,17 @@ export function syncStudyQuizSessionFromAssistantText(current: StudyQuizSession,
       };
     }
 
+    if (current.lastUserResponseKind === "answer" && isIncorrectAssistantFeedback(text)) {
+      return {
+        ...markCurrentQuestion(current, {
+          status: "reviewed",
+          prompt: headinglessQuestionPrompt,
+          now,
+        }),
+        lastUserResponseKind: null,
+      };
+    }
+
     if (current.lastUserResponseKind === "answer" && isCorrectAssistantFeedback(text)) {
       const advanced = advanceStudyQuizSession(current, "next", now);
       if (advanced.status === "completed") {
@@ -115,17 +128,6 @@ export function syncStudyQuizSessionFromAssistantText(current: StudyQuizSession,
               status: "pending",
             })
           : advanced.questions,
-        lastUserResponseKind: null,
-      };
-    }
-
-    if (current.lastUserResponseKind === "answer" && isIncorrectAssistantFeedback(text)) {
-      return {
-        ...markCurrentQuestion(current, {
-          status: "reviewed",
-          prompt: headinglessQuestionPrompt,
-          now,
-        }),
         lastUserResponseKind: null,
       };
     }
@@ -309,7 +311,8 @@ function isCorrectAssistantFeedback(text: string): boolean {
 }
 
 function isIncorrectAssistantFeedback(text: string): boolean {
-  return INCORRECT_FEEDBACK_RE.test(getLeadingFeedbackLine(text));
+  const leadingLine = getLeadingFeedbackLine(text);
+  return INCORRECT_FEEDBACK_RE.test(leadingLine) || QUALIFIED_INCORRECT_FEEDBACK_RE.test(leadingLine);
 }
 
 function getLeadingFeedbackLine(text: string): string {

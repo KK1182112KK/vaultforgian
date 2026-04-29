@@ -129,6 +129,35 @@ describe("ThreadEventReducer", () => {
     expect(queued).toHaveLength(0);
   });
 
+  it("applies assistant output suppression to task_complete fallback messages", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer, queued } = createReducer(store, {
+      shouldSuppressAssistantOutput: (_tabId, text) => text === "Repeated quiz reply.",
+    });
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "event_msg",
+        timestamp: "2026-04-09T14:00:00Z",
+        payload: {
+          type: "task_complete",
+          last_agent_message: "Repeated quiz reply.",
+        },
+      },
+      "visible",
+      "turn-2",
+    );
+
+    const messages = store.getState().tabs.find((tab) => tab.id === tabId)?.messages ?? [];
+    expect(messages).toHaveLength(0);
+    expect(queued).toHaveLength(0);
+  });
+
   it("can queue assistant artifacts without inserting visible transcript messages", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

@@ -164,6 +164,32 @@ describe("study quiz session", () => {
     expect(next.lastUserResponseKind).toBeNull();
   });
 
+  it("does not advance on soft-positive incorrect feedback", () => {
+    const session = {
+      ...createStudyQuizSession("quiz-1", 1),
+      questions: [
+        {
+          index: 1,
+          prompt: "What is the missing leg?",
+          choices: [],
+          answer: null,
+          explanation: null,
+          status: "pending" as const,
+        },
+      ],
+      lastUserResponseKind: "answer" as const,
+    };
+    const next = syncStudyQuizSessionFromAssistantText(
+      session,
+      "Good try, but not quite.\n\nHint: subtract the known leg from the hypotenuse squared.\n\nWhat is the missing leg?",
+      3,
+    );
+
+    expect(next.currentIndex).toBe(1);
+    expect(next.questions[0]?.status).toBe("reviewed");
+    expect(next.lastUserResponseKind).toBeNull();
+  });
+
   it("requires visible quiz headings in the prompt contract", () => {
     const session = {
       ...createStudyQuizSession("quiz-1", 1),

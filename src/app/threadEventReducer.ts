@@ -635,6 +635,10 @@ export class ThreadEventReducer {
       return;
     }
 
+    if (this.deps.shouldSuppressAssistantOutput?.(tabId, normalizedText)) {
+      return;
+    }
+
     const tab = this.deps.findTab(tabId);
     if (!tab) {
       return;
