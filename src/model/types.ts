@@ -431,7 +431,7 @@ export type LearningCoachMode =
   | "source_check"
   | "direct_answer";
 export type LearningCoachHintLevel = "nudge" | "guided" | "worked_step";
-export type LearningCoachAnswerPolicy = "hint_first" | "answer_first";
+export type LearningCoachAnswerPolicy = "hint_first" | "answer_first" | "question_first";
 
 export interface LearningCoachPlan {
   mode: LearningCoachMode;

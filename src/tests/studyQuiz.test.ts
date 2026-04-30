@@ -31,6 +31,46 @@ describe("study quiz session", () => {
     expect(formatStudyQuizSessionForPrompt(next, "en")).toContain("Do not advance to Quiz 2/5");
   });
 
+  it("restarts an active quiz when the learner asks to quiz them again", () => {
+    const session = {
+      ...createStudyQuizSession("quiz-old", 1),
+      currentIndex: 3,
+      answeredCount: 2,
+      questions: [
+        {
+          index: 1,
+          prompt: "Old question",
+          choices: [],
+          answer: null,
+          explanation: null,
+          status: "answered" as const,
+        },
+      ],
+      lastUserResponseKind: null,
+    };
+    const next = prepareStudyQuizSessionForUserPrompt(session, "quiz me on this note", {
+      id: "quiz-new",
+      now: 2,
+    });
+
+    expect(next?.id).toBe("quiz-new");
+    expect(next?.currentIndex).toBe(1);
+    expect(next?.answeredCount).toBe(0);
+    expect(next?.questions).toEqual([]);
+    expect(next?.lastUserResponseKind).toBe("start");
+  });
+
+  it("keeps numeric responses as answers during an active quiz", () => {
+    const session = createStudyQuizSession("quiz-1", 1);
+    const next = prepareStudyQuizSessionForUserPrompt(session, "10", {
+      id: "quiz-ignored",
+      now: 2,
+    });
+
+    expect(next?.id).toBe("quiz-1");
+    expect(next?.lastUserResponseKind).toBe("answer");
+  });
+
   it("ignores assistant attempts to advance after an unknown answer", () => {
     const session = {
       ...createStudyQuizSession("quiz-1", 1),
@@ -199,6 +239,15 @@ describe("study quiz session", () => {
 
     expect(prompt).toContain('Every visible quiz question must include a "Quiz n/5" heading.');
     expect(prompt).toContain('If the answer is correct, advance with "Quiz 2/5".');
+  });
+
+  it("instructs quiz turns to ask the question before any hint", () => {
+    const session = createStudyQuizSession("quiz-1", 1);
+    const prompt = formatStudyQuizSessionForPrompt(session, "en");
+
+    expect(prompt).toContain("Question order: show the Quiz heading and question first, then any optional hint.");
+    expect(prompt).toContain("Never start a fresh quiz question with Hint.");
+    expect(prompt).toContain("Fresh quiz questions must not include a leading `Hint:` line.");
   });
 
   it("completes instead of advancing beyond five questions", () => {

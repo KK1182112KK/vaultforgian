@@ -289,6 +289,35 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(text).toContain("c = √289 = 17");
   });
 
+  it("does not leak chat math placeholder tokens when markdown treats underscores as emphasis", async () => {
+    vi.spyOn(MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => {
+      element.textContent = markdown.replace(/__NOTEFORGE_CHAT_MATH_[A-Za-z0-9]+_\d+_TOKEN__/gu, (token) =>
+        token.slice(2, -2),
+      );
+    });
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "Hint: find the hypotenuse first; it is the side opposite the $90^\\circ$ angle.",
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    expect(text).not.toContain("NOTEFORGE_CHAT_MATH");
+    expect(text).toContain("90");
+    expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(1);
+  });
+
   it("does not convert user-authored markdown math in chat bubbles", () => {
     const state = createState();
     state.tabs[0]!.messages = [

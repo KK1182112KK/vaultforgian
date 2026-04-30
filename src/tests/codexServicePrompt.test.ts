@@ -456,6 +456,32 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("Do not show the contract JSON");
   });
 
+  it("keeps quiz questions before hints even when learning mode is hint-first", () => {
+    const prompt = buildTurnPrompt(
+      "quiz me on this note",
+      createContext({
+        studyWorkflow: "review",
+        studyCoachText: [
+          "Study quiz session:",
+          "- Current quiz: Quiz 1/5.",
+          "- Ask exactly one question as Quiz 1/5.",
+          "- Question order: show the Quiz heading and question first, then any optional hint.",
+        ].join("\n"),
+      }),
+      "normal",
+      [],
+      "chat",
+      false,
+      "manual",
+      { learningMode: true },
+    );
+
+    expect(prompt).not.toContain("Default to hint-first support");
+    expect(prompt).toContain("Question order: show the Quiz heading and question first, then any optional hint.");
+    expect(prompt).toContain("For active quiz turns, the quiz question order overrides generic hint-first coaching:");
+    expect(prompt).toContain("Do not lead with `Hint:` for a fresh quiz question.");
+  });
+
   it("lets direct-answer requests bypass the coaching preamble for that turn", () => {
     const prompt = buildTurnPrompt(
       "Just give me the answer: what is a Laplace transform?",

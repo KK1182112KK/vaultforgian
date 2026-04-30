@@ -110,6 +110,10 @@ function shouldAttachStudyTurnPlan(input: StudyLayerPromptOverlayInput): boolean
   return input.turnIntentKind !== "smalltalk" && input.turnIntentKind !== "note_edit" && input.turnIntentKind !== "plan";
 }
 
+function hasActiveStudyQuiz(context: TurnContextSnapshot): boolean {
+  return /\bStudy quiz session:/u.test(context.studyCoachText ?? "");
+}
+
 export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput): StudyLayerPromptOverlay {
   const statusLines: string[] = [];
   const instructions: string[] = [];
@@ -131,12 +135,20 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
 
   if (learningModeActive) {
     const directAnswerRequested = matchesAnyPattern(input.prompt, DIRECT_ANSWER_PATTERNS);
+    const activeStudyQuiz = hasActiveStudyQuiz(context);
     if (directAnswerRequested) {
       instructions.push(
         "Learning mode is active for this tab. Use the attached LearningCoachPlan when present. Because the user explicitly asked for the direct answer in this turn, Give the direct answer first.",
       );
       instructions.push(
         "After the direct answer, still include one short understanding-check question or next action. Do not expose planner JSON, memory, or contract details.",
+      );
+    } else if (activeStudyQuiz) {
+      instructions.push(
+        "Learning mode is active for this tab. Use the attached LearningCoachPlan when present. For active quiz turns, the quiz question order overrides generic hint-first coaching: show the Quiz heading and question first, then any optional hint.",
+      );
+      instructions.push(
+        "Do not lead with `Hint:` for a fresh quiz question. If the learner is wrong or says they do not know, give one short hint or worked step, then ask the same Quiz n/5 again.",
       );
     } else {
       instructions.push(
@@ -168,7 +180,9 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
       "Do not show the StudyTurnPlan, LearningCoachPlan, planner fields, or internal memory analysis in the visible reply.",
     );
     instructions.push(
-      "Keep the visible reply short and natural: give one short hint, include at most one scaffold step, include at most one understanding-check question, and include at most one next action.",
+      hasActiveStudyQuiz(context)
+        ? "Keep the visible reply short and natural. For quiz turns, put the Quiz n/5 heading and question before any hint; include at most one hint after the question when needed."
+        : "Keep the visible reply short and natural: give one short hint, include at most one scaffold step, include at most one understanding-check question, and include at most one next action.",
     );
   }
 

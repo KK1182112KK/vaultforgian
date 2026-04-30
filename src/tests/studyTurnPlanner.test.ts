@@ -363,4 +363,52 @@ describe("StudyTurnPlanner", () => {
     expect(plan.learningCoachPlan?.hintLevel).toBe("guided");
     expect(plan.learningCoachPlan?.answerPolicy).toBe("hint_first");
   });
+
+  it("uses question-first policy for fresh active quiz prompts", () => {
+    const plan = buildStudyTurnPlan({
+      prompt: "quiz me on this note",
+      activePanel: REVIEW_PANEL,
+      panelMemory: null,
+      globalStudyMemory: null,
+      studyCoachState: {
+        latestRecap: null,
+        weakPointLedger: [],
+        lastCheckpointAt: null,
+        quizSession: {
+          id: "quiz-1",
+          total: 5,
+          currentIndex: 1,
+          answeredCount: 0,
+          status: "active",
+          questions: [],
+          startedAt: 1,
+          updatedAt: 2,
+          lastUserResponseKind: "start",
+        },
+      },
+      turnIntent: { kind: "answer_only" },
+      preflight: {
+        ready: true,
+        summary: "Ready",
+        missing: [],
+        advisories: [],
+        sourceStrategy: "use_note",
+        autoContextAdditions: [],
+        suggestedSkills: [],
+      },
+      selectedSkillNames: [],
+      availableSkills: [],
+      sourceState: {
+        hasAttachmentContent: false,
+        hasNoteSourcePack: true,
+        hasSelection: false,
+      },
+      learningMode: true,
+    });
+
+    expect(plan.teachingMode).toBe("quiz");
+    expect(plan.learningCoachPlan?.mode).toBe("quiz");
+    expect(plan.learningCoachPlan?.answerPolicy).toBe("question_first");
+    expect(plan.visibleReplyGuidance).toContain("question first");
+  });
 });

@@ -91,6 +91,11 @@ function buildEventBackedMessageId(event: JsonRecord, phase: string, fallbackPre
   return normalizedScope ? `${fallbackPrefix}-${normalizedScope}-${timestamp}-${phase}` : `${fallbackPrefix}-${timestamp}-${phase}`;
 }
 
+function buildItemBackedMessageId(itemId: string, fallbackPrefix: string, scope: string | null = null): string {
+  const normalizedScope = scope?.trim().replace(/[^a-zA-Z0-9]+/g, "-") ?? "";
+  return normalizedScope ? `${fallbackPrefix}-${normalizedScope}-${itemId}` : `${fallbackPrefix}-${itemId}`;
+}
+
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -398,7 +403,7 @@ export class ThreadEventReducer {
       return message;
     }
 
-    this.handleThreadItem(tabId, item, eventType !== "item.completed", assistantOutputVisibility);
+    this.handleThreadItem(tabId, item, eventType !== "item.completed", assistantOutputVisibility, messageIdScope);
     return null;
   }
 
@@ -407,6 +412,7 @@ export class ThreadEventReducer {
     item: JsonRecord,
     pending: boolean,
     assistantOutputVisibility: AssistantOutputVisibility,
+    messageIdScope: string | null,
   ): void {
     const itemType = asString(item.type);
     const itemId = asString(item.id) ?? makeId("codex-item");
@@ -417,7 +423,7 @@ export class ThreadEventReducer {
       if (!text) {
         return;
       }
-      this.recordAssistantOutput(tabId, `codex-assistant-${itemId}`, text, pending, mode, assistantOutputVisibility);
+      this.recordAssistantOutput(tabId, buildItemBackedMessageId(itemId, "codex-assistant", messageIdScope), text, pending, mode, assistantOutputVisibility);
       return;
     }
 
@@ -426,8 +432,9 @@ export class ThreadEventReducer {
       if (!this.deps.getShowReasoning()) {
         return;
       }
-      this.deps.store.upsertMessage(tabId, `codex-reasoning-${itemId}`, (current) => ({
-        id: `codex-reasoning-${itemId}`,
+      const messageId = buildItemBackedMessageId(itemId, "codex-reasoning", messageIdScope);
+      this.deps.store.upsertMessage(tabId, messageId, (current) => ({
+        id: messageId,
         kind: "reasoning",
         text: asString(item.text) ?? "",
         createdAt: current?.createdAt ?? Date.now(),

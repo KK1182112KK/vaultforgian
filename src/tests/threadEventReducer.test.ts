@@ -98,6 +98,45 @@ describe("ThreadEventReducer", () => {
     expect(messages.map((message) => message.text)).toEqual(["Quiz 1/5\n\nFirst question.", "Quiz 2/5\n\nSecond question."]);
   });
 
+  it("does not overwrite an earlier assistant item when later turns reuse the same Codex item id", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    const { reducer } = createReducer(store);
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "item.completed",
+        item: {
+          id: "msg-reused",
+          type: "agent_message",
+          text: "Quiz 1/5\n\nFirst question.",
+        },
+      },
+      "visible",
+      "turn-1",
+    );
+    reducer.handleThreadEvent(
+      tabId,
+      {
+        type: "item.completed",
+        item: {
+          id: "msg-reused",
+          type: "agent_message",
+          text: "Quiz 2/5\n\nSecond question.",
+        },
+      },
+      "visible",
+      "turn-2",
+    );
+
+    const messages = store.getState().tabs.find((tab) => tab.id === tabId)?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(messages.map((message) => message.text)).toEqual(["Quiz 1/5\n\nFirst question.", "Quiz 2/5\n\nSecond question."]);
+  });
+
   it("can suppress a duplicate visible assistant output before it reaches transcript history", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

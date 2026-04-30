@@ -83,7 +83,7 @@ describe("chat math normalization", () => {
 
     expect(prepared.markdown).not.toContain("$a^2");
     expect(prepared.markdown).toContain(prepared.placeholders[0]?.token);
-    expect(prepared.placeholders[0]?.token).toMatch(/^__NOTEFORGE_CHAT_MATH_[a-z0-9]+_0_TOKEN__$/iu);
+    expect(prepared.placeholders[0]?.token).toMatch(/^NFCODEXCHATMATH[a-z0-9]+X0TOKEN$/iu);
     expect(prepared.markdown).toContain("$c^2$ stays code");
     expect(prepared.markdown).toContain("Price is $5.");
     expect(prepared.placeholders).toEqual([
@@ -98,7 +98,7 @@ describe("chat math normalization", () => {
     const prepared = prepareChatMarkdownForMathRender(
       [
         "Literal old token NOTEFORGECHATMATH0TOKEN stays text.",
-        "Literal new token __NOTEFORGE_CHAT_MATH_manual_0_TOKEN__ stays text.",
+        "Literal new token NFCODEXCHATMATHmanualX0TOKEN stays text.",
         "Actual math is $a^2 + b^2 = c^2$.",
       ].join("\n"),
     );
@@ -106,9 +106,9 @@ describe("chat math normalization", () => {
     const generatedToken = prepared.placeholders[0]?.token;
     expect(generatedToken).toBeDefined();
     expect(generatedToken).not.toBe("NOTEFORGECHATMATH0TOKEN");
-    expect(generatedToken).not.toBe("__NOTEFORGE_CHAT_MATH_manual_0_TOKEN__");
+    expect(generatedToken).not.toBe("NFCODEXCHATMATHmanualX0TOKEN");
     expect(prepared.markdown).toContain("NOTEFORGECHATMATH0TOKEN stays text");
-    expect(prepared.markdown).toContain("__NOTEFORGE_CHAT_MATH_manual_0_TOKEN__ stays text");
+    expect(prepared.markdown).toContain("NFCODEXCHATMATHmanualX0TOKEN stays text");
     expect(prepared.markdown).toContain(generatedToken);
   });
 });

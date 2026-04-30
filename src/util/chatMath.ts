@@ -6,7 +6,7 @@ const LATEX_COMMAND_RE = /\\[A-Za-z]+/g;
 const PROSE_EQUATION_RE =
   /^((?:so|therefore|thus|then|now|that means|this means|that gives|this gives)\b\s+)(.+)$/i;
 const LINE_PREFIX_RE = /^(\s*(?:(?:[-*+]\s+|\d+[.)]\s+|>\s+)+))(.*)$/;
-const CHAT_MATH_TOKEN_PREFIX = "__NOTEFORGE_CHAT_MATH";
+const CHAT_MATH_TOKEN_PREFIX = "NFCODEXCHATMATH";
 const CHAT_MATH_RENDER_SELECTOR = ".obsidian-codex__chat-math, .katex, mjx-container, .math";
 
 export type ChatMathSegment =
@@ -248,7 +248,7 @@ function replaceMathInText(text: string, placeholders: ChatMathPlaceholder[], to
       if (segment.kind === "text") {
         return segment.text;
       }
-      const token = `${CHAT_MATH_TOKEN_PREFIX}_${tokenNonce}_${placeholders.length}_TOKEN__`;
+      const token = `${CHAT_MATH_TOKEN_PREFIX}${tokenNonce}X${placeholders.length}TOKEN`;
       placeholders.push({
         token,
         text: segment.text,

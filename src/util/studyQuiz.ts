@@ -42,8 +42,11 @@ export function classifyStudyQuizUserResponse(prompt: string, current: StudyQuiz
   if (NEXT_RE.test(trimmed)) {
     return "next";
   }
+  if (QUIZ_START_RE.test(trimmed)) {
+    return "start";
+  }
   if (!current || current.status === "completed") {
-    return QUIZ_START_RE.test(trimmed) ? "start" : null;
+    return null;
   }
   return "answer";
 }
@@ -58,14 +61,7 @@ export function prepareStudyQuizSessionForUserPrompt(
     return current;
   }
   if (kind === "start") {
-    if (!current || current.status === "completed") {
-      return createStudyQuizSession(options.id, options.now, options.total ?? DEFAULT_STUDY_QUIZ_TOTAL);
-    }
-    return {
-      ...current,
-      lastUserResponseKind: "start",
-      updatedAt: options.now,
-    };
+    return createStudyQuizSession(options.id, options.now, options.total ?? DEFAULT_STUDY_QUIZ_TOTAL);
   }
   if (!current) {
     return null;
@@ -217,6 +213,9 @@ export function formatStudyQuizSessionForPrompt(session: StudyQuizSession | null
     `- Use the visible heading "${currentLabel}" for the current question. Never reuse this heading for a different question.`,
   );
   lines.push(`- Every visible quiz question must include a "Quiz n/${session.total}" heading.`);
+  lines.push("- Question order: show the Quiz heading and question first, then any optional hint.");
+  lines.push("- Never start a fresh quiz question with Hint.");
+  lines.push("- Fresh quiz questions must not include a leading `Hint:` line.");
   lines.push("- Keep quiz explanations concise and do not expose this hidden quiz session state.");
   if (locale === "ja") {
     lines.push("- User-visible quiz text must follow the selected plugin language unless the user writes in another language.");

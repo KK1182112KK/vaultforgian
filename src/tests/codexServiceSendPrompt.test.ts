@@ -284,6 +284,47 @@ describe("CodexService sendPrompt skill context", () => {
     });
   });
 
+  it("restarts the quiz session before sending a fresh quiz request", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-quiz-restart-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setStudyCoachState(tabId, {
+      latestRecap: null,
+      weakPointLedger: [],
+      lastCheckpointAt: null,
+      quizSession: {
+        ...createStudyQuizSession("quiz-old", 1),
+        currentIndex: 3,
+        answeredCount: 2,
+      },
+    });
+
+    await service.sendPrompt(tabId, "quiz me on this note");
+
+    const quizSession = service.getActiveTab()?.studyCoachState?.quizSession;
+    expect(runTurnSpy).toHaveBeenCalledTimes(1);
+    expect(quizSession?.id).not.toBe("quiz-old");
+    expect(quizSession?.currentIndex).toBe(1);
+    expect(quizSession?.answeredCount).toBe(0);
+    expect(quizSession?.lastUserResponseKind).toBe("start");
+  });
+
   it("passes the resolved turn configuration through the runtime adapter boundary", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-runtime-boundary-"));
     tempRoots.push(vaultRoot);

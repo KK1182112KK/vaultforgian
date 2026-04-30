@@ -221,6 +221,9 @@ function buildScaffoldStep(coachMode: LearningCoachMode, hintLevel: LearningCoac
   if (coachMode === "direct_answer") {
     return `Give the answer first, then add one quick check${focus}.`;
   }
+  if (coachMode === "quiz" && hintLevel === "nudge") {
+    return "Ask the Quiz n/5 question first; add any optional hint only after the question.";
+  }
   if (hintLevel === "worked_step") {
     return `Show one worked step${focus}, then pause for the learner to continue.`;
   }
@@ -252,7 +255,7 @@ function buildLearningCoachPlan(params: {
   return {
     mode,
     hintLevel,
-    answerPolicy: mode === "direct_answer" ? "answer_first" : "hint_first",
+    answerPolicy: mode === "direct_answer" ? "answer_first" : mode === "quiz" && hintLevel === "nudge" ? "question_first" : "hint_first",
     focusConcept,
     stuckPoint: params.likelyStuckPoint,
     scaffoldSteps: [buildScaffoldStep(mode, hintLevel, focusConcept)],
@@ -267,6 +270,9 @@ function buildVisibleReplyGuidance(mode: StudyTeachingMode, learningCoachPlan: L
   }
   if (learningCoachPlan?.answerPolicy === "answer_first") {
     return "Give the direct answer first, then include at most one short check question or next action.";
+  }
+  if (learningCoachPlan?.answerPolicy === "question_first") {
+    return "For quiz turns, ask the Quiz n/5 question first, then include any optional hint after the question.";
   }
   if (learningCoachPlan) {
     return "Use hint-first coaching: one short hint, at most one scaffold step, at most one check question, and at most one next action.";
