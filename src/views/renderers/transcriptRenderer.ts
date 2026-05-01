@@ -35,6 +35,7 @@ export class TranscriptRenderer {
   private restoreScrollVersion = 0;
   private lastRenderSignature: string | null = null;
   private readonly approvalActionScopesInFlight = new Set<string>();
+  private readonly chatMathObservers = new Set<MutationObserver>();
 
   constructor(
     private readonly root: HTMLDivElement,
@@ -104,6 +105,7 @@ export class TranscriptRenderer {
     }
 
     this.withProgrammaticScrollIgnored(() => {
+      this.disconnectChatMathObservers();
       this.root.empty();
       this.root.addClass("obsidian-codex__messages");
     });
@@ -392,6 +394,8 @@ export class TranscriptRenderer {
     const finalizeAssistantChatMath = preparedChatMath
       ? () => renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders)
       : null;
+    const stopAssistantChatMathObserver =
+      finalizeAssistantChatMath ? this.observeAssistantChatMathMutations(markdownEl, finalizeAssistantChatMath) : null;
     const renderPromise = MarkdownRenderer.render(
       context.app,
       preparedChatMath?.markdown ?? this.getRenderableMessageText(context, message),
@@ -405,6 +409,8 @@ export class TranscriptRenderer {
       window.requestAnimationFrame(() => {
         finalizeAssistantChatMath?.();
       });
+    }).catch(() => {
+      stopAssistantChatMathObserver?.();
     });
 
     if (
@@ -413,6 +419,87 @@ export class TranscriptRenderer {
     ) {
       this.renderChatSuggestionActions(contentEl, context, activeTabSuggestion(context, message.id)!);
     }
+  }
+
+  dispose(): void {
+    this.disconnectChatMathObservers();
+  }
+
+  private observeAssistantChatMathMutations(
+    markdownEl: HTMLElement,
+    finalize: () => void,
+  ): (() => void) | null {
+    const ownerWindow = markdownEl.ownerDocument.defaultView;
+    const MutationObserverCtor = ownerWindow?.MutationObserver ?? globalThis.MutationObserver;
+    if (typeof MutationObserverCtor === "undefined") {
+      return null;
+    }
+
+    let isActive = true;
+    let isFinalizing = false;
+    let isScheduled = false;
+    const runFinalize = () => {
+      if (!isActive) {
+        return;
+      }
+      if (isFinalizing) {
+        return;
+      }
+      isFinalizing = true;
+      try {
+        finalize();
+      } finally {
+        isFinalizing = false;
+      }
+    };
+    const scheduleFinalize = () => {
+      if (!isActive || isScheduled) {
+        return;
+      }
+      isScheduled = true;
+      const flush = () => {
+        isScheduled = false;
+        runFinalize();
+        const requestAnimationFrame =
+          ownerWindow?.requestAnimationFrame?.bind(ownerWindow) ?? globalThis.requestAnimationFrame?.bind(globalThis);
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(() => runFinalize());
+        }
+      };
+      const queueMicrotask = ownerWindow?.queueMicrotask?.bind(ownerWindow) ?? globalThis.queueMicrotask?.bind(globalThis);
+      if (typeof queueMicrotask === "function") {
+        queueMicrotask(flush);
+        return;
+      }
+      void Promise.resolve().then(flush);
+    };
+    const observer = new MutationObserverCtor(() => {
+      runFinalize();
+      scheduleFinalize();
+    });
+    observer.observe(markdownEl, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    this.chatMathObservers.add(observer);
+
+    const stop = () => {
+      if (!isActive) {
+        return;
+      }
+      isActive = false;
+      observer.disconnect();
+      this.chatMathObservers.delete(observer);
+    };
+    return stop;
+  }
+
+  private disconnectChatMathObservers(): void {
+    for (const observer of this.chatMathObservers) {
+      observer.disconnect();
+    }
+    this.chatMathObservers.clear();
   }
 
   private renderCompactMetaChips(

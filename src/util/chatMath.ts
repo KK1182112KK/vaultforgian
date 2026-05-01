@@ -7,7 +7,21 @@ const PROSE_EQUATION_RE =
   /^((?:so|therefore|thus|then|now|that means|this means|that gives|this gives)\b\s+)(.+)$/i;
 const LINE_PREFIX_RE = /^(\s*(?:(?:[-*+]\s+|\d+[.)]\s+|>\s+)+))(.*)$/;
 const CHAT_MATH_TOKEN_PREFIX = "NFCODEXCHATMATH";
+const CHAT_MATH_PLACEHOLDER_CLASS = "obsidian-codex__chat-math-placeholder";
+const CHAT_MATH_PLACEHOLDER_TOKEN_ATTR = "data-codex-chat-math-token";
+const CHAT_MATH_PLACEHOLDER_SELECTOR = `[${CHAT_MATH_PLACEHOLDER_TOKEN_ATTR}]`;
+const CHAT_MATH_FULL_PLACEHOLDER_TOKEN_RE = /^NFCODEXCHATMATH[a-z0-9]+X\d+TOKEN$/iu;
+const CHAT_MATH_VISIBLE_PLACEHOLDER_RE = /NFCODEXCHATMATH[a-z0-9]*/giu;
+const RAW_CHAT_MATH_SENTINEL_RE =
+  /<span\b[^>]*(?:obsidian-codex__chat-math-placeholder|data-codex-chat-math-token)[^>]*>\s*<\/span>/giu;
 const CHAT_MATH_RENDER_SELECTOR = ".obsidian-codex__chat-math, .katex, mjx-container, .math";
+const CHAT_MATH_ERROR_SELECTOR = ".katex-error, mjx-merror, [data-mjx-error], .math-error";
+const CHAT_MATH_ERROR_CONTAINER_SELECTOR = "mjx-container, .katex, .math";
+const CHAT_MATH_PARSE_ERROR_RE = /(?:parse error|undefined control sequence|mathjax|katex)/iu;
+const BARE_NUMERIC_DASH_LABEL_RE = /^\s*\d+(?:\s*[-\u2013\u2212]\s*\d+){1,}\s*$/u;
+const ELEMENT_NODE_TYPE = 1;
+const TEXT_NODE_TYPE = 3;
+const SHOW_TEXT_NODES = 4;
 
 export type ChatMathSegment =
   | { kind: "text"; text: string }
@@ -22,6 +36,23 @@ export interface ChatMathPlaceholder {
 export interface PreparedChatMathMarkdown {
   markdown: string;
   placeholders: ChatMathPlaceholder[];
+}
+
+interface ChatMathTextSpan {
+  node: Text;
+  start: number;
+  end: number;
+}
+
+interface ChatMathTextPosition {
+  node: Text;
+  offset: number;
+}
+
+interface ChatMathPlaceholderMatch {
+  start: number;
+  end: number;
+  placeholder: ChatMathPlaceholder;
 }
 
 export function normalizeAssistantMathForMarkdown(text: string): string {
@@ -77,9 +108,10 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
       const end = text.indexOf("\\)", index + 2);
       if (end > index + 2) {
         const content = text.slice(index + 2, end);
-        if (isRenderableChatMath(content)) {
+        const segment = getDelimitedChatMathSegment(content, false);
+        if (segment) {
           pushText(index);
-          segments.push({ kind: "math", text: content, display: false });
+          segments.push(segment);
           index = end + 2;
           textStart = index;
           continue;
@@ -90,9 +122,10 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
       const end = text.indexOf("\\]", index + 2);
       if (end > index + 2) {
         const content = text.slice(index + 2, end);
-        if (isRenderableChatMath(content)) {
+        const segment = getDelimitedChatMathSegment(content, true);
+        if (segment) {
           pushText(index);
-          segments.push({ kind: "math", text: content, display: true });
+          segments.push(segment);
           index = end + 2;
           textStart = index;
           continue;
@@ -106,9 +139,10 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
       const end = findClosingDollarDelimiter(text, contentStart, delimiter);
       if (end > contentStart) {
         const content = text.slice(contentStart, end);
-        if (isRenderableChatMath(content)) {
+        const segment = getDelimitedChatMathSegment(content, display);
+        if (segment) {
           pushText(index);
-          segments.push({ kind: "math", text: content, display });
+          segments.push(segment);
           index = end + delimiter.length;
           textStart = index;
           continue;
@@ -123,51 +157,28 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
 }
 
 export function renderPreparedChatMathInElement(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
+  const placeholderByToken = createPlaceholderMap(placeholders);
+  replaceRenderedChatMathSentinels(root, placeholderByToken);
+  replaceRawChatMathSentinels(root, placeholderByToken);
   if (placeholders.length > 0) {
-    const byToken = new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const textNodes: Text[] = [];
-    let current = walker.nextNode();
-    while (current) {
-      const textNode = current instanceof Text ? current : null;
-      if (textNode && placeholders.some((placeholder) => textNode.data.includes(placeholder.token))) {
-        textNodes.push(textNode);
-      }
-      current = walker.nextNode();
-    }
-
-    for (const node of textNodes) {
-      const text = node.data;
-      if (!placeholders.some((placeholder) => text.includes(placeholder.token))) {
-        continue;
-      }
-      const fragment = document.createDocumentFragment();
-      let cursor = 0;
-      while (cursor < text.length) {
-        const next = findNextPlaceholder(text, cursor, byToken);
-        if (!next) {
-          fragment.appendChild(document.createTextNode(text.slice(cursor)));
-          break;
-        }
-        if (next.index > cursor) {
-          fragment.appendChild(document.createTextNode(text.slice(cursor, next.index)));
-        }
-        fragment.appendChild(createChatMathElement(next.placeholder));
-        cursor = next.index + next.placeholder.token.length;
-      }
-      node.replaceWith(fragment);
-    }
+    replacePreparedChatMathPlaceholders(root, placeholders);
   }
 
+  replaceRenderedChatMathErrors(root);
   renderChatMathInElement(root);
+  replaceRenderedChatMathErrors(root);
+  replaceRenderedChatMathSentinels(root, placeholderByToken);
+  replaceRawChatMathSentinels(root, placeholderByToken);
+  scrubRemainingChatMathPlaceholders(root, placeholderByToken);
 }
 
 export function renderChatMathInElement(root: HTMLElement): void {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const ownerDocument = getOwnerDocument(root);
+  const walker = createTextWalker(root);
   const textNodes: Text[] = [];
   let current = walker.nextNode();
   while (current) {
-    if (current instanceof Text && shouldProcessMathTextNode(current)) {
+    if (isTextNode(current) && shouldProcessMathTextNode(current)) {
       textNodes.push(current);
     }
     current = walker.nextNode();
@@ -175,16 +186,18 @@ export function renderChatMathInElement(root: HTMLElement): void {
 
   for (const node of textNodes) {
     const segments = splitChatMathSegments(node.data);
-    if (!segments.some((segment) => segment.kind === "math")) {
+    const hasMath = segments.some((segment) => segment.kind === "math");
+    const nextText = segments.map((segment) => segment.text).join("");
+    if (!hasMath && nextText === node.data) {
       continue;
     }
-    const fragment = document.createDocumentFragment();
+    const fragment = ownerDocument.createDocumentFragment();
     for (const segment of segments) {
       if (segment.kind === "text") {
-        fragment.appendChild(document.createTextNode(segment.text));
+        fragment.appendChild(ownerDocument.createTextNode(segment.text));
         continue;
       }
-      fragment.appendChild(createChatMathElement(segment));
+      fragment.appendChild(createChatMathElement(segment, ownerDocument));
     }
     node.replaceWith(fragment);
   }
@@ -195,11 +208,15 @@ export function renderChatMathInElement(root: HTMLElement): void {
 export function formatChatMathFallback(input: string): string {
   return input
     .trim()
+    .replace(/\\\\(?=[A-Za-z])/gu, "\\")
     .replace(/\\text\{([^{}]*)\}/gu, "$1")
     .replace(/\\sqrt\{([^{}]+)\}/gu, (_match, value: string) => `√${formatChatMathFallback(value)}`)
+    .replace(/\\sqrt\s*([A-Za-z0-9])/gu, "√$1")
     .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/gu, (_match, numerator: string, denominator: string) => {
       return `(${formatChatMathFallback(numerator)})/(${formatChatMathFallback(denominator)})`;
     })
+    .replace(/\\qquad\b|\\quad\b/gu, " ")
+    .replace(/\\[,;:]/gu, " ")
     .replace(/\\cdot\b/gu, "·")
     .replace(/\\times\b/gu, "×")
     .replace(/\\pi\b/gu, "π")
@@ -240,7 +257,9 @@ function replaceMathOutsideInlineCode(line: string, placeholders: ChatMathPlaceh
 
 function replaceMathInText(text: string, placeholders: ChatMathPlaceholder[], tokenNonce: string): string {
   const segments = splitChatMathSegments(text);
-  if (!segments.some((segment) => segment.kind === "math")) {
+  const hasMath = segments.some((segment) => segment.kind === "math");
+  const nextText = segments.map((segment) => segment.text).join("");
+  if (!hasMath && nextText === text) {
     return text;
   }
   return segments
@@ -254,9 +273,17 @@ function replaceMathInText(text: string, placeholders: ChatMathPlaceholder[], to
         text: segment.text,
         display: segment.display,
       });
-      return token;
+      return createChatMathPlaceholderSentinel(token);
     })
     .join("");
+}
+
+function createChatMathPlaceholderSentinel(token: string): string {
+  return `<span class="${CHAT_MATH_PLACEHOLDER_CLASS}" ${CHAT_MATH_PLACEHOLDER_TOKEN_ATTR}="${token}"></span>`;
+}
+
+function createPlaceholderMap(placeholders: readonly ChatMathPlaceholder[]): ReadonlyMap<string, ChatMathPlaceholder> {
+  return new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
 }
 
 function createChatMathTokenNonce(): string {
@@ -280,35 +307,262 @@ function countBacktickRun(text: string, start: number): number {
   return index - start;
 }
 
-function findNextPlaceholder(
-  text: string,
-  start: number,
-  byToken: ReadonlyMap<string, ChatMathPlaceholder>,
-): { index: number; placeholder: ChatMathPlaceholder } | null {
-  let best: { index: number; placeholder: ChatMathPlaceholder } | null = null;
-  for (const placeholder of byToken.values()) {
-    const index = text.indexOf(placeholder.token, start);
-    if (index >= 0 && (!best || index < best.index)) {
-      best = { index, placeholder };
-    }
+function replacePreparedChatMathPlaceholders(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
+  const ownerDocument = getOwnerDocument(root);
+  const spans = collectChatMathTextSpans(root);
+  const text = spans.map((span) => span.node.data).join("");
+  if (!text || !placeholders.some((placeholder) => text.includes(placeholder.token))) {
+    return;
   }
-  return best;
+
+  const matches = findPlaceholderMatches(text, placeholders);
+  for (const match of [...matches].reverse()) {
+    const start = findTextPosition(spans, match.start, "start");
+    const end = findTextPosition(spans, match.end, "end");
+    if (!start || !end || !start.node.parentNode || !end.node.parentNode) {
+      continue;
+    }
+    const range = ownerDocument.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    range.deleteContents();
+    range.insertNode(createChatMathElement(match.placeholder, ownerDocument));
+    range.detach();
+  }
 }
 
-function createChatMathElement(segment: { text: string; display: boolean }): HTMLElement {
-  const mathEl = document.createElement("span");
+function collectChatMathTextSpans(root: HTMLElement): ChatMathTextSpan[] {
+  const walker = createTextWalker(root);
+  const spans: ChatMathTextSpan[] = [];
+  let offset = 0;
+  let current = walker.nextNode();
+  while (current) {
+    const textNode = isTextNode(current) ? current : null;
+    if (textNode && shouldIncludeChatMathTextSpan(textNode)) {
+      const start = offset;
+      offset += textNode.data.length;
+      spans.push({ node: textNode, start, end: offset });
+    }
+    current = walker.nextNode();
+  }
+  return spans;
+}
+
+function findPlaceholderMatches(
+  text: string,
+  placeholders: readonly ChatMathPlaceholder[],
+): ChatMathPlaceholderMatch[] {
+  return placeholders
+    .flatMap((placeholder) => {
+      const matches: ChatMathPlaceholderMatch[] = [];
+      let start = text.indexOf(placeholder.token);
+      while (start >= 0) {
+        matches.push({
+          start,
+          end: start + placeholder.token.length,
+          placeholder,
+        });
+        start = text.indexOf(placeholder.token, start + placeholder.token.length);
+      }
+      return matches;
+    })
+    .sort((left, right) => left.start - right.start);
+}
+
+function findTextPosition(
+  spans: readonly ChatMathTextSpan[],
+  offset: number,
+  affinity: "start" | "end",
+): ChatMathTextPosition | null {
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index]!;
+    if (offset < span.end) {
+      return { node: span.node, offset: offset - span.start };
+    }
+    if (offset === span.end) {
+      const nextSpan = spans[index + 1] ?? null;
+      if (affinity === "start" && nextSpan?.start === offset) {
+        continue;
+      }
+      return { node: span.node, offset: span.node.data.length };
+    }
+  }
+  return null;
+}
+
+function createChatMathElement(segment: { text: string; display: boolean }, ownerDocument: Document): HTMLElement {
+  const mathEl = ownerDocument.createElement("span");
   mathEl.className = `obsidian-codex__chat-math${segment.display ? " obsidian-codex__chat-math--display" : ""}`;
   mathEl.textContent = formatChatMathFallback(segment.text);
   mathEl.title = segment.text.trim();
   return mathEl;
 }
 
+function replaceRenderedChatMathErrors(root: HTMLElement): void {
+  const ownerDocument = getOwnerDocument(root);
+  const errorNodes = Array.from(root.querySelectorAll<Element>(CHAT_MATH_ERROR_SELECTOR));
+  const targets = collectRenderedChatMathErrorTargets(root, errorNodes);
+  for (const target of targets) {
+    if (!target.parentNode || target.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math")) {
+      continue;
+    }
+    const fallbackText = extractChatMathErrorFallbackText(target.textContent ?? "");
+    if (!fallbackText) {
+      target.remove();
+      continue;
+    }
+    target.replaceWith(
+      createChatMathElement(
+        {
+          text: fallbackText,
+          display: isDisplayRenderedMathNode(target),
+        },
+        ownerDocument,
+      ),
+    );
+  }
+}
+
+function collectRenderedChatMathErrorTargets(root: HTMLElement, errorNodes: readonly Element[]): Element[] {
+  const candidates = new Set<Element>();
+  for (const errorNode of errorNodes) {
+    const container = errorNode.closest(CHAT_MATH_ERROR_CONTAINER_SELECTOR);
+    candidates.add(container && root.contains(container) ? container : errorNode);
+  }
+  return Array.from(candidates).filter((candidate) => {
+    return !Array.from(candidates).some((other) => other !== candidate && other.contains(candidate));
+  });
+}
+
+function extractChatMathErrorFallbackText(text: string): string {
+  const trimmed = text
+    .trim()
+    .replace(/^\${1,2}\s*/u, "")
+    .replace(/\s*\${1,2}$/u, "");
+  if (!trimmed || CHAT_MATH_PARSE_ERROR_RE.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function isDisplayRenderedMathNode(node: Element): boolean {
+  return node.matches('mjx-container[display="true"], .math-block, .block-language-math, .obsidian-codex__chat-math--display');
+}
+
+function replaceRenderedChatMathSentinels(
+  root: HTMLElement,
+  placeholderByToken: ReadonlyMap<string, ChatMathPlaceholder>,
+): void {
+  const ownerDocument = getOwnerDocument(root);
+  const sentinels = Array.from(root.querySelectorAll<HTMLElement>(CHAT_MATH_PLACEHOLDER_SELECTOR));
+  for (const sentinel of sentinels) {
+    if (sentinel.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math")) {
+      continue;
+    }
+    const token = sentinel.getAttribute(CHAT_MATH_PLACEHOLDER_TOKEN_ATTR) ?? "";
+    const placeholder = CHAT_MATH_FULL_PLACEHOLDER_TOKEN_RE.test(token) ? placeholderByToken.get(token) : null;
+    if (placeholder) {
+      sentinel.replaceWith(createChatMathElement(placeholder, ownerDocument));
+      continue;
+    }
+    sentinel.remove();
+  }
+}
+
+function replaceRawChatMathSentinels(
+  root: HTMLElement,
+  placeholderByToken: ReadonlyMap<string, ChatMathPlaceholder>,
+): void {
+  const spans = collectChatMathTextSpans(root);
+  const text = spans.map((span) => span.node.data).join("");
+  if (!text.includes("obsidian-codex__chat-math-placeholder") && !text.includes("data-codex-chat-math-token")) {
+    return;
+  }
+
+  const matches: ChatMathPlaceholderMatch[] = [];
+  for (const match of text.matchAll(RAW_CHAT_MATH_SENTINEL_RE)) {
+    const rawSentinel = match[0];
+    const start = match.index;
+    const token = rawSentinel.match(CHAT_MATH_VISIBLE_PLACEHOLDER_RE)?.[0] ?? "";
+    if (typeof start !== "number") {
+      continue;
+    }
+    matches.push({
+      start,
+      end: start + rawSentinel.length,
+      placeholder: placeholderByToken.get(token) ?? {
+        token,
+        text: "",
+        display: false,
+      },
+    });
+  }
+  replaceChatMathTextMatches(root, spans, matches);
+}
+
+function scrubRemainingChatMathPlaceholders(
+  root: HTMLElement,
+  placeholderByToken: ReadonlyMap<string, ChatMathPlaceholder>,
+): void {
+  replaceRawChatMathSentinels(root, placeholderByToken);
+  const spans = collectChatMathTextSpans(root);
+  const text = spans.map((span) => span.node.data).join("");
+  if (!text) {
+    return;
+  }
+
+  const matches: ChatMathPlaceholderMatch[] = [];
+  for (const match of text.matchAll(CHAT_MATH_VISIBLE_PLACEHOLDER_RE)) {
+    const token = match[0];
+    const start = match.index;
+    if (typeof start !== "number") {
+      continue;
+    }
+    matches.push({
+      start,
+      end: start + token.length,
+      placeholder: placeholderByToken.get(token) ?? {
+        token,
+        text: "",
+        display: false,
+      },
+    });
+  }
+  replaceChatMathTextMatches(root, spans, matches);
+}
+
+function replaceChatMathTextMatches(
+  root: HTMLElement,
+  spans: readonly ChatMathTextSpan[],
+  matches: readonly ChatMathPlaceholderMatch[],
+): void {
+  if (matches.length === 0) {
+    return;
+  }
+  const ownerDocument = getOwnerDocument(root);
+  for (const match of [...matches].reverse()) {
+    const start = findTextPosition(spans, match.start, "start");
+    const end = findTextPosition(spans, match.end, "end");
+    if (!start || !end || !start.node.parentNode || !end.node.parentNode) {
+      continue;
+    }
+    const range = ownerDocument.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    range.deleteContents();
+    if (match.placeholder.text) {
+      range.insertNode(createChatMathElement(match.placeholder, ownerDocument));
+    }
+    range.detach();
+  }
+}
+
 function cleanupChatMathDelimitersInElement(root: HTMLElement): void {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = createTextWalker(root);
   const textNodes: Text[] = [];
   let current = walker.nextNode();
   while (current) {
-    if (current instanceof Text && shouldConsiderDelimiterCleanup(current)) {
+    if (isTextNode(current) && shouldConsiderDelimiterCleanup(current)) {
       textNodes.push(current);
     }
     current = walker.nextNode();
@@ -364,7 +618,7 @@ function hasNearbyRenderedMath(node: Text): boolean {
 function findAdjacentSignificantNode(node: Node, direction: "previous" | "next"): Node | null {
   let current: Node | null = direction === "previous" ? node.previousSibling : node.nextSibling;
   while (current) {
-    if (current instanceof Text) {
+    if (isTextNode(current)) {
       if (current.data.trim().length > 0) {
         return current;
       }
@@ -377,10 +631,34 @@ function findAdjacentSignificantNode(node: Node, direction: "previous" | "next")
 }
 
 function isRenderedMathNode(node: Node): boolean {
-  if (!(node instanceof HTMLElement)) {
+  if (!isElementNode(node)) {
     return false;
   }
   return node.matches(CHAT_MATH_RENDER_SELECTOR) || Boolean(node.querySelector(CHAT_MATH_RENDER_SELECTOR));
+}
+
+function createTextWalker(root: HTMLElement): TreeWalker {
+  return getOwnerDocument(root).createTreeWalker(root, SHOW_TEXT_NODES);
+}
+
+function getOwnerDocument(root: Node): Document {
+  return root.ownerDocument ?? document;
+}
+
+function isTextNode(node: Node): node is Text {
+  return node.nodeType === TEXT_NODE_TYPE;
+}
+
+function isElementNode(node: Node): node is Element {
+  return node.nodeType === ELEMENT_NODE_TYPE;
+}
+
+function shouldIncludeChatMathTextSpan(node: Text): boolean {
+  const parent = node.parentElement;
+  if (!parent) {
+    return false;
+  }
+  return !parent.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math");
 }
 
 function findClosingDollarDelimiter(text: string, start: number, delimiter: "$" | "$$"): number {
@@ -400,10 +678,28 @@ function findClosingDollarDelimiter(text: string, start: number, delimiter: "$" 
 
 function isRenderableChatMath(content: string): boolean {
   const normalized = content.trim();
-  if (!normalized || /^\d+(?:\.\d+)?$/u.test(normalized)) {
+  if (!normalized || /^\d+(?:\.\d+)?$/u.test(normalized) || isBareNumericDashLabel(normalized)) {
     return false;
   }
   return /\\[A-Za-z]+|\^|_|=|[+\-*/]|[A-Za-z]\d|\d[A-Za-z]/u.test(normalized);
+}
+
+function getDelimitedChatMathSegment(content: string, display: boolean): ChatMathSegment | null {
+  if (shouldUnwrapChatMathDelimiters(content)) {
+    return { kind: "text", text: content.trim() };
+  }
+  if (isRenderableChatMath(content)) {
+    return { kind: "math", text: content, display };
+  }
+  return null;
+}
+
+function shouldUnwrapChatMathDelimiters(content: string): boolean {
+  return isBareNumericDashLabel(content.trim());
+}
+
+function isBareNumericDashLabel(text: string): boolean {
+  return BARE_NUMERIC_DASH_LABEL_RE.test(text);
 }
 
 function shouldProcessMathTextNode(node: Text): boolean {
@@ -414,7 +710,7 @@ function shouldProcessMathTextNode(node: Text): boolean {
   if (!parent) {
     return false;
   }
-  return !parent.closest("code, pre, kbd, samp, script, style");
+  return !parent.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math");
 }
 
 function toSuperscript(value: string): string {
@@ -448,7 +744,7 @@ function normalizeMathLine(line: string): string {
   const match = line.match(LINE_PREFIX_RE);
   const prefix = match?.[1] ?? "";
   const content = (match?.[2] ?? line).trim();
-  if (!content || EXISTING_MATH_RE.test(content) || !RAW_MATH_TOKEN_RE.test(content)) {
+  if (!content || isBareNumericDashLabel(content) || EXISTING_MATH_RE.test(content) || !RAW_MATH_TOKEN_RE.test(content)) {
     return line;
   }
 
@@ -465,7 +761,7 @@ function normalizeMathLine(line: string): string {
 }
 
 function looksLikeEquationFragment(text: string): boolean {
-  return /=/.test(text) && RAW_MATH_TOKEN_RE.test(text);
+  return !isBareNumericDashLabel(text.trim()) && /=/.test(text) && RAW_MATH_TOKEN_RE.test(text);
 }
 
 function looksLikeStandaloneEquation(text: string): boolean {

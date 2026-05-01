@@ -668,12 +668,26 @@ body.theme-light .obsidian-codex {
 .obsidian-codex__chat-math {
   font-family: var(--font-monospace);
   white-space: nowrap;
+  background: transparent !important;
+  color: inherit !important;
+  border: 0 !important;
+  box-shadow: none !important;
 }
 
 .obsidian-codex__chat-math--display {
   display: block;
   margin: 0.45rem 0;
   text-align: center;
+}
+
+.obsidian-codex__message-content--assistant .katex-error,
+.obsidian-codex__message-content--assistant mjx-merror,
+.obsidian-codex__message-content--assistant [data-mjx-error],
+.obsidian-codex__message-content--assistant .math-error {
+  background: transparent !important;
+  color: inherit !important;
+  border: 0 !important;
+  box-shadow: none !important;
 }
 
 .obsidian-codex__message-markdown > :first-child,
