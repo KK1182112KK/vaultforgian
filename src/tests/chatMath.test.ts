@@ -83,6 +83,8 @@ describe("chat math normalization", () => {
 
     expect(prepared.markdown).not.toContain("$a^2");
     expect(prepared.markdown).toContain(prepared.placeholders[0]?.token);
+    expect(prepared.markdown).toContain("obsidian-codex__chat-math-placeholder");
+    expect(prepared.markdown).toContain("data-codex-chat-math-token");
     expect(prepared.placeholders[0]?.token).toMatch(/^NFCODEXCHATMATH[a-z0-9]+X0TOKEN$/iu);
     expect(prepared.markdown).toContain("$c^2$ stays code");
     expect(prepared.markdown).toContain("Price is $5.");

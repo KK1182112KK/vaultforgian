@@ -7,7 +7,13 @@ const PROSE_EQUATION_RE =
   /^((?:so|therefore|thus|then|now|that means|this means|that gives|this gives)\b\s+)(.+)$/i;
 const LINE_PREFIX_RE = /^(\s*(?:(?:[-*+]\s+|\d+[.)]\s+|>\s+)+))(.*)$/;
 const CHAT_MATH_TOKEN_PREFIX = "NFCODEXCHATMATH";
-const CHAT_MATH_PLACEHOLDER_TOKEN_RE = /NFCODEXCHATMATH[a-z0-9]+X\d+TOKEN/giu;
+const CHAT_MATH_PLACEHOLDER_CLASS = "obsidian-codex__chat-math-placeholder";
+const CHAT_MATH_PLACEHOLDER_TOKEN_ATTR = "data-codex-chat-math-token";
+const CHAT_MATH_PLACEHOLDER_SELECTOR = `[${CHAT_MATH_PLACEHOLDER_TOKEN_ATTR}]`;
+const CHAT_MATH_FULL_PLACEHOLDER_TOKEN_RE = /^NFCODEXCHATMATH[a-z0-9]+X\d+TOKEN$/iu;
+const CHAT_MATH_VISIBLE_PLACEHOLDER_RE = /NFCODEXCHATMATH[a-z0-9]*/giu;
+const RAW_CHAT_MATH_SENTINEL_RE =
+  /<span\b[^>]*(?:obsidian-codex__chat-math-placeholder|data-codex-chat-math-token)[^>]*>\s*<\/span>/giu;
 const CHAT_MATH_RENDER_SELECTOR = ".obsidian-codex__chat-math, .katex, mjx-container, .math";
 const ELEMENT_NODE_TYPE = 1;
 const TEXT_NODE_TYPE = 3;
@@ -144,12 +150,17 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
 }
 
 export function renderPreparedChatMathInElement(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
+  const placeholderByToken = createPlaceholderMap(placeholders);
+  replaceRenderedChatMathSentinels(root, placeholderByToken);
+  replaceRawChatMathSentinels(root, placeholderByToken);
   if (placeholders.length > 0) {
     replacePreparedChatMathPlaceholders(root, placeholders);
   }
 
   renderChatMathInElement(root);
-  scrubRemainingChatMathPlaceholders(root, placeholders);
+  replaceRenderedChatMathSentinels(root, placeholderByToken);
+  replaceRawChatMathSentinels(root, placeholderByToken);
+  scrubRemainingChatMathPlaceholders(root, placeholderByToken);
 }
 
 export function renderChatMathInElement(root: HTMLElement): void {
@@ -245,9 +256,17 @@ function replaceMathInText(text: string, placeholders: ChatMathPlaceholder[], to
         text: segment.text,
         display: segment.display,
       });
-      return token;
+      return createChatMathPlaceholderSentinel(token);
     })
     .join("");
+}
+
+function createChatMathPlaceholderSentinel(token: string): string {
+  return `<span class="${CHAT_MATH_PLACEHOLDER_CLASS}" ${CHAT_MATH_PLACEHOLDER_TOKEN_ATTR}="${token}"></span>`;
+}
+
+function createPlaceholderMap(placeholders: readonly ChatMathPlaceholder[]): ReadonlyMap<string, ChatMathPlaceholder> {
+  return new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
 }
 
 function createChatMathTokenNonce(): string {
@@ -362,9 +381,62 @@ function createChatMathElement(segment: { text: string; display: boolean }, owne
   return mathEl;
 }
 
-function scrubRemainingChatMathPlaceholders(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
+function replaceRenderedChatMathSentinels(
+  root: HTMLElement,
+  placeholderByToken: ReadonlyMap<string, ChatMathPlaceholder>,
+): void {
   const ownerDocument = getOwnerDocument(root);
-  const placeholderByToken = new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
+  const sentinels = Array.from(root.querySelectorAll<HTMLElement>(CHAT_MATH_PLACEHOLDER_SELECTOR));
+  for (const sentinel of sentinels) {
+    if (sentinel.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math")) {
+      continue;
+    }
+    const token = sentinel.getAttribute(CHAT_MATH_PLACEHOLDER_TOKEN_ATTR) ?? "";
+    const placeholder = CHAT_MATH_FULL_PLACEHOLDER_TOKEN_RE.test(token) ? placeholderByToken.get(token) : null;
+    if (placeholder) {
+      sentinel.replaceWith(createChatMathElement(placeholder, ownerDocument));
+      continue;
+    }
+    sentinel.remove();
+  }
+}
+
+function replaceRawChatMathSentinels(
+  root: HTMLElement,
+  placeholderByToken: ReadonlyMap<string, ChatMathPlaceholder>,
+): void {
+  const spans = collectChatMathTextSpans(root);
+  const text = spans.map((span) => span.node.data).join("");
+  if (!text.includes("obsidian-codex__chat-math-placeholder") && !text.includes("data-codex-chat-math-token")) {
+    return;
+  }
+
+  const matches: ChatMathPlaceholderMatch[] = [];
+  for (const match of text.matchAll(RAW_CHAT_MATH_SENTINEL_RE)) {
+    const rawSentinel = match[0];
+    const start = match.index;
+    const token = rawSentinel.match(CHAT_MATH_VISIBLE_PLACEHOLDER_RE)?.[0] ?? "";
+    if (typeof start !== "number") {
+      continue;
+    }
+    matches.push({
+      start,
+      end: start + rawSentinel.length,
+      placeholder: placeholderByToken.get(token) ?? {
+        token,
+        text: "",
+        display: false,
+      },
+    });
+  }
+  replaceChatMathTextMatches(root, spans, matches);
+}
+
+function scrubRemainingChatMathPlaceholders(
+  root: HTMLElement,
+  placeholderByToken: ReadonlyMap<string, ChatMathPlaceholder>,
+): void {
+  replaceRawChatMathSentinels(root, placeholderByToken);
   const spans = collectChatMathTextSpans(root);
   const text = spans.map((span) => span.node.data).join("");
   if (!text) {
@@ -372,7 +444,7 @@ function scrubRemainingChatMathPlaceholders(root: HTMLElement, placeholders: rea
   }
 
   const matches: ChatMathPlaceholderMatch[] = [];
-  for (const match of text.matchAll(CHAT_MATH_PLACEHOLDER_TOKEN_RE)) {
+  for (const match of text.matchAll(CHAT_MATH_VISIBLE_PLACEHOLDER_RE)) {
     const token = match[0];
     const start = match.index;
     if (typeof start !== "number") {
@@ -388,7 +460,19 @@ function scrubRemainingChatMathPlaceholders(root: HTMLElement, placeholders: rea
       },
     });
   }
-  for (const match of matches.reverse()) {
+  replaceChatMathTextMatches(root, spans, matches);
+}
+
+function replaceChatMathTextMatches(
+  root: HTMLElement,
+  spans: readonly ChatMathTextSpan[],
+  matches: readonly ChatMathPlaceholderMatch[],
+): void {
+  if (matches.length === 0) {
+    return;
+  }
+  const ownerDocument = getOwnerDocument(root);
+  for (const match of [...matches].reverse()) {
     const start = findTextPosition(spans, match.start, "start");
     const end = findTextPosition(spans, match.end, "end");
     if (!start || !end || !start.node.parentNode || !end.node.parentNode) {

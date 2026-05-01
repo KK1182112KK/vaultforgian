@@ -395,9 +395,7 @@ export class TranscriptRenderer {
       ? () => renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders)
       : null;
     const stopAssistantChatMathObserver =
-      preparedChatMath && finalizeAssistantChatMath
-        ? this.observeAssistantChatMathMutations(markdownEl, preparedChatMath.placeholders.length, finalizeAssistantChatMath)
-        : null;
+      finalizeAssistantChatMath ? this.observeAssistantChatMathMutations(markdownEl, finalizeAssistantChatMath) : null;
     const renderPromise = MarkdownRenderer.render(
       context.app,
       preparedChatMath?.markdown ?? this.getRenderableMessageText(context, message),
@@ -429,18 +427,20 @@ export class TranscriptRenderer {
 
   private observeAssistantChatMathMutations(
     markdownEl: HTMLElement,
-    placeholderCount: number,
     finalize: () => void,
   ): (() => void) | null {
     const MutationObserverCtor = markdownEl.ownerDocument.defaultView?.MutationObserver ?? globalThis.MutationObserver;
-    if (placeholderCount === 0 || typeof MutationObserverCtor === "undefined") {
+    if (typeof MutationObserverCtor === "undefined") {
       return null;
     }
 
     let isActive = true;
     let isFinalizing = false;
     const observer = new MutationObserverCtor(() => {
-      if (!isActive || isFinalizing) {
+      if (!isActive) {
+        return;
+      }
+      if (isFinalizing) {
         return;
       }
       isFinalizing = true;
@@ -465,10 +465,6 @@ export class TranscriptRenderer {
       observer.disconnect();
       this.chatMathObservers.delete(observer);
     };
-    const stopTimer = globalThis.setTimeout(stop, 1000);
-    if (typeof stopTimer === "object" && stopTimer && "unref" in stopTimer) {
-      (stopTimer as { unref: () => void }).unref();
-    }
     return stop;
   }
 
