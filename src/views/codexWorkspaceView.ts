@@ -123,6 +123,7 @@ export class CodexWorkspaceView extends ItemView {
       return;
     }
     this.hubRenderer?.dispose();
+    this.transcriptRenderer?.dispose();
     this.composerRenderer?.closeStatusMenu();
     this.shellEl.empty();
     this.buildLayout();
@@ -170,6 +171,7 @@ export class CodexWorkspaceView extends ItemView {
     this.pendingResponsiveHubCollapsedState = null;
     this.isNarrowLayout = false;
     this.hubRenderer?.dispose();
+    this.transcriptRenderer?.dispose();
     this.composerRenderer?.dispose();
     this.contentEl.removeEventListener("keydown", this.keydownHandler, true);
     this.contentEl.ownerDocument.defaultView?.removeEventListener("resize", this.windowResizeHandler);

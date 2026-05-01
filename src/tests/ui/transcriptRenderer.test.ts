@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalResult } from "../../app/approvalCoordinator";
 import type { WorkspaceState } from "../../model/types";
 import { getLocalizedCopy } from "../../util/i18n";
+import { prepareChatMarkdownForMathRender, renderPreparedChatMathInElement } from "../../util/chatMath";
 import { TranscriptRenderer } from "../../views/renderers/transcriptRenderer";
 import type { WorkspaceRenderCallbacks, WorkspaceRenderContext } from "../../views/renderers/types";
 import { installObsidianDomHelpers } from "../setup/obsidian";
@@ -25,6 +26,8 @@ const testNotice = Notice as typeof Notice & {
   messages: string[];
   reset(): void;
 };
+
+const CHAT_MATH_PLACEHOLDER_RE = /NFCODEXCHATMATH[a-z0-9]+X\d+TOKEN/iu;
 
 function createState(): WorkspaceState {
   return {
@@ -213,6 +216,7 @@ describe("TranscriptRenderer avatar safety", () => {
 
     const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
     const text = markdown.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
     expect(text).not.toContain("$6^2");
     expect(text).not.toContain("$c^2");
     expect(text).not.toContain("$c =");
@@ -246,6 +250,7 @@ describe("TranscriptRenderer avatar safety", () => {
 
     const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
     const text = markdown.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
     expect(text).not.toContain("$a");
     expect(text).not.toContain("$$");
     expect(text).toContain("a² + b² = c²");
@@ -284,6 +289,7 @@ describe("TranscriptRenderer avatar safety", () => {
     const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
     const text = markdown.textContent ?? "";
     expect(renderSpy).toHaveBeenCalled();
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
     expect(text).not.toContain("$c =");
     expect(text).not.toMatch(/\$\s*$/u);
     expect(text).toContain("c = √289 = 17");
@@ -291,9 +297,7 @@ describe("TranscriptRenderer avatar safety", () => {
 
   it("does not leak chat math placeholder tokens when markdown treats underscores as emphasis", async () => {
     vi.spyOn(MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => {
-      element.textContent = markdown.replace(/__NOTEFORGE_CHAT_MATH_[A-Za-z0-9]+_\d+_TOKEN__/gu, (token) =>
-        token.slice(2, -2),
-      );
+      element.textContent = markdown;
     });
     const state = createState();
     state.tabs[0]!.messages = [
@@ -314,8 +318,107 @@ describe("TranscriptRenderer avatar safety", () => {
     const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
     const text = markdown.textContent ?? "";
     expect(text).not.toContain("NOTEFORGE_CHAT_MATH");
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
     expect(text).toContain("90");
     expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(1);
+  });
+
+  it("does not leak NFCODEXCHATMATH placeholders after delayed markdown rendering", async () => {
+    const delayedWrites: Array<() => void> = [];
+    vi.spyOn(MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => {
+      delayedWrites.push(() => {
+        element.textContent = markdown;
+      });
+    });
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: [
+          "The Pythagorean theorem says $a^2 + b^2 = c^2$.",
+          "",
+          "For legs 6 and 8, $c = \\sqrt{6^2 + 8^2} = 10$.",
+        ].join("\n"),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(delayedWrites).toHaveLength(1);
+    delayedWrites[0]!();
+    await Promise.resolve();
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(text).toContain("Pythagorean theorem");
+    expect(text).toContain("a² + b² = c²");
+    expect(text).toContain("c = √6² + 8² = 10");
+    expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(2);
+  });
+
+  it("does not leak NFCODEXCHATMATH placeholders for normalized raw Pythagorean derivation lines", async () => {
+    const delayedWrites: Array<() => void> = [];
+    vi.spyOn(MarkdownRenderer, "render").mockImplementation(async (_app, markdown, element) => {
+      delayedWrites.push(() => {
+        element.textContent = markdown;
+      });
+    });
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: ["Here is the Pythagorean theorem:", "", "- 6^2 + 8^2 = 36 + 64 = 100", "- So c = \\sqrt{100} = 10"].join(
+          "\n",
+        ),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(delayedWrites).toHaveLength(1);
+    delayedWrites[0]!();
+    await Promise.resolve();
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(text).toContain("Pythagorean theorem");
+    expect(text).toContain("- 6² + 8² = 36 + 64 = 100");
+    expect(text).toContain("- So c = √100 = 10");
+    expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(2);
+  });
+
+  it("restores chat math placeholders split across adjacent DOM nodes", () => {
+    const prepared = prepareChatMarkdownForMathRender("The theorem says $a^2 + b^2 = c^2$.");
+    const placeholder = prepared.placeholders[0];
+    expect(placeholder).toBeDefined();
+    const token = placeholder!.token;
+    const root = document.createElement("div");
+    root.append(
+      document.createTextNode(`The theorem says ${token.slice(0, 10)}`),
+      document.createElement("em"),
+      document.createTextNode(token.slice(10, 24)),
+      document.createTextNode(token.slice(24)),
+      document.createTextNode("."),
+    );
+
+    renderPreparedChatMathInElement(root, prepared.placeholders);
+
+    const text = root.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(text).toContain("The theorem says a² + b² = c².");
+    expect(root.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(1);
   });
 
   it("does not convert user-authored markdown math in chat bubbles", () => {

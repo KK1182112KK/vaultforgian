@@ -24,6 +24,23 @@ export interface PreparedChatMathMarkdown {
   placeholders: ChatMathPlaceholder[];
 }
 
+interface ChatMathTextSpan {
+  node: Text;
+  start: number;
+  end: number;
+}
+
+interface ChatMathTextPosition {
+  node: Text;
+  offset: number;
+}
+
+interface ChatMathPlaceholderMatch {
+  start: number;
+  end: number;
+  placeholder: ChatMathPlaceholder;
+}
+
 export function normalizeAssistantMathForMarkdown(text: string): string {
   let insideFence = false;
   return text
@@ -124,39 +141,7 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
 
 export function renderPreparedChatMathInElement(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
   if (placeholders.length > 0) {
-    const byToken = new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const textNodes: Text[] = [];
-    let current = walker.nextNode();
-    while (current) {
-      const textNode = current instanceof Text ? current : null;
-      if (textNode && placeholders.some((placeholder) => textNode.data.includes(placeholder.token))) {
-        textNodes.push(textNode);
-      }
-      current = walker.nextNode();
-    }
-
-    for (const node of textNodes) {
-      const text = node.data;
-      if (!placeholders.some((placeholder) => text.includes(placeholder.token))) {
-        continue;
-      }
-      const fragment = document.createDocumentFragment();
-      let cursor = 0;
-      while (cursor < text.length) {
-        const next = findNextPlaceholder(text, cursor, byToken);
-        if (!next) {
-          fragment.appendChild(document.createTextNode(text.slice(cursor)));
-          break;
-        }
-        if (next.index > cursor) {
-          fragment.appendChild(document.createTextNode(text.slice(cursor, next.index)));
-        }
-        fragment.appendChild(createChatMathElement(next.placeholder));
-        cursor = next.index + next.placeholder.token.length;
-      }
-      node.replaceWith(fragment);
-    }
+    replacePreparedChatMathPlaceholders(root, placeholders);
   }
 
   renderChatMathInElement(root);
@@ -280,19 +265,86 @@ function countBacktickRun(text: string, start: number): number {
   return index - start;
 }
 
-function findNextPlaceholder(
+function replacePreparedChatMathPlaceholders(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
+  const spans = collectChatMathTextSpans(root);
+  const text = spans.map((span) => span.node.data).join("");
+  if (!text || !placeholders.some((placeholder) => text.includes(placeholder.token))) {
+    return;
+  }
+
+  const matches = findPlaceholderMatches(text, placeholders);
+  for (const match of [...matches].reverse()) {
+    const start = findTextPosition(spans, match.start, "start");
+    const end = findTextPosition(spans, match.end, "end");
+    if (!start || !end || !start.node.parentNode || !end.node.parentNode) {
+      continue;
+    }
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    range.deleteContents();
+    range.insertNode(createChatMathElement(match.placeholder));
+    range.detach();
+  }
+}
+
+function collectChatMathTextSpans(root: HTMLElement): ChatMathTextSpan[] {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const spans: ChatMathTextSpan[] = [];
+  let offset = 0;
+  let current = walker.nextNode();
+  while (current) {
+    const textNode = current instanceof Text ? current : null;
+    if (textNode && !textNode.parentElement?.closest(".obsidian-codex__chat-math")) {
+      const start = offset;
+      offset += textNode.data.length;
+      spans.push({ node: textNode, start, end: offset });
+    }
+    current = walker.nextNode();
+  }
+  return spans;
+}
+
+function findPlaceholderMatches(
   text: string,
-  start: number,
-  byToken: ReadonlyMap<string, ChatMathPlaceholder>,
-): { index: number; placeholder: ChatMathPlaceholder } | null {
-  let best: { index: number; placeholder: ChatMathPlaceholder } | null = null;
-  for (const placeholder of byToken.values()) {
-    const index = text.indexOf(placeholder.token, start);
-    if (index >= 0 && (!best || index < best.index)) {
-      best = { index, placeholder };
+  placeholders: readonly ChatMathPlaceholder[],
+): ChatMathPlaceholderMatch[] {
+  return placeholders
+    .flatMap((placeholder) => {
+      const matches: ChatMathPlaceholderMatch[] = [];
+      let start = text.indexOf(placeholder.token);
+      while (start >= 0) {
+        matches.push({
+          start,
+          end: start + placeholder.token.length,
+          placeholder,
+        });
+        start = text.indexOf(placeholder.token, start + placeholder.token.length);
+      }
+      return matches;
+    })
+    .sort((left, right) => left.start - right.start);
+}
+
+function findTextPosition(
+  spans: readonly ChatMathTextSpan[],
+  offset: number,
+  affinity: "start" | "end",
+): ChatMathTextPosition | null {
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index]!;
+    if (offset < span.end) {
+      return { node: span.node, offset: offset - span.start };
+    }
+    if (offset === span.end) {
+      const nextSpan = spans[index + 1] ?? null;
+      if (affinity === "start" && nextSpan?.start === offset) {
+        continue;
+      }
+      return { node: span.node, offset: span.node.data.length };
     }
   }
-  return best;
+  return null;
 }
 
 function createChatMathElement(segment: { text: string; display: boolean }): HTMLElement {

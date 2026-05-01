@@ -35,6 +35,7 @@ export class TranscriptRenderer {
   private restoreScrollVersion = 0;
   private lastRenderSignature: string | null = null;
   private readonly approvalActionScopesInFlight = new Set<string>();
+  private readonly chatMathObservers = new Set<MutationObserver>();
 
   constructor(
     private readonly root: HTMLDivElement,
@@ -104,6 +105,7 @@ export class TranscriptRenderer {
     }
 
     this.withProgrammaticScrollIgnored(() => {
+      this.disconnectChatMathObservers();
       this.root.empty();
       this.root.addClass("obsidian-codex__messages");
     });
@@ -392,6 +394,10 @@ export class TranscriptRenderer {
     const finalizeAssistantChatMath = preparedChatMath
       ? () => renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders)
       : null;
+    const stopAssistantChatMathObserver =
+      preparedChatMath && finalizeAssistantChatMath
+        ? this.observeAssistantChatMathMutations(markdownEl, preparedChatMath.placeholders.length, finalizeAssistantChatMath)
+        : null;
     const renderPromise = MarkdownRenderer.render(
       context.app,
       preparedChatMath?.markdown ?? this.getRenderableMessageText(context, message),
@@ -405,6 +411,8 @@ export class TranscriptRenderer {
       window.requestAnimationFrame(() => {
         finalizeAssistantChatMath?.();
       });
+    }).catch(() => {
+      stopAssistantChatMathObserver?.();
     });
 
     if (
@@ -413,6 +421,61 @@ export class TranscriptRenderer {
     ) {
       this.renderChatSuggestionActions(contentEl, context, activeTabSuggestion(context, message.id)!);
     }
+  }
+
+  dispose(): void {
+    this.disconnectChatMathObservers();
+  }
+
+  private observeAssistantChatMathMutations(
+    markdownEl: HTMLElement,
+    placeholderCount: number,
+    finalize: () => void,
+  ): (() => void) | null {
+    if (placeholderCount === 0 || typeof MutationObserver === "undefined") {
+      return null;
+    }
+
+    let isActive = true;
+    let isFinalizing = false;
+    const observer = new MutationObserver(() => {
+      if (!isActive || isFinalizing) {
+        return;
+      }
+      isFinalizing = true;
+      try {
+        finalize();
+      } finally {
+        isFinalizing = false;
+      }
+    });
+    observer.observe(markdownEl, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    this.chatMathObservers.add(observer);
+
+    const stop = () => {
+      if (!isActive) {
+        return;
+      }
+      isActive = false;
+      observer.disconnect();
+      this.chatMathObservers.delete(observer);
+    };
+    const stopTimer = globalThis.setTimeout(stop, 1000);
+    if (typeof stopTimer === "object" && stopTimer && "unref" in stopTimer) {
+      (stopTimer as { unref: () => void }).unref();
+    }
+    return stop;
+  }
+
+  private disconnectChatMathObservers(): void {
+    for (const observer of this.chatMathObservers) {
+      observer.disconnect();
+    }
+    this.chatMathObservers.clear();
   }
 
   private renderCompactMetaChips(
