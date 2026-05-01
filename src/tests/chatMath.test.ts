@@ -37,6 +37,21 @@ describe("chat math normalization", () => {
     expect(text).toContain("```text\n6^2 + 8^2 = 100\n```");
   });
 
+  it("does not wrap bare Pythagorean triple labels as assistant math", () => {
+    const text = normalizeAssistantMathForMarkdown(
+      ["Why the 3-4-5 example matters", "3-4-5", "3–4–5", "3−4−5"].join("\n"),
+    );
+
+    expect(text).toBe(["Why the 3-4-5 example matters", "3-4-5", "3–4–5", "3−4−5"].join("\n"));
+  });
+
+  it("unwraps explicit assistant math delimiters around bare numeric dash labels", () => {
+    const prepared = prepareChatMarkdownForMathRender("Why the $3-4-5$ example matters: $3−4−5$.");
+
+    expect(prepared.placeholders).toHaveLength(0);
+    expect(prepared.markdown).toBe("Why the 3-4-5 example matters: 3−4−5.");
+  });
+
   it("splits inline and display math into renderable segments", () => {
     const segments = splitChatMathSegments("Use $a^2 + b^2 = c^2$ and $$c = \\sqrt{100}$$.");
 
@@ -68,6 +83,9 @@ describe("chat math normalization", () => {
   it("formats math fallback without markdown delimiters", () => {
     expect(formatChatMathFallback("a^2 + b^2 = c^2")).toBe("a² + b² = c²");
     expect(formatChatMathFallback("c = \\sqrt{100}")).toBe("c = √100");
+    expect(formatChatMathFallback("a = \\sqrt{c^2 - b^2} \\qquad b = \\sqrt{c^2 - a^2}")).toBe(
+      "a = √c² - b² b = √c² - a²",
+    );
   });
 
   it("does not treat ordinary money or plain numbers as renderable chat math", () => {

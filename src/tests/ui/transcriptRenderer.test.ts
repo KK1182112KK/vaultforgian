@@ -28,6 +28,18 @@ const testNotice = Notice as typeof Notice & {
 };
 
 const CHAT_MATH_PLACEHOLDER_RE = /NFCODEXCHATMATH[a-z0-9]*/iu;
+const CHAT_MATH_ERROR_SELECTOR = ".katex-error, mjx-merror, [data-mjx-error], .math-error";
+
+function expectNoAssistantChatMathError(markdown: HTMLElement): void {
+  expect(markdown.querySelector(CHAT_MATH_ERROR_SELECTOR)).toBeNull();
+  const yellowErrorNode = Array.from(markdown.querySelectorAll<HTMLElement>("*")).find((element) => {
+    const style = element.getAttribute("style") ?? "";
+    return /(?:background(?:-color)?\s*:\s*(?:yellow|#ff0|rgb\(255,\s*255,\s*0\))|color\s*:\s*(?:red|#f00|rgb\(255,\s*0,\s*0\)))/iu.test(
+      style,
+    );
+  });
+  expect(yellowErrorNode).toBeUndefined();
+}
 
 function createState(): WorkspaceState {
   return {
@@ -258,6 +270,76 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(text).toContain("/deep-read");
     expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(2);
     expect(markdown.querySelectorAll(".obsidian-codex__chat-math--display")).toHaveLength(1);
+  });
+
+  it("renders screenshot-style Pythagorean assistant math without error highlighting", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: [
+          "The theorem is really an area statement.",
+          "",
+          "c = \\sqrt a^2 + b^2",
+          "",
+          "If you know the hypotenuse and one leg, you are undoing that process:",
+          "",
+          "a = \\sqrt{c^2 - b^2} \\qquad b = \\sqrt{c^2 - a^2}",
+          "",
+          "## Why the $3-4-5$ example matters",
+          "",
+          "3^2 + 4^2 = 9 + 16 = 25 = 5^2",
+          "",
+          "So 3, 4, and 5 fit the theorem exactly. This makes $3−4−5$ easy to remember.",
+        ].join("\n"),
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    const renderedMathTitles = Array.from(markdown.querySelectorAll<HTMLElement>(".obsidian-codex__chat-math")).map(
+      (element) => element.title,
+    );
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(text).not.toContain("$3-4-5$");
+    expect(text).not.toContain("qquad");
+    expect(text).toContain("Why the 3-4-5 example matters");
+    expect(text).toContain("a = √c² - b² b = √c² - a²");
+    expect(renderedMathTitles).not.toContain("3-4-5");
+    expect(renderedMathTitles).not.toContain("3−4−5");
+    expectNoAssistantChatMathError(markdown);
+  });
+
+  it("neutralizes Obsidian math error DOM in assistant chat output", async () => {
+    vi.spyOn(MarkdownRenderer, "render").mockImplementation(async (_app, _markdown, element) => {
+      element.innerHTML =
+        '<span class="katex-error" style="background-color: yellow; color: red;">c = \\\\sqrt a^2 + b^2</span>';
+    });
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "c = \\sqrt a^2 + b^2",
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    expect(markdown.textContent).toContain("c = √a² + b²");
+    expect(markdown.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(1);
+    expectNoAssistantChatMathError(markdown);
   });
 
   it("removes Obsidian math postprocessor delimiter text around rendered math", async () => {
@@ -1309,6 +1391,18 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(baseBlock).not.toContain("rgba(220, 53, 69");
     expect(css).toContain(".obsidian-codex__message-content--system.is-error");
     expect(css).toContain(".obsidian-codex__message-content--system.is-warning");
+  });
+
+  it("resets assistant chat math and math error colors in CSS", () => {
+    const css = readFileSync(join(process.cwd(), "src/styles/10-layout.css"), "utf8");
+    const chatMathBlock = css.match(/\.obsidian-codex__chat-math\s*\{[^}]+\}/u)?.[0] ?? "";
+
+    expect(chatMathBlock).toContain("background: transparent");
+    expect(chatMathBlock).toContain("color: inherit");
+    expect(chatMathBlock).toContain("border: 0");
+    expect(css).toContain(".obsidian-codex__message-content--assistant .katex-error");
+    expect(css).toContain(".obsidian-codex__message-content--assistant mjx-merror");
+    expect(css).toContain(".obsidian-codex__message-content--assistant [data-mjx-error]");
   });
 
   it("renders rewrite-followup suggestions with the reflect CTA and fallback question", () => {

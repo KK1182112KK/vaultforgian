@@ -15,6 +15,10 @@ const CHAT_MATH_VISIBLE_PLACEHOLDER_RE = /NFCODEXCHATMATH[a-z0-9]*/giu;
 const RAW_CHAT_MATH_SENTINEL_RE =
   /<span\b[^>]*(?:obsidian-codex__chat-math-placeholder|data-codex-chat-math-token)[^>]*>\s*<\/span>/giu;
 const CHAT_MATH_RENDER_SELECTOR = ".obsidian-codex__chat-math, .katex, mjx-container, .math";
+const CHAT_MATH_ERROR_SELECTOR = ".katex-error, mjx-merror, [data-mjx-error], .math-error";
+const CHAT_MATH_ERROR_CONTAINER_SELECTOR = "mjx-container, .katex, .math";
+const CHAT_MATH_PARSE_ERROR_RE = /(?:parse error|undefined control sequence|mathjax|katex)/iu;
+const BARE_NUMERIC_DASH_LABEL_RE = /^\s*\d+(?:\s*[-\u2013\u2212]\s*\d+){1,}\s*$/u;
 const ELEMENT_NODE_TYPE = 1;
 const TEXT_NODE_TYPE = 3;
 const SHOW_TEXT_NODES = 4;
@@ -104,9 +108,10 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
       const end = text.indexOf("\\)", index + 2);
       if (end > index + 2) {
         const content = text.slice(index + 2, end);
-        if (isRenderableChatMath(content)) {
+        const segment = getDelimitedChatMathSegment(content, false);
+        if (segment) {
           pushText(index);
-          segments.push({ kind: "math", text: content, display: false });
+          segments.push(segment);
           index = end + 2;
           textStart = index;
           continue;
@@ -117,9 +122,10 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
       const end = text.indexOf("\\]", index + 2);
       if (end > index + 2) {
         const content = text.slice(index + 2, end);
-        if (isRenderableChatMath(content)) {
+        const segment = getDelimitedChatMathSegment(content, true);
+        if (segment) {
           pushText(index);
-          segments.push({ kind: "math", text: content, display: true });
+          segments.push(segment);
           index = end + 2;
           textStart = index;
           continue;
@@ -133,9 +139,10 @@ export function splitChatMathSegments(text: string): ChatMathSegment[] {
       const end = findClosingDollarDelimiter(text, contentStart, delimiter);
       if (end > contentStart) {
         const content = text.slice(contentStart, end);
-        if (isRenderableChatMath(content)) {
+        const segment = getDelimitedChatMathSegment(content, display);
+        if (segment) {
           pushText(index);
-          segments.push({ kind: "math", text: content, display });
+          segments.push(segment);
           index = end + delimiter.length;
           textStart = index;
           continue;
@@ -157,7 +164,9 @@ export function renderPreparedChatMathInElement(root: HTMLElement, placeholders:
     replacePreparedChatMathPlaceholders(root, placeholders);
   }
 
+  replaceRenderedChatMathErrors(root);
   renderChatMathInElement(root);
+  replaceRenderedChatMathErrors(root);
   replaceRenderedChatMathSentinels(root, placeholderByToken);
   replaceRawChatMathSentinels(root, placeholderByToken);
   scrubRemainingChatMathPlaceholders(root, placeholderByToken);
@@ -177,7 +186,9 @@ export function renderChatMathInElement(root: HTMLElement): void {
 
   for (const node of textNodes) {
     const segments = splitChatMathSegments(node.data);
-    if (!segments.some((segment) => segment.kind === "math")) {
+    const hasMath = segments.some((segment) => segment.kind === "math");
+    const nextText = segments.map((segment) => segment.text).join("");
+    if (!hasMath && nextText === node.data) {
       continue;
     }
     const fragment = ownerDocument.createDocumentFragment();
@@ -197,11 +208,15 @@ export function renderChatMathInElement(root: HTMLElement): void {
 export function formatChatMathFallback(input: string): string {
   return input
     .trim()
+    .replace(/\\\\(?=[A-Za-z])/gu, "\\")
     .replace(/\\text\{([^{}]*)\}/gu, "$1")
     .replace(/\\sqrt\{([^{}]+)\}/gu, (_match, value: string) => `√${formatChatMathFallback(value)}`)
+    .replace(/\\sqrt\s*([A-Za-z0-9])/gu, "√$1")
     .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/gu, (_match, numerator: string, denominator: string) => {
       return `(${formatChatMathFallback(numerator)})/(${formatChatMathFallback(denominator)})`;
     })
+    .replace(/\\qquad\b|\\quad\b/gu, " ")
+    .replace(/\\[,;:]/gu, " ")
     .replace(/\\cdot\b/gu, "·")
     .replace(/\\times\b/gu, "×")
     .replace(/\\pi\b/gu, "π")
@@ -242,7 +257,9 @@ function replaceMathOutsideInlineCode(line: string, placeholders: ChatMathPlaceh
 
 function replaceMathInText(text: string, placeholders: ChatMathPlaceholder[], tokenNonce: string): string {
   const segments = splitChatMathSegments(text);
-  if (!segments.some((segment) => segment.kind === "math")) {
+  const hasMath = segments.some((segment) => segment.kind === "math");
+  const nextText = segments.map((segment) => segment.text).join("");
+  if (!hasMath && nextText === text) {
     return text;
   }
   return segments
@@ -379,6 +396,57 @@ function createChatMathElement(segment: { text: string; display: boolean }, owne
   mathEl.textContent = formatChatMathFallback(segment.text);
   mathEl.title = segment.text.trim();
   return mathEl;
+}
+
+function replaceRenderedChatMathErrors(root: HTMLElement): void {
+  const ownerDocument = getOwnerDocument(root);
+  const errorNodes = Array.from(root.querySelectorAll<Element>(CHAT_MATH_ERROR_SELECTOR));
+  const targets = collectRenderedChatMathErrorTargets(root, errorNodes);
+  for (const target of targets) {
+    if (!target.parentNode || target.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math")) {
+      continue;
+    }
+    const fallbackText = extractChatMathErrorFallbackText(target.textContent ?? "");
+    if (!fallbackText) {
+      target.remove();
+      continue;
+    }
+    target.replaceWith(
+      createChatMathElement(
+        {
+          text: fallbackText,
+          display: isDisplayRenderedMathNode(target),
+        },
+        ownerDocument,
+      ),
+    );
+  }
+}
+
+function collectRenderedChatMathErrorTargets(root: HTMLElement, errorNodes: readonly Element[]): Element[] {
+  const candidates = new Set<Element>();
+  for (const errorNode of errorNodes) {
+    const container = errorNode.closest(CHAT_MATH_ERROR_CONTAINER_SELECTOR);
+    candidates.add(container && root.contains(container) ? container : errorNode);
+  }
+  return Array.from(candidates).filter((candidate) => {
+    return !Array.from(candidates).some((other) => other !== candidate && other.contains(candidate));
+  });
+}
+
+function extractChatMathErrorFallbackText(text: string): string {
+  const trimmed = text
+    .trim()
+    .replace(/^\${1,2}\s*/u, "")
+    .replace(/\s*\${1,2}$/u, "");
+  if (!trimmed || CHAT_MATH_PARSE_ERROR_RE.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function isDisplayRenderedMathNode(node: Element): boolean {
+  return node.matches('mjx-container[display="true"], .math-block, .block-language-math, .obsidian-codex__chat-math--display');
 }
 
 function replaceRenderedChatMathSentinels(
@@ -610,10 +678,28 @@ function findClosingDollarDelimiter(text: string, start: number, delimiter: "$" 
 
 function isRenderableChatMath(content: string): boolean {
   const normalized = content.trim();
-  if (!normalized || /^\d+(?:\.\d+)?$/u.test(normalized)) {
+  if (!normalized || /^\d+(?:\.\d+)?$/u.test(normalized) || isBareNumericDashLabel(normalized)) {
     return false;
   }
   return /\\[A-Za-z]+|\^|_|=|[+\-*/]|[A-Za-z]\d|\d[A-Za-z]/u.test(normalized);
+}
+
+function getDelimitedChatMathSegment(content: string, display: boolean): ChatMathSegment | null {
+  if (shouldUnwrapChatMathDelimiters(content)) {
+    return { kind: "text", text: content.trim() };
+  }
+  if (isRenderableChatMath(content)) {
+    return { kind: "math", text: content, display };
+  }
+  return null;
+}
+
+function shouldUnwrapChatMathDelimiters(content: string): boolean {
+  return isBareNumericDashLabel(content.trim());
+}
+
+function isBareNumericDashLabel(text: string): boolean {
+  return BARE_NUMERIC_DASH_LABEL_RE.test(text);
 }
 
 function shouldProcessMathTextNode(node: Text): boolean {
@@ -624,7 +710,7 @@ function shouldProcessMathTextNode(node: Text): boolean {
   if (!parent) {
     return false;
   }
-  return !parent.closest("code, pre, kbd, samp, script, style");
+  return !parent.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math");
 }
 
 function toSuperscript(value: string): string {
@@ -658,7 +744,7 @@ function normalizeMathLine(line: string): string {
   const match = line.match(LINE_PREFIX_RE);
   const prefix = match?.[1] ?? "";
   const content = (match?.[2] ?? line).trim();
-  if (!content || EXISTING_MATH_RE.test(content) || !RAW_MATH_TOKEN_RE.test(content)) {
+  if (!content || isBareNumericDashLabel(content) || EXISTING_MATH_RE.test(content) || !RAW_MATH_TOKEN_RE.test(content)) {
     return line;
   }
 
@@ -675,7 +761,7 @@ function normalizeMathLine(line: string): string {
 }
 
 function looksLikeEquationFragment(text: string): boolean {
-  return /=/.test(text) && RAW_MATH_TOKEN_RE.test(text);
+  return !isBareNumericDashLabel(text.trim()) && /=/.test(text) && RAW_MATH_TOKEN_RE.test(text);
 }
 
 function looksLikeStandaloneEquation(text: string): boolean {

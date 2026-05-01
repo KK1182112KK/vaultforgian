@@ -429,14 +429,16 @@ export class TranscriptRenderer {
     markdownEl: HTMLElement,
     finalize: () => void,
   ): (() => void) | null {
-    const MutationObserverCtor = markdownEl.ownerDocument.defaultView?.MutationObserver ?? globalThis.MutationObserver;
+    const ownerWindow = markdownEl.ownerDocument.defaultView;
+    const MutationObserverCtor = ownerWindow?.MutationObserver ?? globalThis.MutationObserver;
     if (typeof MutationObserverCtor === "undefined") {
       return null;
     }
 
     let isActive = true;
     let isFinalizing = false;
-    const observer = new MutationObserverCtor(() => {
+    let isScheduled = false;
+    const runFinalize = () => {
       if (!isActive) {
         return;
       }
@@ -449,6 +451,31 @@ export class TranscriptRenderer {
       } finally {
         isFinalizing = false;
       }
+    };
+    const scheduleFinalize = () => {
+      if (!isActive || isScheduled) {
+        return;
+      }
+      isScheduled = true;
+      const flush = () => {
+        isScheduled = false;
+        runFinalize();
+        const requestAnimationFrame =
+          ownerWindow?.requestAnimationFrame?.bind(ownerWindow) ?? globalThis.requestAnimationFrame?.bind(globalThis);
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(() => runFinalize());
+        }
+      };
+      const queueMicrotask = ownerWindow?.queueMicrotask?.bind(ownerWindow) ?? globalThis.queueMicrotask?.bind(globalThis);
+      if (typeof queueMicrotask === "function") {
+        queueMicrotask(flush);
+        return;
+      }
+      void Promise.resolve().then(flush);
+    };
+    const observer = new MutationObserverCtor(() => {
+      runFinalize();
+      scheduleFinalize();
     });
     observer.observe(markdownEl, {
       childList: true,
