@@ -432,13 +432,14 @@ export class TranscriptRenderer {
     placeholderCount: number,
     finalize: () => void,
   ): (() => void) | null {
-    if (placeholderCount === 0 || typeof MutationObserver === "undefined") {
+    const MutationObserverCtor = markdownEl.ownerDocument.defaultView?.MutationObserver ?? globalThis.MutationObserver;
+    if (placeholderCount === 0 || typeof MutationObserverCtor === "undefined") {
       return null;
     }
 
     let isActive = true;
     let isFinalizing = false;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserverCtor(() => {
       if (!isActive || isFinalizing) {
         return;
       }

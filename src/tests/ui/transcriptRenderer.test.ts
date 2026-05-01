@@ -421,6 +421,38 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(root.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(1);
   });
 
+  it("restores chat math placeholders in DOM nodes from another document realm", () => {
+    const prepared = prepareChatMarkdownForMathRender("The theorem says $a^2 + b^2 = c^2$.");
+    const placeholder = prepared.placeholders[0];
+    expect(placeholder).toBeDefined();
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    const foreignDocument = frame.contentDocument;
+    expect(foreignDocument).toBeDefined();
+    expect(foreignDocument!.defaultView?.Text).not.toBe(Text);
+    const root = foreignDocument!.createElement("div");
+    root.textContent = `The theorem says ${placeholder!.token}.`;
+
+    renderPreparedChatMathInElement(root, prepared.placeholders);
+
+    const text = root.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(text).toContain("The theorem says a² + b² = c².");
+    expect(root.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(1);
+    frame.remove();
+  });
+
+  it("scrubs orphaned chat math placeholder tokens from assistant markdown output", () => {
+    const root = document.createElement("div");
+    root.textContent = "Area relationship NFCODEXCHATMATHdeadbeefX0TOKEN should not leak.";
+
+    renderPreparedChatMathInElement(root, []);
+
+    const text = root.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(text).toContain("Area relationship  should not leak.");
+  });
+
   it("does not convert user-authored markdown math in chat bubbles", () => {
     const state = createState();
     state.tabs[0]!.messages = [

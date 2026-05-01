@@ -7,7 +7,11 @@ const PROSE_EQUATION_RE =
   /^((?:so|therefore|thus|then|now|that means|this means|that gives|this gives)\b\s+)(.+)$/i;
 const LINE_PREFIX_RE = /^(\s*(?:(?:[-*+]\s+|\d+[.)]\s+|>\s+)+))(.*)$/;
 const CHAT_MATH_TOKEN_PREFIX = "NFCODEXCHATMATH";
+const CHAT_MATH_PLACEHOLDER_TOKEN_RE = /NFCODEXCHATMATH[a-z0-9]+X\d+TOKEN/giu;
 const CHAT_MATH_RENDER_SELECTOR = ".obsidian-codex__chat-math, .katex, mjx-container, .math";
+const ELEMENT_NODE_TYPE = 1;
+const TEXT_NODE_TYPE = 3;
+const SHOW_TEXT_NODES = 4;
 
 export type ChatMathSegment =
   | { kind: "text"; text: string }
@@ -145,14 +149,16 @@ export function renderPreparedChatMathInElement(root: HTMLElement, placeholders:
   }
 
   renderChatMathInElement(root);
+  scrubRemainingChatMathPlaceholders(root, placeholders);
 }
 
 export function renderChatMathInElement(root: HTMLElement): void {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const ownerDocument = getOwnerDocument(root);
+  const walker = createTextWalker(root);
   const textNodes: Text[] = [];
   let current = walker.nextNode();
   while (current) {
-    if (current instanceof Text && shouldProcessMathTextNode(current)) {
+    if (isTextNode(current) && shouldProcessMathTextNode(current)) {
       textNodes.push(current);
     }
     current = walker.nextNode();
@@ -163,13 +169,13 @@ export function renderChatMathInElement(root: HTMLElement): void {
     if (!segments.some((segment) => segment.kind === "math")) {
       continue;
     }
-    const fragment = document.createDocumentFragment();
+    const fragment = ownerDocument.createDocumentFragment();
     for (const segment of segments) {
       if (segment.kind === "text") {
-        fragment.appendChild(document.createTextNode(segment.text));
+        fragment.appendChild(ownerDocument.createTextNode(segment.text));
         continue;
       }
-      fragment.appendChild(createChatMathElement(segment));
+      fragment.appendChild(createChatMathElement(segment, ownerDocument));
     }
     node.replaceWith(fragment);
   }
@@ -266,6 +272,7 @@ function countBacktickRun(text: string, start: number): number {
 }
 
 function replacePreparedChatMathPlaceholders(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
+  const ownerDocument = getOwnerDocument(root);
   const spans = collectChatMathTextSpans(root);
   const text = spans.map((span) => span.node.data).join("");
   if (!text || !placeholders.some((placeholder) => text.includes(placeholder.token))) {
@@ -279,23 +286,23 @@ function replacePreparedChatMathPlaceholders(root: HTMLElement, placeholders: re
     if (!start || !end || !start.node.parentNode || !end.node.parentNode) {
       continue;
     }
-    const range = document.createRange();
+    const range = ownerDocument.createRange();
     range.setStart(start.node, start.offset);
     range.setEnd(end.node, end.offset);
     range.deleteContents();
-    range.insertNode(createChatMathElement(match.placeholder));
+    range.insertNode(createChatMathElement(match.placeholder, ownerDocument));
     range.detach();
   }
 }
 
 function collectChatMathTextSpans(root: HTMLElement): ChatMathTextSpan[] {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = createTextWalker(root);
   const spans: ChatMathTextSpan[] = [];
   let offset = 0;
   let current = walker.nextNode();
   while (current) {
-    const textNode = current instanceof Text ? current : null;
-    if (textNode && !textNode.parentElement?.closest(".obsidian-codex__chat-math")) {
+    const textNode = isTextNode(current) ? current : null;
+    if (textNode && shouldIncludeChatMathTextSpan(textNode)) {
       const start = offset;
       offset += textNode.data.length;
       spans.push({ node: textNode, start, end: offset });
@@ -347,20 +354,63 @@ function findTextPosition(
   return null;
 }
 
-function createChatMathElement(segment: { text: string; display: boolean }): HTMLElement {
-  const mathEl = document.createElement("span");
+function createChatMathElement(segment: { text: string; display: boolean }, ownerDocument: Document): HTMLElement {
+  const mathEl = ownerDocument.createElement("span");
   mathEl.className = `obsidian-codex__chat-math${segment.display ? " obsidian-codex__chat-math--display" : ""}`;
   mathEl.textContent = formatChatMathFallback(segment.text);
   mathEl.title = segment.text.trim();
   return mathEl;
 }
 
+function scrubRemainingChatMathPlaceholders(root: HTMLElement, placeholders: readonly ChatMathPlaceholder[]): void {
+  const ownerDocument = getOwnerDocument(root);
+  const placeholderByToken = new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
+  const spans = collectChatMathTextSpans(root);
+  const text = spans.map((span) => span.node.data).join("");
+  if (!text) {
+    return;
+  }
+
+  const matches: ChatMathPlaceholderMatch[] = [];
+  for (const match of text.matchAll(CHAT_MATH_PLACEHOLDER_TOKEN_RE)) {
+    const token = match[0];
+    const start = match.index;
+    if (typeof start !== "number") {
+      continue;
+    }
+    matches.push({
+      start,
+      end: start + token.length,
+      placeholder: placeholderByToken.get(token) ?? {
+        token,
+        text: "",
+        display: false,
+      },
+    });
+  }
+  for (const match of matches.reverse()) {
+    const start = findTextPosition(spans, match.start, "start");
+    const end = findTextPosition(spans, match.end, "end");
+    if (!start || !end || !start.node.parentNode || !end.node.parentNode) {
+      continue;
+    }
+    const range = ownerDocument.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    range.deleteContents();
+    if (match.placeholder.text) {
+      range.insertNode(createChatMathElement(match.placeholder, ownerDocument));
+    }
+    range.detach();
+  }
+}
+
 function cleanupChatMathDelimitersInElement(root: HTMLElement): void {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = createTextWalker(root);
   const textNodes: Text[] = [];
   let current = walker.nextNode();
   while (current) {
-    if (current instanceof Text && shouldConsiderDelimiterCleanup(current)) {
+    if (isTextNode(current) && shouldConsiderDelimiterCleanup(current)) {
       textNodes.push(current);
     }
     current = walker.nextNode();
@@ -416,7 +466,7 @@ function hasNearbyRenderedMath(node: Text): boolean {
 function findAdjacentSignificantNode(node: Node, direction: "previous" | "next"): Node | null {
   let current: Node | null = direction === "previous" ? node.previousSibling : node.nextSibling;
   while (current) {
-    if (current instanceof Text) {
+    if (isTextNode(current)) {
       if (current.data.trim().length > 0) {
         return current;
       }
@@ -429,10 +479,34 @@ function findAdjacentSignificantNode(node: Node, direction: "previous" | "next")
 }
 
 function isRenderedMathNode(node: Node): boolean {
-  if (!(node instanceof HTMLElement)) {
+  if (!isElementNode(node)) {
     return false;
   }
   return node.matches(CHAT_MATH_RENDER_SELECTOR) || Boolean(node.querySelector(CHAT_MATH_RENDER_SELECTOR));
+}
+
+function createTextWalker(root: HTMLElement): TreeWalker {
+  return getOwnerDocument(root).createTreeWalker(root, SHOW_TEXT_NODES);
+}
+
+function getOwnerDocument(root: Node): Document {
+  return root.ownerDocument ?? document;
+}
+
+function isTextNode(node: Node): node is Text {
+  return node.nodeType === TEXT_NODE_TYPE;
+}
+
+function isElementNode(node: Node): node is Element {
+  return node.nodeType === ELEMENT_NODE_TYPE;
+}
+
+function shouldIncludeChatMathTextSpan(node: Text): boolean {
+  const parent = node.parentElement;
+  if (!parent) {
+    return false;
+  }
+  return !parent.closest("code, pre, kbd, samp, script, style, .obsidian-codex__chat-math");
 }
 
 function findClosingDollarDelimiter(text: string, start: number, delimiter: "$" | "$$"): number {
