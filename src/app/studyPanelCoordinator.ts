@@ -308,7 +308,13 @@ export class StudyPanelCoordinator {
     return prompt;
   }
 
-  seedHubPanelSkills(tabId: string, panelId: string, skillNames: string[], file: TFile | null = this.deps.getPreferredTargetFile()): string {
+  seedHubPanelSkills(
+    tabId: string,
+    panelId: string,
+    skillNames: string[],
+    file: TFile | null = this.deps.getPreferredTargetFile(),
+    options: { mode?: "append" | "replace" } = {},
+  ): string {
     const panel = this.requireStudyRecipe(panelId);
     const tab = this.deps.findTab(tabId);
     const normalizedSkillNames = skillNames.map((entry) => entry.trim()).filter(Boolean);
@@ -322,12 +328,15 @@ export class StudyPanelCoordinator {
             updatedAt: Date.now(),
           };
     this.applyStudyRecipeContext(tabId, panelForSeed);
-    const nextSkillNames = [
-      ...new Set([
-        ...((tab?.activeStudyRecipeId === panel.id ? tab.activeStudySkillNames : []).map((entry) => entry.trim()).filter(Boolean)),
-        ...normalizedSkillNames,
-      ]),
-    ];
+    const nextSkillNames =
+      options.mode === "replace"
+        ? [...new Set(normalizedSkillNames)]
+        : [
+            ...new Set([
+              ...((tab?.activeStudyRecipeId === panel.id ? tab.activeStudySkillNames : []).map((entry) => entry.trim()).filter(Boolean)),
+              ...normalizedSkillNames,
+            ]),
+          ];
     this.deps.store.setActiveStudyPanel(tabId, panel.id, nextSkillNames);
     const body =
       tab?.activeStudyRecipeId === panel.id
@@ -450,10 +459,7 @@ export class StudyPanelCoordinator {
     const current = tab.panelSessionOrigin;
     const origin: PanelSessionOrigin = {
       panelId,
-      selectedSkillNames:
-        tab.activeStudySkillNames.length > 0
-          ? [...tab.activeStudySkillNames]
-          : [...(current?.selectedSkillNames ?? [])],
+      selectedSkillNames: [...tab.activeStudySkillNames],
       promptSnapshot,
       awaitingCompletionSignal: false,
       lastAssistantMessageId: null,

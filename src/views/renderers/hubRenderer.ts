@@ -464,7 +464,7 @@ export class HubRenderer {
       }
       this.capturePanelAnchor(panel.id);
       this.closeSkillPopover(panel.id);
-      service.seedHubPanelSkills(nextTabId, panel.id, selectedSkillNames, activeFile);
+      service.seedHubPanelSkills(nextTabId, panel.id, selectedSkillNames, activeFile, { mode: "replace" });
       this.selectedDrawerSkillNames.set(panel.id, [...selectedSkillNames]);
       this.callbacks.focusComposer();
       this.callbacks.requestRender();

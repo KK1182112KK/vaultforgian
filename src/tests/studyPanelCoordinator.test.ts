@@ -126,6 +126,50 @@ describe("StudyPanelCoordinator", () => {
     expect(tab?.activeStudySkillNames).toEqual(["lecture-read", "deep-read"]);
   });
 
+  it("replaces selected panel skills for bulk Use selected without reviving stale skills", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = { ...createPanel("panel-1"), linkedSkillNames: ["lecture-read", "deep-read", "homework"] };
+    store.setStudyRecipes([panel]);
+
+    const coordinator = createCoordinator(store);
+    coordinator.seedHubPanelSkills(tabId, panel.id, ["homework"]);
+    const draft = coordinator.seedHubPanelSkills(tabId, panel.id, ["lecture-read", "deep-read"], null, { mode: "replace" });
+    const tab = store.getState().tabs.find((entry) => entry.id === tabId);
+
+    expect(draft).toBe("/lecture-read\n/deep-read\n\nTurn this into a lecture review");
+    expect(tab?.activeStudySkillNames).toEqual(["lecture-read", "deep-read"]);
+    expect(tab?.activeStudySkillNames).not.toContain("homework");
+  });
+
+  it("captures the current selected skills only instead of falling back to stale panel origin skills", () => {
+    const store = new AgentStore(null, "/vault", true);
+    const tabId = store.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const panel = { ...createPanel("panel-1"), linkedSkillNames: ["lecture-read", "homework"] };
+    store.setStudyRecipes([panel]);
+    store.setActiveStudyPanel(tabId, panel.id, []);
+    store.setPanelSessionOrigin(tabId, {
+      panelId: panel.id,
+      selectedSkillNames: ["homework"],
+      promptSnapshot: "Old prompt",
+      awaitingCompletionSignal: false,
+      lastAssistantMessageId: null,
+      startedAt: 1,
+    });
+
+    const coordinator = createCoordinator(store);
+    coordinator.capturePanelSessionOrigin(tabId, "Help me study this lecture material.");
+    const tab = store.getState().tabs.find((entry) => entry.id === tabId);
+
+    expect(tab?.panelSessionOrigin?.selectedSkillNames).toEqual([]);
+  });
+
   it("links a newly selected available skill into the panel before seeding it", () => {
     const store = new AgentStore(null, "/vault", true);
     const tabId = store.getActiveTab()?.id;

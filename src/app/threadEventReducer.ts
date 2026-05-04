@@ -253,6 +253,7 @@ export interface ThreadEventReducerDeps {
     text: string,
     visibility?: AssistantOutputVisibility,
   ) => void;
+  sanitizeAssistantOutput?: (tabId: string, text: string) => string;
   shouldSuppressAssistantOutput?: (tabId: string, text: string) => boolean;
 }
 
@@ -611,18 +612,22 @@ export class ThreadEventReducer {
       }
       return;
     }
-    if (!pending && this.deps.shouldSuppressAssistantOutput?.(tabId, text)) {
+    const sanitizedText = this.deps.sanitizeAssistantOutput?.(tabId, text) ?? text;
+    if (!sanitizedText.trim()) {
+      return;
+    }
+    if (!pending && this.deps.shouldSuppressAssistantOutput?.(tabId, sanitizedText)) {
       return;
     }
     this.deps.store.upsertMessage(tabId, messageId, (current) => ({
       id: current?.id ?? messageId,
       kind: "assistant",
-      text,
+      text: sanitizedText,
       createdAt: current?.createdAt ?? Date.now(),
       pending,
     }));
     if (!pending) {
-      this.deps.queueAssistantArtifactSync(tabId, messageId, text, visibility);
+      this.deps.queueAssistantArtifactSync(tabId, messageId, sanitizedText, visibility);
     }
   }
 
@@ -642,7 +647,12 @@ export class ThreadEventReducer {
       return;
     }
 
-    if (this.deps.shouldSuppressAssistantOutput?.(tabId, normalizedText)) {
+    const sanitizedText = this.deps.sanitizeAssistantOutput?.(tabId, normalizedText) ?? normalizedText;
+    if (!sanitizedText.trim()) {
+      return;
+    }
+
+    if (this.deps.shouldSuppressAssistantOutput?.(tabId, sanitizedText)) {
       return;
     }
 
@@ -668,10 +678,10 @@ export class ThreadEventReducer {
     this.deps.store.upsertMessage(tabId, messageId, (current) => ({
       id: current?.id ?? messageId,
       kind: "assistant",
-      text: normalizedText,
+      text: sanitizedText,
       createdAt: current?.createdAt ?? Date.now(),
       pending: false,
     }));
-    this.deps.queueAssistantArtifactSync(tabId, messageId, normalizedText, visibility);
+    this.deps.queueAssistantArtifactSync(tabId, messageId, sanitizedText, visibility);
   }
 }

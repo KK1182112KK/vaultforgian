@@ -65,6 +65,23 @@ describe("waiting copy", () => {
     expect(pickWaitingCopy("reasoning", "skill", 0, { locale: "ja", skillUsage })).toMatch(/^提案Skill使用中: \/paper-visualizer · /u);
   });
 
+  it("can suppress skill prefixes for continuation waiting copy", () => {
+    const skillUsage = {
+      requiredSkillNames: ["brainstorming", "lecture-read"],
+      autoSelectedSkillNames: ["paper-visualizer"],
+      orderedSkillNames: ["brainstorming", "lecture-read", "paper-visualizer"],
+      primarySkillName: "brainstorming",
+      skillCount: 3,
+    };
+
+    expect(pickWaitingCopy("boot", "skill", 0, { locale: "en", skillUsage, suppressSkillPrefix: true })).not.toMatch(
+      /^Using skills:/u,
+    );
+    expect(pickWaitingCopy("tools", "skill", 0, { locale: "en", skillUsage, suppressSkillPrefix: true })).not.toMatch(
+      /^(Using skills:|Calling skill)/u,
+    );
+  });
+
   it("preserves skill usage when resolving stale waiting copy into another locale", () => {
     const waitingState = {
       phase: "boot" as const,

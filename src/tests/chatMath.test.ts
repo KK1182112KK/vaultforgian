@@ -1,8 +1,11 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import {
   formatChatMathFallback,
   normalizeAssistantMathForMarkdown,
   prepareChatMarkdownForMathRender,
+  scrubChatMathPlaceholdersInElement,
   splitChatMathSegments,
 } from "../util/chatMath";
 
@@ -62,6 +65,25 @@ describe("chat math normalization", () => {
       { kind: "math", text: "c = \\sqrt{100}", display: true },
       { kind: "text", text: "." },
     ]);
+  });
+
+  it("renders explicit single-variable assistant math without treating plain numbers as math", () => {
+    expect(splitChatMathSegments("The hypotenuse is $c$ and the angle is $90^\\circ$.")).toEqual([
+      { kind: "text", text: "The hypotenuse is " },
+      { kind: "math", text: "c", display: false },
+      { kind: "text", text: " and the angle is " },
+      { kind: "math", text: "90^\\circ", display: false },
+      { kind: "text", text: "." },
+    ]);
+
+    const prepared = prepareChatMarkdownForMathRender("The hypotenuse is $c$.");
+    expect(prepared.placeholders).toEqual([
+      expect.objectContaining({
+        text: "c",
+        display: false,
+      }),
+    ]);
+    expect(prepared.markdown).not.toContain("$c$");
   });
 
   it("splits long inline derivations without leaking dollar delimiters", () => {
@@ -130,5 +152,28 @@ describe("chat math normalization", () => {
     expect(prepared.markdown).toContain("NOTEFORGECHATMATH0TOKEN stays text");
     expect(prepared.markdown).toContain("NFCODEXCHATMATHmanualX0TOKEN stays text");
     expect(prepared.markdown).toContain(generatedToken);
+  });
+
+  it("scrubs truncated visible chat math placeholders without a placeholder map", () => {
+    const root = document.createElement("div");
+    root.textContent =
+      "Let NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX0TC then NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX1TC.";
+
+    scrubChatMathPlaceholdersInElement(root);
+
+    expect(root.textContent).not.toMatch(/NFCODEXCHATMATH[a-z0-9]*/iu);
+    expect(root.textContent).toBe("Let  then .");
+  });
+
+  it("does not scrub placeholder-like text inside code elements", () => {
+    const root = document.createElement("div");
+    const code = document.createElement("code");
+    code.textContent = "NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX0TC";
+    root.append("Visible NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX1TC ", code);
+
+    scrubChatMathPlaceholdersInElement(root);
+
+    expect(root.textContent).not.toContain("NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX1TC");
+    expect(code.textContent).toBe("NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX0TC");
   });
 });

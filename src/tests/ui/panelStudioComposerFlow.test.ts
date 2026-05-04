@@ -308,9 +308,10 @@ function createHarness(
         activeTab.activeStudySkillNames = [...skillNames];
       }
     }),
-    seedHubPanelSkills: vi.fn((_tabId: string, panelId: string, skillNames: string[]) => {
+    seedHubPanelSkills: vi.fn((_tabId: string, panelId: string, skillNames: string[], _file?: unknown, options?: { mode?: string }) => {
       activeTab.activeStudyRecipeId = panelId;
-      activeTab.activeStudySkillNames = skillNames;
+      activeTab.activeStudySkillNames =
+        options?.mode === "replace" ? [...skillNames] : [...new Set([...activeTab.activeStudySkillNames, ...skillNames])];
       const panel = state.studyRecipes.find((entry) => entry.id === panelId);
       if (panel) {
         panel.linkedSkillNames = [...new Set([...panel.linkedSkillNames, ...skillNames])];
@@ -1118,7 +1119,7 @@ describe("Panel Studio composer flow", () => {
     useSelectedButton?.click();
     await tick();
 
-    expect(harness.service.seedHubPanelSkills).toHaveBeenCalledWith("tab-1", "panel-1", ["lecture-read"], null);
+    expect(harness.service.seedHubPanelSkills).toHaveBeenCalledWith("tab-1", "panel-1", ["lecture-read"], null, { mode: "replace" });
     expect(harness.activeTab.activeStudySkillNames).toEqual(["lecture-read"]);
   });
 

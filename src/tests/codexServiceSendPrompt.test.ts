@@ -16,7 +16,7 @@ import {
 } from "./fixtures/calloutMathFixture";
 import { createEmptyAccountUsageSummary, createEmptyUsageSummary } from "../util/usage";
 import type { InstalledSkillDefinition } from "../util/skillCatalog";
-import type { SkillOrchestrationPlan } from "../util/skillOrchestration";
+import { buildSkillOrchestrationPlan, type SkillOrchestrationPlan } from "../util/skillOrchestration";
 import { createStudyQuizSession } from "../util/studyQuiz";
 
 const tempRoots: string[] = [];
@@ -177,6 +177,7 @@ type PrivateRunTurn = (
   proposalRepairPhase?: boolean,
   proposalRepairFailureMode?: "error" | "silent",
   skillOrchestrationPlan?: SkillOrchestrationPlan | null,
+  skillTraceContinuation?: boolean,
 ) => Promise<void>;
 
 function createNoteTurnContext(vaultRoot: string, overrides: Partial<TurnContextSnapshot> = {}): TurnContextSnapshot {
@@ -484,7 +485,7 @@ describe("CodexService sendPrompt skill context", () => {
     expect(request?.prompt).toContain("in Japanese unless the user explicitly asks for another language");
   });
 
-  it("injects a hidden study turn plan into study panel runtime prompts", async () => {
+  it("keeps study-coach planner guidance out of study panel runtime prompts when Learning Mode is off", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-turn-plan-"));
     tempRoots.push(vaultRoot);
 
@@ -578,11 +579,14 @@ describe("CodexService sendPrompt skill context", () => {
     );
 
     const request = runCodexStreamSpy.mock.calls[0]?.[0] as { prompt?: string };
-    expect(request.prompt).toContain("StudyTurnPlan");
+    expect(request.prompt).not.toContain("StudyTurnPlan\n");
+    expect(request.prompt).not.toContain("- Check question:");
+    expect(request.prompt).not.toContain("- Next action:");
     expect(request.prompt).toContain("Skill orchestration plan");
     expect(request.prompt).toContain("$review-coach [analyze]");
-    expect(request.prompt).toContain("frequency response");
-    expect(request.prompt).toContain("at most one understanding-check question");
+    const reviewCoachLine = (request.prompt ?? "").split("\n").find((line) => line.includes("$review-coach [analyze]")) ?? "";
+    expect(reviewCoachLine).not.toContain("frequency response");
+    expect(request.prompt).not.toContain("at most one understanding-check question");
   });
 
   it("hydrates all panel-selected skills before building the turn context", async () => {
@@ -592,15 +596,19 @@ describe("CodexService sendPrompt skill context", () => {
     const brainstormingDir = join(extraSkillRoot, "brainstorming");
     const deepReadDir = join(extraSkillRoot, "deep-read");
     const academicPaperDir = join(extraSkillRoot, "academic-paper");
+    const homeworkDir = join(extraSkillRoot, "homework");
     await mkdir(brainstormingDir, { recursive: true });
     await mkdir(deepReadDir, { recursive: true });
     await mkdir(academicPaperDir, { recursive: true });
+    await mkdir(homeworkDir, { recursive: true });
     const brainstormingPath = join(brainstormingDir, "SKILL.md");
     const deepReadPath = join(deepReadDir, "SKILL.md");
     const academicPaperPath = join(academicPaperDir, "SKILL.md");
+    const homeworkPath = join(homeworkDir, "SKILL.md");
     await writeFile(brainstormingPath, "# Brainstorming\nGenerate options first.", "utf8");
     await writeFile(deepReadPath, "# Deep Read\nRead the source deeply.", "utf8");
     await writeFile(academicPaperPath, "# Academic Paper\nWrite the academic paper output.", "utf8");
+    await writeFile(homeworkPath, "# Homework\nHelp solve homework after checking the student's goal.", "utf8");
 
     const settings: PluginSettings = {
       ...DEFAULT_SETTINGS,
@@ -630,6 +638,11 @@ describe("CodexService sendPrompt skill context", () => {
         description: "Academic paper writing skill.",
         path: academicPaperPath,
       },
+      {
+        name: "homework",
+        description: "Homework support skill.",
+        path: homeworkPath,
+      },
     ];
 
     vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
@@ -643,8 +656,16 @@ describe("CodexService sendPrompt skill context", () => {
       throw new Error("Missing tab");
     }
 
-    service.store.setStudyRecipes([createPanel("panel-1", ["brainstorming", "deep-read", "academic-paper"])]);
+    service.store.setStudyRecipes([createPanel("panel-1", ["brainstorming", "deep-read", "academic-paper", "homework"])]);
     service.store.setActiveStudyPanel(tabId, "panel-1", ["academic-paper", "brainstorming", "deep-read"]);
+    service.store.setPanelSessionOrigin(tabId, {
+      panelId: "panel-1",
+      selectedSkillNames: ["homework"],
+      promptSnapshot: "Old prompt",
+      awaitingCompletionSignal: false,
+      lastAssistantMessageId: null,
+      startedAt: 1,
+    });
 
     await service.sendPrompt(tabId, "Explain this paper carefully.");
 
@@ -657,13 +678,167 @@ describe("CodexService sendPrompt skill context", () => {
     expect(turnContext.skillGuideText).toContain("Skill guide: $academic-paper");
     expect(turnContext.skillGuideText).toContain("Skill guide: $brainstorming");
     expect(turnContext.skillGuideText).toContain("Skill guide: $deep-read");
+    expect(turnContext.skillGuideText).not.toContain("Skill guide: $homework");
     expect(turnContext.skillGuideText).toContain("# Academic Paper\nWrite the academic paper output.");
     const userMessage = service.getActiveTab()?.messages.find((message) => message.kind === "user");
-    expect(userMessage?.meta?.effectiveSkillsCsv).toBe("academic-paper,brainstorming,deep-read");
+    expect(userMessage?.meta?.effectiveSkillsCsv).toBe("brainstorming,deep-read,academic-paper");
     expect(userMessage?.meta?.effectiveSkillCount).toBe(3);
+    const skillTrace = service.getActiveTab()?.messages.find((message) => message.meta?.skillTrace === true);
+    expect(skillTrace?.kind).toBe("system");
+    expect(skillTrace?.text).toBe("Skill route: /brainstorming -> /deep-read -> /academic-paper");
+    expect(skillTrace?.text).not.toContain("/homework");
+    expect(skillTrace?.meta?.skillTraceDetails).toContain("required: /academic-paper, /brainstorming, /deep-read");
+    expect(skillTrace?.meta?.skillTraceDetails).toContain("resolved: /academic-paper, /brainstorming, /deep-read");
+    expect(skillTrace?.meta?.skillTraceDetails).not.toContain("/homework");
+    expect(skillTrace?.meta?.skillTraceDetails).toContain("missing: none");
   });
 
-  it("auto-selects high-confidence panel-linked user skills without explicit selection", async () => {
+  it("compresses repeated skill trace UI for panel skill follow-up turns", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-continuation-"));
+    tempRoots.push(vaultRoot);
+    const extraSkillRoot = join(vaultRoot, "extra-skills");
+    const skillDefinitions: InstalledSkillDefinition[] = [];
+    for (const skillName of ["brainstorming", "lecture-read", "paper-visualizer"]) {
+      const skillDir = join(extraSkillRoot, skillName);
+      await mkdir(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      await writeFile(skillPath, `# ${skillName}\nUse this skill in the panel route.`, "utf8");
+      skillDefinitions.push({ name: skillName, description: `${skillName} skill.`, path: skillPath });
+    }
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => ({ ...DEFAULT_SETTINGS, extraSkillRoots: [extraSkillRoot] }),
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    vi.spyOn(service as never, "refreshCodexCatalogs").mockImplementation(async () => {
+      (service as unknown as { installedSkillCatalog: typeof skillDefinitions }).installedSkillCatalog = skillDefinitions;
+    });
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setStudyRecipes([createPanel("panel-1", ["brainstorming", "lecture-read", "paper-visualizer"])]);
+    service.store.setActiveStudyPanel(tabId, "panel-1", ["brainstorming", "lecture-read", "paper-visualizer"]);
+
+    await service.sendPrompt(tabId, "Help me study this lecture material.");
+    await service.sendPrompt(tabId, "2");
+
+    const tab = service.getActiveTab();
+    const skillTraceMessages = tab?.messages.filter((message) => message.meta?.skillTrace === true) ?? [];
+    expect(skillTraceMessages).toHaveLength(1);
+    const userMessages = tab?.messages.filter((message) => message.kind === "user") ?? [];
+    expect(userMessages[0]?.meta?.effectiveSkillsCsv).toBe("brainstorming,lecture-read,paper-visualizer");
+    expect(userMessages[0]?.meta?.skillTraceContinuation).toBeUndefined();
+    expect(userMessages[1]?.text).toBe("2");
+    expect(userMessages[1]?.meta?.effectiveSkillsCsv).toBe("brainstorming,lecture-read,paper-visualizer");
+    expect(userMessages[1]?.meta?.skillTraceContinuation).toBe(true);
+    expect(runTurnSpy).toHaveBeenCalledTimes(2);
+    expect(runTurnSpy.mock.calls[0]?.[20]).toBe(false);
+    expect(runTurnSpy.mock.calls[1]?.[20]).toBe(true);
+  });
+
+  it("uses execution route order for skill trace and user chips even when panel selection order differs", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-route-order-"));
+    tempRoots.push(vaultRoot);
+    const extraSkillRoot = join(vaultRoot, "extra-skills");
+    const skillDefinitions: InstalledSkillDefinition[] = [];
+    for (const skillName of ["brainstorming", "paper-visualizer", "lecture-read"]) {
+      const skillDir = join(extraSkillRoot, skillName);
+      await mkdir(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      const description =
+        skillName === "paper-visualizer"
+          ? "Create compact visual maps and diagrams."
+          : skillName === "lecture-read"
+            ? "Read lecture notes and extract key concepts."
+            : "Generate options first.";
+      await writeFile(skillPath, `# ${skillName}\n${description}`, "utf8");
+      skillDefinitions.push({ name: skillName, description, path: skillPath });
+    }
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => ({ ...DEFAULT_SETTINGS, extraSkillRoots: [extraSkillRoot] }),
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    vi.spyOn(service as never, "refreshCodexCatalogs").mockImplementation(async () => {
+      (service as unknown as { installedSkillCatalog: typeof skillDefinitions }).installedSkillCatalog = skillDefinitions;
+    });
+    vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setStudyRecipes([createPanel("panel-1", ["brainstorming", "paper-visualizer", "lecture-read"])]);
+    service.store.setActiveStudyPanel(tabId, "panel-1", ["brainstorming", "paper-visualizer", "lecture-read"]);
+
+    await service.sendPrompt(tabId, "Help me study this lecture material.");
+
+    const tab = service.getActiveTab();
+    const userMessage = tab?.messages.find((message) => message.kind === "user");
+    const skillTraceMessage = tab?.messages.find((message) => message.meta?.skillTrace === true);
+    expect(userMessage?.meta?.effectiveSkillsCsv).toBe("brainstorming,lecture-read,paper-visualizer");
+    expect(skillTraceMessage?.text).toBe("Skill route: /brainstorming -> /lecture-read -> /paper-visualizer");
+  });
+
+  it("starts a new visible skill trace when the panel skill selection changes", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-continuation-reset-"));
+    tempRoots.push(vaultRoot);
+    const extraSkillRoot = join(vaultRoot, "extra-skills");
+    const skillDefinitions: InstalledSkillDefinition[] = [];
+    for (const skillName of ["brainstorming", "lecture-read", "paper-visualizer"]) {
+      const skillDir = join(extraSkillRoot, skillName);
+      await mkdir(skillDir, { recursive: true });
+      const skillPath = join(skillDir, "SKILL.md");
+      await writeFile(skillPath, `# ${skillName}\nUse this skill in the panel route.`, "utf8");
+      skillDefinitions.push({ name: skillName, description: `${skillName} skill.`, path: skillPath });
+    }
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => ({ ...DEFAULT_SETTINGS, extraSkillRoots: [extraSkillRoot] }),
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    vi.spyOn(service as never, "refreshCodexCatalogs").mockImplementation(async () => {
+      (service as unknown as { installedSkillCatalog: typeof skillDefinitions }).installedSkillCatalog = skillDefinitions;
+    });
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setStudyRecipes([createPanel("panel-1", ["brainstorming", "lecture-read", "paper-visualizer"])]);
+    service.store.setActiveStudyPanel(tabId, "panel-1", ["brainstorming", "lecture-read", "paper-visualizer"]);
+
+    await service.sendPrompt(tabId, "Help me study this lecture material.");
+    service.store.setActiveStudyPanel(tabId, "panel-1", ["lecture-read", "paper-visualizer"]);
+    await service.sendPrompt(tabId, "Use the selected skills instead.");
+
+    const skillTraceMessages = service.getActiveTab()?.messages.filter((message) => message.meta?.skillTrace === true) ?? [];
+    expect(skillTraceMessages).toHaveLength(2);
+    expect(skillTraceMessages[1]?.text).toContain("/lecture-read");
+    expect(skillTraceMessages[1]?.text).not.toContain("/brainstorming");
+    expect(runTurnSpy.mock.calls[1]?.[20]).toBe(false);
+  });
+
+  it("does not auto-select panel-linked user skills without explicit Panel Studio selection", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-auto-skills-"));
     tempRoots.push(vaultRoot);
     const extraSkillRoot = join(vaultRoot, "extra-skills");
@@ -714,14 +889,13 @@ describe("CodexService sendPrompt skill context", () => {
     await service.sendPrompt(tabId, "Help me study this lecture material.");
 
     expect(runTurnSpy).toHaveBeenCalledTimes(1);
-    expect(runTurnSpy.mock.calls[0]?.[2]).toBe("skill");
-    expect(runTurnSpy.mock.calls[0]?.[4]).toEqual(["brainstorming", "deep-read", "academic-paper"]);
+    expect(runTurnSpy.mock.calls[0]?.[2]).toBe("normal");
+    expect(runTurnSpy.mock.calls[0]?.[4]).toEqual([]);
     const plan = runTurnSpy.mock.calls[0]?.[19] as { autoSelectedSkillNames?: string[]; skippedSkillNames?: string[] } | null;
-    expect(plan?.autoSelectedSkillNames).toEqual(["brainstorming", "deep-read", "academic-paper"]);
-    expect(plan?.skippedSkillNames).toContain("verification-before-completion");
+    expect(plan).toBeNull();
     const userMessage = service.getActiveTab()?.messages.find((message) => message.kind === "user");
-    expect(userMessage?.meta?.effectiveSkillsCsv).toBe("brainstorming,deep-read,academic-paper");
-    expect(userMessage?.meta?.effectiveSkillCount).toBe(3);
+    expect(userMessage?.meta?.effectiveSkillsCsv).toBeNull();
+    expect(userMessage?.meta?.effectiveSkillCount).toBeUndefined();
   });
 
   it("stores required and auto-selected skill usage in waiting states across phase changes", async () => {
@@ -785,6 +959,99 @@ describe("CodexService sendPrompt skill context", () => {
     expect(nextWaitingState?.text).toMatch(/^Using skills: \/brainstorming, \/lecture-read \+1 · /u);
   });
 
+  it("omits skill prefixes from waiting copy on panel skill continuation turns", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-waiting-skill-continuation-"));
+    tempRoots.push(vaultRoot);
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const plan: SkillOrchestrationPlan = {
+      selectedSkills: ["brainstorming", "lecture-read", "paper-visualizer"],
+      requiredSkillNames: ["brainstorming", "lecture-read", "paper-visualizer"],
+      autoSelectedSkillNames: [],
+      orderedSteps: [
+        { skillName: "brainstorming", phase: "brainstorm", reason: "Use first." },
+        { skillName: "lecture-read", phase: "source_read", reason: "Read source." },
+        { skillName: "paper-visualizer", phase: "execute", reason: "Create visual support." },
+      ],
+      primarySkillNames: ["brainstorming", "lecture-read", "paper-visualizer"],
+      supportingSkillNames: [],
+      deferredSkillNames: [],
+      candidateScores: [],
+      selectionReasons: {},
+      confidence: "high",
+      skippedSkillNames: [],
+      visiblePolicy: "Do not narrate skill loading.",
+    };
+    const privateService = service as unknown as {
+      buildWaitingSkillUsageMetadata(plan: SkillOrchestrationPlan | null, skillNames: readonly string[]): object | null;
+      createWaitingState(
+        phase: "boot",
+        mode: "skill",
+        focus: null,
+        usage: object | null,
+        suppressSkillPrefix?: boolean,
+      ): { text: string; suppressSkillPrefix?: boolean; requiredSkillNames?: string[] };
+    };
+    const usage = privateService.buildWaitingSkillUsageMetadata(plan, ["brainstorming", "lecture-read", "paper-visualizer"]);
+    const waitingState = privateService.createWaitingState("boot", "skill", null, usage, true);
+
+    expect(waitingState.text).not.toContain("Using skills:");
+    expect(waitingState.requiredSkillNames).toBeUndefined();
+    expect(waitingState.suppressSkillPrefix).toBe(true);
+  });
+
+  it("preserves suppressed skill prefixes when watchdog updates continuation waiting copy", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-watchdog-suppress-prefix-"));
+    tempRoots.push(vaultRoot);
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setWaitingState(tabId, {
+      phase: "reasoning",
+      text: "Thinking...",
+      locale: "en",
+      mode: "skill",
+      suppressSkillPrefix: true,
+      requiredSkillNames: ["brainstorming", "lecture-read"],
+      autoSelectedSkillNames: ["paper-visualizer"],
+      orderedSkillNames: ["brainstorming", "lecture-read", "paper-visualizer"],
+      primarySkillName: "brainstorming",
+      skillCount: 3,
+    });
+
+    (
+      service as unknown as {
+        setWatchdogWaitingState(tabId: string, stage: "stall_warn" | "stall_recovery"): void;
+      }
+    ).setWatchdogWaitingState(tabId, "stall_warn");
+
+    const waitingState = service.getActiveTab()?.waitingState;
+    expect(waitingState?.suppressSkillPrefix).toBe(true);
+    expect(waitingState?.text).not.toContain("Using skills:");
+    expect(waitingState?.requiredSkillNames).toEqual(["brainstorming", "lecture-read"]);
+    expect(waitingState?.autoSelectedSkillNames).toEqual(["paper-visualizer"]);
+    expect(waitingState?.orderedSkillNames).toEqual(["brainstorming", "lecture-read", "paper-visualizer"]);
+  });
+
   it("blocks unresolved panel-selected skills without clearing the draft", async () => {
     const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-missing-skill-"));
     tempRoots.push(vaultRoot);
@@ -818,7 +1085,10 @@ describe("CodexService sendPrompt skill context", () => {
     expect(service.getActiveTab()?.draft).toBe("Explain this paper carefully.");
     const warning = service.getActiveTab()?.messages.find((message) => message.kind === "system");
     expect(warning?.text).toContain("Selected skill not found: /missing-skill");
+    expect(warning?.text).toContain("not loaded");
     expect(warning?.meta?.tone).toBe("warning");
+    expect(warning?.meta?.skillTrace).toBe(true);
+    expect(warning?.meta?.skillTraceDetails).toContain("missing: /missing-skill");
   });
 
   it("syncs learning mode across open tabs", async () => {
@@ -1083,6 +1353,708 @@ describe("CodexService sendPrompt skill context", () => {
     const prompt = runTurnSpy.mock.calls[0]?.[1];
     expect(prompt).toContain("Turn your immediately previous assistant answer in this same thread");
     expect(prompt).toContain("Here is the cleaned-up explanation.");
+  });
+
+  it("does not infer an Apply to note CTA for skill brainstorming choice prompts", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-choice-no-cta-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onJsonEvent: (event: unknown) => void }).onJsonEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: [
+            "First, I’ll use /brainstorming.",
+            "",
+            "What do you want first for Pythagorean Theorem.md?",
+            "",
+            "1. A concise study guide",
+            "2. Practice questions with answers",
+            "3. A clearer rewrite of the note",
+          ].join("\n"),
+        },
+      });
+      return { threadId: "thread-skill-choice-no-cta" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Help me study this lecture material.",
+      "skill",
+      "chat",
+      ["brainstorming", "paper-visualizer", "lecture-read"],
+      createNoteTurnContext(vaultRoot, {
+        studyWorkflow: "lecture",
+        workflowText: "Active study workflow: Lecture",
+      }),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "Help me study this lecture material.",
+      false,
+      false,
+      "turn-skill-choice-no-cta",
+      "user-skill-choice-no-cta",
+    );
+
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+    expect(service.getActiveTab()?.messages.some((message) => message.kind === "assistant" && message.text.includes("/brainstorming"))).toBe(true);
+  });
+
+  it("suppresses near-duplicate live brainstorming choice prompts in one skill turn", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-choice-live-duplicate-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      const callbacks = request as { onJsonEvent: (event: unknown) => void };
+      callbacks.onJsonEvent({
+        type: "response_item",
+        timestamp: "2026-05-02T10:00:00.000Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: [
+            "First, I’ll use /brainstorming.",
+            "",
+            "What would help you most right now?",
+            "",
+            "1. A clean concept summary",
+            "2. A step-by-step explanation of the formulas",
+            "3. A “what’s confusing / easy to mix up” review",
+          ].join("\n"),
+        },
+      });
+      callbacks.onJsonEvent({
+        type: "response_item",
+        timestamp: "2026-05-02T10:00:00.100Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: [
+            "First, I’ll use /brainstorming.",
+            "",
+            "What would help you most right now?",
+            "",
+            "1. A clean concept summary",
+            "2. A step-by-step explanation of the formulas",
+            "3. A review of the confusing points and common mistakes",
+          ].join("\n"),
+        },
+      });
+      return { threadId: "thread-skill-choice-live-duplicate" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Help me study this lecture material.",
+      "skill",
+      "chat",
+      ["brainstorming", "paper-visualizer", "lecture-read"],
+      createNoteTurnContext(vaultRoot, {
+        studyWorkflow: "lecture",
+        workflowText: "Active study workflow: Lecture",
+      }),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "Help me study this lecture material.",
+      false,
+      false,
+      "turn-skill-choice-live-duplicate",
+      "user-skill-choice-live-duplicate",
+    );
+
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.text).toContain("A clean concept summary");
+  });
+
+  it("repairs continuation replies that skip the visualizer deliverable", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-visualizer-repair-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const skillOrchestrationPlan = buildSkillOrchestrationPlan(["brainstorming", "paper-visualizer", "lecture-read"], {
+      definitions: [
+        { name: "brainstorming", description: "Generate options first." },
+        { name: "paper-visualizer", description: "Create compact visual maps and diagrams." },
+        { name: "lecture-read", description: "Read lecture notes and extract key concepts." },
+      ],
+    });
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onJsonEvent: (event: unknown) => void }).onJsonEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Next, I’ll use /lecture-read and /paper-visualizer for option 2.",
+              "",
+              "## Main Topics",
+              "",
+              "The theorem is about the area relationship behind right triangles.",
+              "",
+              "## Confusing Points",
+              "",
+              "The common mistake is choosing c before finding the 90 degree angle.",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-skill-visualizer-repair-1" };
+      })
+      .mockImplementationOnce(async (request) => {
+        const prompt = (request as { prompt?: string }).prompt ?? "";
+        expect(prompt).toContain("Add exactly one compact visual artifact");
+        (request as { onJsonEvent: (event: unknown) => void }).onJsonEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Next, I’ll use /lecture-read, then /paper-visualizer for option 2.",
+              "",
+              "## Main Topics",
+              "",
+              "The theorem is about the area relationship behind right triangles.",
+              "",
+              "## Visual Map",
+              "",
+              "| Part | Meaning |",
+              "| --- | --- |",
+              "| a and b | legs forming the right angle |",
+              "| c | hypotenuse opposite the right angle |",
+              "",
+              "This step is complete. Continue to the next study step?",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-skill-visualizer-repair-2" };
+      });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "2",
+      "skill",
+      "chat",
+      ["brainstorming", "paper-visualizer", "lecture-read"],
+      createNoteTurnContext(vaultRoot, {
+        studyWorkflow: "lecture",
+        workflowText: "Active study workflow: Lecture",
+      }),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "2",
+      false,
+      false,
+      "turn-skill-visualizer-repair",
+      "user-skill-visualizer-repair",
+      false,
+      "error",
+      skillOrchestrationPlan,
+      true,
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.text).toContain("## Visual Map");
+    expect(assistantMessages[0]?.text).toContain("| Part | Meaning |");
+    expect(assistantMessages[0]?.text).toContain("This step is complete. Continue to the next study step?");
+  });
+
+  it("repairs completed skill route replies that omit the neutral checkpoint", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-checkpoint-repair-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    const skillOrchestrationPlan = buildSkillOrchestrationPlan(["brainstorming", "paper-visualizer", "lecture-read"], {
+      definitions: [
+        { name: "brainstorming", description: "Generate options first." },
+        { name: "paper-visualizer", description: "Create compact visual maps and diagrams." },
+        { name: "lecture-read", description: "Read lecture notes and extract key concepts." },
+      ],
+    });
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockImplementationOnce(async (request) => {
+        (request as { onJsonEvent: (event: unknown) => void }).onJsonEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Next, I’ll use /lecture-read, then /paper-visualizer for option 1.",
+              "",
+              "## Main Topics",
+              "",
+              "The theorem is about right triangles and square areas.",
+              "",
+              "## Visual Map",
+              "",
+              "| Part | Meaning |",
+              "| --- | --- |",
+              "| a and b | legs forming the right angle |",
+              "| c | hypotenuse opposite the right angle |",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-skill-checkpoint-repair-1" };
+      })
+      .mockImplementationOnce(async (request) => {
+        const prompt = (request as { prompt?: string }).prompt ?? "";
+        expect(prompt).toContain("Add exactly one neutral skill checkpoint");
+        (request as { onJsonEvent: (event: unknown) => void }).onJsonEvent({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            phase: "final_answer",
+            text: [
+              "Next, I’ll use /lecture-read, then /paper-visualizer for option 1.",
+              "",
+              "## Main Topics",
+              "",
+              "The theorem is about right triangles and square areas.",
+              "",
+              "## Visual Map",
+              "",
+              "| Part | Meaning |",
+              "| --- | --- |",
+              "| a and b | legs forming the right angle |",
+              "| c | hypotenuse opposite the right angle |",
+              "",
+              "This step is complete. Continue to the next study step?",
+            ].join("\n"),
+          },
+        });
+        return { threadId: "thread-skill-checkpoint-repair-2" };
+      });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "1",
+      "skill",
+      "chat",
+      ["brainstorming", "paper-visualizer", "lecture-read"],
+      createNoteTurnContext(vaultRoot, {
+        studyWorkflow: "lecture",
+        workflowText: "Active study workflow: Lecture",
+      }),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "1",
+      false,
+      false,
+      "turn-skill-checkpoint-repair",
+      "user-skill-checkpoint-repair",
+      false,
+      "error",
+      skillOrchestrationPlan,
+      true,
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    const assistantMessages = service.getActiveTab()?.messages.filter((message) => message.kind === "assistant") ?? [];
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.text).toContain("## Visual Map");
+    expect(assistantMessages[0]?.text).toContain("This step is complete. Continue to the next study step?");
+    expect(assistantMessages[0]?.text).not.toContain("apply this to the note");
+  });
+
+  it("strips trailing rewrite invitations from non-explicit skill study replies", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-rewrite-text-scrub-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("no_reply_found");
+    vi.spyOn(service as never, "runCodexStream").mockImplementationOnce(async (request) => {
+      (request as { onJsonEvent: (event: unknown) => void }).onJsonEvent({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+          text: [
+            "Based on your current Pythagorean Theorem.md, the main thing to lock in is that the note is really about both the formula and the condition.",
+            "",
+            "## Main topics",
+            "",
+            "- Identifying the parts of a right triangle",
+            "- Remembering that the theorem fails when the triangle is not right",
+            "",
+            "## Suggested follow-up notes or review tasks",
+            "",
+            "- Add a labeled triangle diagram with a, b, c, and the 90 degree angle",
+            "- Add one real-world application, like a ladder or rectangle diagonal",
+            "Do you want me to turn this into a cleaner study-ready rewrite for Pythagorean Theorem.md now?",
+          ].join("\n"),
+        },
+      });
+      return { threadId: "thread-skill-rewrite-text-scrub" };
+    });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "Help me study this lecture material.",
+      "skill",
+      "chat",
+      ["brainstorming", "paper-visualizer", "lecture-read"],
+      createNoteTurnContext(vaultRoot, {
+        studyWorkflow: "lecture",
+        workflowText: "Active study workflow: Lecture",
+      }),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "Help me study this lecture material.",
+      false,
+      false,
+      "turn-skill-rewrite-text-scrub",
+      "user-skill-rewrite-text-scrub",
+    );
+
+    const assistantText = service.getActiveTab()?.messages.find((message) => message.kind === "assistant")?.text ?? "";
+    expect(assistantText).toContain("Suggested follow-up notes or review tasks");
+    expect(assistantText).toContain("Add a labeled triangle diagram");
+    expect(assistantText).not.toContain("Do you want me to turn this into");
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+  });
+
+  it("does not let stale non-explicit panel skill rewrite CTAs start a rewrite turn", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-stale-skill-rewrite-cta-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    vi.spyOn(service as never, "hasCodexLogin").mockReturnValue(true);
+    const runTurnSpy = vi.spyOn(service as never, "runTurn").mockResolvedValue(undefined);
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    service.store.setStudyRecipes([createPanel("panel-1", ["brainstorming", "paper-visualizer", "lecture-read"])]);
+    service.store.setActiveStudyPanel(tabId, "panel-1", ["brainstorming", "paper-visualizer", "lecture-read"]);
+    service.store.setPanelSessionOrigin(tabId, {
+      panelId: "panel-1",
+      selectedSkillNames: ["brainstorming", "paper-visualizer", "lecture-read"],
+      promptSnapshot: "Help me study this lecture material.",
+      awaitingCompletionSignal: false,
+      lastAssistantMessageId: "assistant-stale-skill-cta",
+      startedAt: 1,
+    });
+    service.store.addMessage(tabId, {
+      id: "user-skill-route",
+      kind: "user",
+      text: "Help me study this lecture material.",
+      createdAt: Date.now(),
+      meta: {
+        effectiveSkillsCsv: "brainstorming,paper-visualizer,lecture-read",
+        effectiveSkillCount: 3,
+      },
+    });
+    service.store.addMessage(tabId, {
+      id: "assistant-stale-skill-cta",
+      kind: "assistant",
+      text: "Do you want me to turn this into a cleaner study-ready rewrite for Pythagorean Theorem.md now?",
+      createdAt: Date.now(),
+    });
+    service.store.setChatSuggestion(tabId, {
+      id: "rewrite-suggestion-stale-skill",
+      kind: "rewrite_followup",
+      status: "pending",
+      messageId: "assistant-stale-skill-cta",
+      panelId: null,
+      panelTitle: null,
+      promptSnapshot: "",
+      matchedSkillName: null,
+      canUpdatePanel: false,
+      canSaveCopy: false,
+      planSummary: null,
+      planStatus: null,
+      rewriteSummary: "Turn this into a cleaner study note.",
+      rewriteQuestion: "Do you want me to turn this into a cleaner study-ready rewrite for Pythagorean Theorem.md now?",
+      createdAt: Date.now(),
+    });
+
+    await service.sendPrompt(tabId, "Apply to note", { file: null, editor: null });
+
+    expect(runTurnSpy).not.toHaveBeenCalled();
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+  });
+
+  it("drops explicit obsidian-suggest blocks from interim skill questions", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-suggest-no-cta-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
+    service.store.setRuntimeMode(tabId, "skill");
+    service.store.addMessage(tabId, {
+      id: "user-skill-interim",
+      kind: "user",
+      text: "Help me study this lecture material.",
+      createdAt: Date.now(),
+      meta: { effectiveSkillsCsv: "brainstorming,lecture-read", effectiveSkillCount: 2 },
+    });
+
+    const assistantText = [
+      "First, I’ll use /brainstorming.",
+      "",
+      "What do you want first for this note?",
+      "",
+      "1. A concise study guide",
+      "2. Practice questions with answers",
+      "3. A clearer rewrite of the note",
+      "",
+      "```obsidian-suggest",
+      JSON.stringify({
+        kind: "rewrite_followup",
+        summary: "Apply the selected option to the note.",
+        question: "Want me to apply this to the note now?",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-skill-interim",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-skill-interim", assistantText);
+
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+  });
+
+  it("drops explicit obsidian-suggest blocks from non-explicit skill final replies", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-final-suggest-no-cta-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
+    service.store.setRuntimeMode(tabId, "skill");
+    service.store.addMessage(tabId, {
+      id: "user-skill-final-no-explicit",
+      kind: "user",
+      text: "Help me study this lecture material.",
+      createdAt: Date.now(),
+      meta: { effectiveSkillsCsv: "lecture-read,paper-visualizer", effectiveSkillCount: 2 },
+    });
+
+    const assistantText = [
+      "Here is the study-focused summary.",
+      "",
+      "## Suggested follow-up notes or review tasks",
+      "",
+      "- Add a labeled triangle diagram.",
+      "",
+      "```obsidian-suggest",
+      JSON.stringify({
+        kind: "rewrite_followup",
+        summary: "Turn this into a stronger study note.",
+        question: "Want me to apply this to the note now?",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-skill-final-no-explicit",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-skill-final-no-explicit", assistantText);
+
+    expect(service.getActiveTab()?.chatSuggestion).toBeNull();
+  });
+
+  it("keeps rewrite CTA available for final skill outputs and explicit note rewrite requests", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-skill-final-cta-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+    service.store.setTargetNotePath(tabId, "notes/current.md");
+    service.store.setRuntimeMode(tabId, "skill");
+    service.store.addMessage(tabId, {
+      id: "user-skill-final",
+      kind: "user",
+      text: "rewrite this note with the selected skill",
+      createdAt: Date.now(),
+      meta: { effectiveSkillsCsv: "lecture-read", effectiveSkillCount: 1 },
+    });
+
+    const assistantText = [
+      "Here is the cleaned-up note explanation.",
+      "",
+      "```obsidian-suggest",
+      JSON.stringify({
+        kind: "rewrite_followup",
+        summary: "Turn the cleaned-up explanation into a note patch.",
+        question: "Want me to apply this to the note now?",
+      }),
+      "```",
+    ].join("\n");
+
+    service.store.addMessage(tabId, {
+      id: "assistant-skill-final",
+      kind: "assistant",
+      text: assistantText,
+      createdAt: Date.now(),
+    });
+
+    const syncAssistantArtifacts = (
+      service as unknown as Record<string, (tabId: string, messageId: string, text: string) => Promise<void>>
+    )["syncAssistantArtifacts"];
+    await syncAssistantArtifacts.call(service, tabId, "assistant-skill-final", assistantText);
+
+    expect(service.getActiveTab()?.chatSuggestion?.kind).toBe("rewrite_followup");
   });
 
   it("treats Japanese affirmation as accepting a pending apply-to-note suggestion", async () => {
@@ -3366,6 +4338,62 @@ describe("CodexService sendPrompt skill context", () => {
     expect(systemMessages[0]?.text).toContain("Codex finished the turn without leaving a visible assistant reply.");
     expect(systemMessages[0]?.text).toContain("could not confirm a recoverable reply from session data");
     expect(systemMessages.some((message) => message.text.includes("retried on a fresh thread"))).toBe(false);
+  });
+
+  it("preserves panel skill continuation prompt rules across empty-reply retry", async () => {
+    const vaultRoot = await mkdtemp(join(tmpdir(), "obsidian-codex-study-continuation-empty-retry-"));
+    tempRoots.push(vaultRoot);
+
+    const service = new CodexService(
+      createApp(vaultRoot),
+      () => DEFAULT_SETTINGS,
+      () => "en",
+      null,
+      async () => {},
+      async () => {},
+    );
+
+    const tabId = service.getActiveTab()?.id;
+    if (!tabId) {
+      throw new Error("Missing tab");
+    }
+
+    vi.spyOn(service as never, "syncUsageFromSession").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "waitForTranscriptSyncRetryDelay").mockResolvedValue(undefined);
+    vi.spyOn(service as never, "syncTranscriptFromSession").mockResolvedValue("session_missing");
+    const runCodexStreamSpy = vi
+      .spyOn(service as never, "runCodexStream")
+      .mockResolvedValueOnce({ threadId: "thread-skill-empty-1" })
+      .mockResolvedValueOnce({ threadId: "thread-skill-empty-2" });
+
+    await ((service as unknown as { runTurn: PrivateRunTurn }).runTurn)(
+      tabId,
+      "2",
+      "skill",
+      "chat",
+      ["brainstorming", "paper-visualizer", "lecture-read"],
+      createNoteTurnContext(vaultRoot),
+      [],
+      vaultRoot,
+      "native",
+      "codex",
+      undefined,
+      false,
+      "2",
+      true,
+      false,
+      "turn-skill-empty-retry",
+      "user-skill-empty-retry",
+      false,
+      "error",
+      null,
+      true,
+    );
+
+    expect(runCodexStreamSpy).toHaveBeenCalledTimes(2);
+    const retryPrompt = (runCodexStreamSpy.mock.calls[1]?.[0] as { prompt?: string } | undefined)?.prompt ?? "";
+    expect(retryPrompt).toContain("This is a continuation of the same Panel Studio skill route.");
+    expect(retryPrompt).toContain("do not restart /brainstorming");
   });
 
   it("recovers a stalled turn on the same thread without compacting the conversation", async () => {

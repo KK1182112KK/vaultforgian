@@ -53,12 +53,7 @@ export function collectTurnRequestedSkillRefs(params: TurnSkillSelectionParams):
 
   const panelSelectedSkillRefs =
     params.tab?.activeStudyRecipeId
-      ? toSkillRefs([
-          ...(params.tab.activeStudySkillNames ?? []),
-          ...(params.tab.panelSessionOrigin?.panelId === params.tab.activeStudyRecipeId
-            ? params.tab.panelSessionOrigin.selectedSkillNames
-            : []),
-        ])
+      ? toSkillRefs(params.tab.activeStudySkillNames ?? [])
       : [];
 
   for (const value of panelSelectedSkillRefs) {

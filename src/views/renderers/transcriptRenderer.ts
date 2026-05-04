@@ -8,6 +8,7 @@ import {
   normalizeAssistantMathForMarkdown,
   prepareChatMarkdownForMathRender,
   renderPreparedChatMathInElement,
+  scrubChatMathPlaceholdersInElement,
 } from "../../util/chatMath";
 import { TRANSCRIPT_SOFT_COLLAPSE_WINDOW } from "../../util/conversationCompaction";
 import { clampTranscriptScrollTop, shouldStickTranscriptToBottom } from "../../util/transcriptScroll";
@@ -334,6 +335,8 @@ export class TranscriptRenderer {
     const copy = context.copy;
     const isSelectionContext = message.meta?.selectionContext === true;
     const isAttachmentSummary = message.meta?.attachmentSummary === true;
+    const isSkillTrace = message.kind === "system" && message.meta?.skillTrace === true;
+    const skillTraceDetails = typeof message.meta?.skillTraceDetails === "string" ? message.meta.skillTraceDetails.trim() : "";
     const systemTone = message.kind === "system" ? getSystemMessageTone(message.meta) : null;
     const msgEl = this.root.createDiv({
       cls: `obsidian-codex__message obsidian-codex__message-${message.kind}${isSelectionContext ? " obsidian-codex__message-selection" : ""}`,
@@ -350,8 +353,13 @@ export class TranscriptRenderer {
         `${message.pending ? " is-pending" : ""}` +
         `${isSelectionContext ? " is-selection-context" : ""}` +
         `${isAttachmentSummary ? " is-attachment-summary" : ""}` +
+        `${isSkillTrace ? " is-skill-trace" : ""}` +
         `${systemTone ? ` is-${systemTone}` : ""}`,
     });
+    if (skillTraceDetails) {
+      contentEl.title = skillTraceDetails;
+      contentEl.setAttribute("aria-label", `${message.text}. ${skillTraceDetails}`);
+    }
     const bodyEl = contentEl.createDiv({ cls: "obsidian-codex__message-body" });
     if (isSelectionContext) {
       const selectionHeader = bodyEl.createDiv({ cls: "obsidian-codex__selection-message-header" });
@@ -384,33 +392,37 @@ export class TranscriptRenderer {
       return;
     }
 
-    if (message.kind === "user") {
+    if (message.kind === "user" && message.meta?.skillTraceContinuation !== true) {
       this.renderCompactMetaChips(bodyEl, copy.workspace.panelSkills, message.meta?.effectiveSkillsCsv, "/");
     }
 
     const markdownEl = bodyEl.createDiv({ cls: "obsidian-codex__message-markdown" });
-    const preparedChatMath =
-      message.kind === "assistant" ? prepareChatMarkdownForMathRender(this.getRenderableMessageText(context, message)) : null;
-    const finalizeAssistantChatMath = preparedChatMath
-      ? () => renderPreparedChatMathInElement(markdownEl, preparedChatMath.placeholders)
+    const renderableText = this.getRenderableMessageText(context, message);
+    const preparedChatMath = message.kind === "assistant" ? prepareChatMarkdownForMathRender(renderableText) : null;
+    const finalizeChatMath =
+      message.kind === "assistant"
+        ? () => renderPreparedChatMathInElement(markdownEl, preparedChatMath?.placeholders ?? [])
+        : message.kind !== "user"
+          ? () => scrubChatMathPlaceholdersInElement(markdownEl)
+          : null;
+    const stopChatMathObserver = finalizeChatMath
+      ? this.observeAssistantChatMathMutations(markdownEl, finalizeChatMath)
       : null;
-    const stopAssistantChatMathObserver =
-      finalizeAssistantChatMath ? this.observeAssistantChatMathMutations(markdownEl, finalizeAssistantChatMath) : null;
     const renderPromise = MarkdownRenderer.render(
       context.app,
-      preparedChatMath?.markdown ?? this.getRenderableMessageText(context, message),
+      preparedChatMath?.markdown ?? renderableText,
       markdownEl,
       "",
       this.callbacks.markdownComponent,
     );
-    finalizeAssistantChatMath?.();
+    finalizeChatMath?.();
     void renderPromise.then(() => {
-      finalizeAssistantChatMath?.();
+      finalizeChatMath?.();
       window.requestAnimationFrame(() => {
-        finalizeAssistantChatMath?.();
+        finalizeChatMath?.();
       });
     }).catch(() => {
-      stopAssistantChatMathObserver?.();
+      stopChatMathObserver?.();
     });
 
     if (
@@ -1008,6 +1020,9 @@ function createMessageMetaSignature(meta: ChatMessage["meta"] | null | undefined
     sourcePath: typeof meta.sourcePath === "string" ? meta.sourcePath : null,
     attachmentCount: typeof meta.attachmentCount === "number" ? meta.attachmentCount : null,
     effectiveSkillsCsv: typeof meta.effectiveSkillsCsv === "string" ? meta.effectiveSkillsCsv : null,
+    skillTraceContinuation: meta.skillTraceContinuation === true,
+    skillTrace: meta.skillTrace === true,
+    skillTraceDetails: typeof meta.skillTraceDetails === "string" ? meta.skillTraceDetails : null,
     editOutcome: typeof meta.editOutcome === "string" ? meta.editOutcome : null,
     editTargetPath: typeof meta.editTargetPath === "string" ? meta.editTargetPath : null,
     editReviewReason: typeof meta.editReviewReason === "string" ? meta.editReviewReason : null,
@@ -1039,7 +1054,7 @@ function buildEditStatusLine(
     case "proposal_only":
       return context.copy.workspace.editProposalStatus(targetName);
     case "explanation_only":
-      return context.copy.workspace.editExplanationOnlyStatus;
+      return null;
     case "failed":
       return context.copy.workspace.editFailedStatus(targetName);
     default:

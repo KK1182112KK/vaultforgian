@@ -269,6 +269,7 @@ export interface WaitingState {
   orderedSkillNames?: string[];
   primarySkillName?: string | null;
   skillCount?: number;
+  suppressSkillPrefix?: boolean;
 }
 
 export interface ModelCatalogEntry {

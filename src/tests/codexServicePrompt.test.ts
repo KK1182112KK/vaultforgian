@@ -197,7 +197,7 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("# Deep Read");
   });
 
-  it("keeps selected skill orchestration above StudyTurnPlan guidance", () => {
+  it("keeps selected skill orchestration and adds visible question-first skill declaration rules", () => {
     const studyTurnPlan: StudyTurnPlan = {
       objective: "Continue a study review.",
       teachingMode: "coach",
@@ -246,9 +246,109 @@ describe("buildTurnPrompt", () => {
     expect(prompt).toContain("$brainstorming -> brainstorm");
     expect(prompt).toContain("$deep-read -> source_read");
     expect(prompt).toContain("$academic-paper -> execute");
-    expect(prompt).toContain("StudyTurnPlan");
-    expect(prompt.indexOf("Skill orchestration plan\n")).toBeLessThan(prompt.indexOf("StudyTurnPlan\n"));
+    expect(prompt).not.toContain("A hidden StudyTurnPlan");
+    expect(prompt).not.toContain("- Check question:");
+    expect(prompt).not.toContain("- Next action:");
     expect(prompt).toContain("Do not reveal the skill order, skill loading, or internal orchestration");
+    expect(prompt).toContain("Visible behavior required by a skill guide is not internal orchestration");
+    expect(prompt).toContain("First, I’ll use /brainstorming.");
+    expect(prompt).toContain("まず /brainstorming skill を使用します。");
+    expect(prompt).toContain("For a required brainstorming-style skill");
+    expect(prompt).toContain("unless the user explicitly asks for a direct answer without questions");
+    expect(prompt).not.toContain("unless the user's request is already fully specified");
+    expect(prompt).toContain("Do not emit `obsidian-suggest` while a selected skill is still asking questions");
+    expect(prompt).toContain("Do not offer an apply-to-note CTA during a skill turn unless the user explicitly asks");
+    expect(prompt).toContain("When Learning Mode is off, do not add study-coach `Check question`, `Next action`");
+  });
+
+  it("forbids rewrite/apply invitations in skill turns unless the user explicitly asks for note edits", () => {
+    const prompt = buildTurnPrompt(
+      "Help me study this lecture material.",
+      createContext({
+        targetNotePath: "Pythagorean Theorem.md",
+        sourceAcquisitionMode: "vault_note",
+        noteSourcePackText: "Target note source pack",
+        skillGuideText: "Requested skill guides:\n\nSkill guide: $brainstorming\nPath: /skills/brainstorming/SKILL.md",
+      }),
+      "skill",
+      ["brainstorming", "lecture-read"],
+      "chat",
+      false,
+      "manual",
+      { noteSuggestionPolicy: "eligible", turnIntentKind: "note_answer" },
+    );
+
+    expect(prompt).not.toContain("you may end with one short question asking whether to apply it to the note now");
+    expect(prompt).not.toContain("append a fenced `obsidian-suggest` JSON block");
+    expect(prompt).toContain("Do not mention note changes");
+    expect(prompt).toContain("Do not offer an apply-to-note CTA during a skill turn unless the user explicitly asks");
+    expect(prompt).toContain("Do not end the skill reply with unsolicited questions like");
+  });
+
+  it("treats panel skill continuations as the next phase after brainstorming choices", () => {
+    const prompt = buildTurnPrompt(
+      "2",
+      createContext({
+        targetNotePath: "Pythagorean Theorem.md",
+        sourceAcquisitionMode: "vault_note",
+        noteSourcePackText: "Target note source pack",
+        skillGuideText: [
+          "Requested skill guides:",
+          "",
+          "Skill guide: $brainstorming",
+          "Path: /skills/brainstorming/SKILL.md",
+          "",
+          "Skill guide: $lecture-read",
+          "Path: /skills/lecture-read/SKILL.md",
+          "",
+          "Skill guide: $paper-visualizer",
+          "Path: /skills/paper-visualizer/SKILL.md",
+        ].join("\n"),
+      }),
+      "skill",
+      ["brainstorming", "lecture-read", "paper-visualizer"],
+      "chat",
+      false,
+      "manual",
+      { turnIntentKind: "note_answer", skillContinuation: true },
+    );
+
+    expect(prompt).toContain("This is a continuation of the same Panel Studio skill route.");
+    expect(prompt).toContain("If the latest user message is a short numeric or option choice");
+    expect(prompt).toContain("do not restart /brainstorming");
+    expect(prompt).toContain("advance to the next useful skill phase");
+    expect(prompt).toContain("When $lecture-read is active");
+    expect(prompt).toContain("When $paper-visualizer is active");
+    expect(prompt).toContain("compact visual artifact");
+    expect(prompt).toContain("Complete the remaining route in this same reply");
+    expect(prompt).toContain("Do not stop after the brainstorming choice to ask for note rewrite/apply");
+    expect(prompt).toContain("Next, I’ll use /lecture-read, then /paper-visualizer for option 2.");
+    expect(prompt).toContain("This step is complete. Continue to the next study step?");
+    expect(prompt).toContain("ここまでで一段落です。次に進みますか？");
+    expect(prompt).toContain("This neutral skill checkpoint is allowed even when Learning Mode is off");
+    expect(prompt).toContain("It is not a note apply/rewrite CTA");
+  });
+
+  it("keeps rewrite/apply instructions available for explicit skill note-edit requests", () => {
+    const prompt = buildTurnPrompt(
+      "rewrite this note with /lecture-read",
+      createContext({
+        targetNotePath: "Pythagorean Theorem.md",
+        sourceAcquisitionMode: "vault_note",
+        noteSourcePackText: "Target note source pack",
+        skillGuideText: "Requested skill guides:\n\nSkill guide: $lecture-read\nPath: /skills/lecture-read/SKILL.md",
+      }),
+      "skill",
+      ["lecture-read"],
+      "chat",
+      false,
+      "manual",
+      { noteSuggestionPolicy: "eligible", turnIntentKind: "note_answer" },
+    );
+
+    expect(prompt).toContain("obsidian-suggest");
+    expect(prompt).toContain("rewrite_followup");
+    expect(prompt).toContain("unless the user explicitly asks to rewrite, edit, apply, add, or reflect content into a note");
   });
 
   it("can inject required, auto-selected, and skipped skill orchestration details", () => {

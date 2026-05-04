@@ -835,6 +835,18 @@ body.theme-light .obsidian-codex {
   border-color: color-mix(in srgb, var(--background-modifier-border) 68%, rgba(217, 119, 6, 0.3) 32%);
 }
 
+.obsidian-codex__message-content--system.is-skill-trace {
+  color: var(--obsidian-codex-text-soft);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 88%, rgba(var(--obsidian-codex-edge-rgb), 0.09) 12%);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 70%, rgba(var(--obsidian-codex-edge-rgb), 0.3) 30%);
+}
+
+.obsidian-codex__message-content--system.is-warning.is-skill-trace {
+  color: color-mix(in srgb, var(--text-warning, #d97706) 84%, var(--text-normal) 16%);
+  background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 86%, rgba(217, 119, 6, 0.12) 14%);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 68%, rgba(217, 119, 6, 0.3) 32%);
+}
+
 .obsidian-codex__message-content--system.is-error {
   color: var(--text-error);
   background: color-mix(in srgb, var(--obsidian-codex-panel-bg-soft) 82%, rgba(220, 53, 69, 0.12) 18%);

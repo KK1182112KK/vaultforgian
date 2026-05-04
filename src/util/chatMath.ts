@@ -172,6 +172,13 @@ export function renderPreparedChatMathInElement(root: HTMLElement, placeholders:
   scrubRemainingChatMathPlaceholders(root, placeholderByToken);
 }
 
+export function scrubChatMathPlaceholdersInElement(root: HTMLElement): void {
+  const placeholderByToken = new Map<string, ChatMathPlaceholder>();
+  replaceRenderedChatMathSentinels(root, placeholderByToken);
+  replaceRawChatMathSentinels(root, placeholderByToken);
+  scrubRemainingChatMathPlaceholders(root, placeholderByToken);
+}
+
 export function renderChatMathInElement(root: HTMLElement): void {
   const ownerDocument = getOwnerDocument(root);
   const walker = createTextWalker(root);
@@ -684,11 +691,22 @@ function isRenderableChatMath(content: string): boolean {
   return /\\[A-Za-z]+|\^|_|=|[+\-*/]|[A-Za-z]\d|\d[A-Za-z]/u.test(normalized);
 }
 
+function isRenderableDelimitedChatMath(content: string): boolean {
+  const normalized = content.trim();
+  if (!normalized || /^\d+(?:\.\d+)?$/u.test(normalized) || isBareNumericDashLabel(normalized)) {
+    return false;
+  }
+  if (/^[A-Za-z]$/u.test(normalized)) {
+    return true;
+  }
+  return isRenderableChatMath(normalized);
+}
+
 function getDelimitedChatMathSegment(content: string, display: boolean): ChatMathSegment | null {
   if (shouldUnwrapChatMathDelimiters(content)) {
     return { kind: "text", text: content.trim() };
   }
-  if (isRenderableChatMath(content)) {
+  if (isRenderableDelimitedChatMath(content)) {
     return { kind: "math", text: content, display };
   }
   return null;

@@ -623,6 +623,81 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(text).toContain("Area relationship  should not leak.");
   });
 
+  it("scrubs truncated My Brain Sync placeholder leaks from delayed assistant renderer mutations", async () => {
+    const delayedWrites: Array<() => void> = [];
+    vi.spyOn(MarkdownRenderer, "render").mockImplementation(async (_app, _markdown, element) => {
+      delayedWrites.push(() => {
+        element.textContent = [
+          "No note changes yet.",
+          "",
+          "Let",
+          "",
+          "NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX0TC",
+          "",
+          "Then",
+          "",
+          "NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX1TC",
+        ].join("\n");
+      });
+    });
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "No note changes yet.\n\nLet $s^2 - t^2 = (s-t)(s+t)$.",
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(delayedWrites).toHaveLength(1);
+    delayedWrites[0]!();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const markdown = root.querySelector(".obsidian-codex__message-markdown") as HTMLElement;
+    const text = markdown.textContent ?? "";
+    expect(text).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(text).toContain("Let");
+    expect(text).toContain("Then");
+  });
+
+  it("scrubs placeholder leaks from non-user markdown messages without rendering user math", async () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "system",
+        text: "System status NFCODEXCHATMATH507a35bfd41194593bc204b2c84883dX0TC done.",
+        createdAt: 1,
+      },
+      {
+        id: "m2",
+        kind: "user",
+        text: "$a^2 + b^2 = c^2$",
+        createdAt: 2,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+    await Promise.resolve();
+
+    const systemText = root.querySelector(".obsidian-codex__message-content--system .obsidian-codex__message-markdown")
+      ?.textContent ?? "";
+    const userText = root.querySelector(".obsidian-codex__message-content--user .obsidian-codex__message-markdown")
+      ?.textContent ?? "";
+    expect(systemText).not.toMatch(CHAT_MATH_PLACEHOLDER_RE);
+    expect(systemText).toContain("System status  done.");
+    expect(userText).toContain("$a^2 + b^2 = c^2$");
+    expect(root.querySelector(".obsidian-codex__message-content--user .obsidian-codex__chat-math")).toBeNull();
+  });
+
   it("does not convert user-authored markdown math in chat bubbles", () => {
     const state = createState();
     state.tabs[0]!.messages = [
@@ -1320,6 +1395,29 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Read this paper carefully.");
   });
 
+  it("hides compact skill metadata on continuation user messages", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "user",
+        text: "2",
+        createdAt: 1,
+        meta: {
+          effectiveSkillsCsv: "brainstorming,lecture-read,paper-visualizer",
+          effectiveSkillCount: 3,
+          skillTraceContinuation: true,
+        },
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+    renderer.render(createContext(state));
+
+    expect(root.querySelector(".obsidian-codex__message-skill-meta")).toBeNull();
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("2");
+  });
+
   it("does not render removed modifier metadata on a user message", () => {
     const state = createState();
     state.tabs[0]!.messages = [
@@ -1381,6 +1479,97 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(contents[1]?.classList.contains("is-success")).toBe(true);
     expect(contents[2]?.classList.contains("is-warning")).toBe(true);
     expect(contents[3]?.classList.contains("is-error")).toBe(true);
+  });
+
+  it("renders persistent skill trace details on system messages", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "system",
+        text: "Skill route: /brainstorming -> /lecture-read -> /paper-visualizer (+1)",
+        createdAt: 1,
+        meta: {
+          skillTrace: true,
+          skillTraceDetails:
+            "required: /brainstorming, /lecture-read, /homework; auto-selected: /paper-visualizer; resolved: /brainstorming, /lecture-read, /paper-visualizer, /homework; missing: none",
+        },
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    const content = root.querySelector(".obsidian-codex__message-content--system") as HTMLElement | null;
+    expect(content?.classList.contains("is-skill-trace")).toBe(true);
+    expect(content?.title).toContain("required: /brainstorming");
+    expect(content?.title).toContain("auto-selected: /paper-visualizer");
+    expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Skill route:");
+  });
+
+  it("does not show raw no-note-change status in skill-only assistant replies", () => {
+    const state = createState();
+    state.tabs[0]!.runtimeMode = "skill";
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "No note changes yet.\n\nFirst, what outcome do you want from this study session?",
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    const text = root.querySelector(".obsidian-codex__message-markdown")?.textContent ?? "";
+    expect(text).not.toContain("No note changes yet.");
+    expect(text).toContain("First, what outcome do you want from this study session?");
+  });
+
+  it("does not synthesize no-note-change status for explanation-only assistant messages", () => {
+    const state = createState();
+    state.tabs[0]!.runtimeMode = "skill";
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "First, I’ll use /brainstorming.\n\nWhat outcome do you want from this study session?",
+        createdAt: 1,
+        meta: { editOutcome: "explanation_only" },
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    const text = root.querySelector(".obsidian-codex__message-markdown")?.textContent ?? "";
+    expect(text).not.toContain("No note changes yet.");
+    expect(text).toContain("First, I’ll use /brainstorming.");
+  });
+
+  it("renders explicit single-letter assistant math instead of showing raw dollar delimiters", () => {
+    const state = createState();
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: "The hypotenuse is $c$ and the angle is $90^\\circ$.",
+        createdAt: 1,
+      },
+    ];
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    const text = root.querySelector(".obsidian-codex__message-markdown")?.textContent ?? "";
+    expect(text).not.toContain("$c$");
+    expect(text).not.toContain("$90^\\circ$");
+    expect(root.querySelectorAll(".obsidian-codex__chat-math")).toHaveLength(2);
   });
 
   it("keeps untoned system message CSS neutral instead of using the error color", () => {
@@ -1450,6 +1639,37 @@ describe("TranscriptRenderer avatar safety", () => {
     expect(root.querySelector(".obsidian-codex__message-markdown")?.textContent).toContain("Want me to apply this to the note now?");
     const actions = Array.from(root.querySelectorAll(".obsidian-codex__chat-suggestion-actions button")).map((element) => element.textContent);
     expect(actions).toEqual(["Apply to note", "Skip"]);
+  });
+
+  it("does not render Apply to note actions when a skill assistant message has no rewrite suggestion", () => {
+    const state = createState();
+    state.tabs[0]!.runtimeMode = "skill";
+    state.tabs[0]!.messages = [
+      {
+        id: "m1",
+        kind: "assistant",
+        text: [
+          "First, I’ll use /brainstorming.",
+          "",
+          "What do you want first for Pythagorean Theorem.md?",
+          "",
+          "1. A concise study guide",
+          "2. Practice questions with answers",
+          "3. A clearer rewrite of the note",
+        ].join("\n"),
+        createdAt: 1,
+      },
+    ];
+    state.tabs[0]!.chatSuggestion = null;
+    const root = document.createElement("div");
+    const renderer = new TranscriptRenderer(root, createCallbacks());
+
+    renderer.render(createContext(state));
+
+    const text = root.querySelector(".obsidian-codex__message-markdown")?.textContent ?? "";
+    expect(text).toContain("First, I’ll use /brainstorming.");
+    expect(text).not.toContain("Want me to apply this to the note now?");
+    expect(Array.from(root.querySelectorAll(".obsidian-codex__chat-suggestion-actions button")).map((element) => element.textContent)).toEqual([]);
   });
 
   it("renders polluted internal rewrite user prompts as the short reflect label", () => {

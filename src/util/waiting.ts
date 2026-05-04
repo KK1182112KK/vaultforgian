@@ -4,6 +4,7 @@ export interface WaitingCopyOptions {
   focus?: WaitingFocus | null;
   locale?: "en" | "ja" | null;
   skillUsage?: WaitingSkillUsage | null;
+  suppressSkillPrefix?: boolean;
 }
 
 export interface WaitingSkillUsage {
@@ -244,13 +245,20 @@ export function pickWaitingCopy(
   options: WaitingCopyOptions = {},
 ): string {
   const locale = normalizeWaitingLocale(options.locale);
-  const skillSummary = resolveSkillUsageSummary(options.skillUsage, locale);
+  const suppressSkillPrefix = options.suppressSkillPrefix === true;
+  const skillSummary = suppressSkillPrefix ? null : resolveSkillUsageSummary(options.skillUsage, locale);
   if (phase === "tools" && options.focus) {
     const focusedPhrase = FOCUSED_WAITING_COPY[options.focus][locale];
     return skillSummary ? `${skillSummary} · ${focusedPhrase}` : focusedPhrase;
   }
   const phrases = WAITING_COPY[locale][phase];
-  const prefix = skillSummary ?? (mode === "skill" && phase === "tools" ? (locale === "en" ? "Calling skill" : "skill を呼び出しています") : "");
+  const prefix =
+    skillSummary ??
+    (!suppressSkillPrefix && mode === "skill" && phase === "tools"
+      ? locale === "en"
+        ? "Calling skill"
+        : "skill を呼び出しています"
+      : "");
   const seed = hash(`${phase}:${mode}:${entropy}`);
   const phrase = phrases[seed % phrases.length] ?? phrases[0] ?? (locale === "en" ? "Thinking" : "考えています");
   return prefix ? `${prefix} · ${phrase}` : phrase;
@@ -305,5 +313,6 @@ export function resolveWaitingStateText(
     focus,
     locale: nextLocale,
     skillUsage: waitingState,
+    suppressSkillPrefix: waitingState.suppressSkillPrefix === true,
   });
 }

@@ -4,6 +4,10 @@ import {
   normalizeVisibleUserPromptText,
   sanitizeOperationalAssistantText,
 } from "../util/assistantChatter";
+import {
+  isTrailingNoteReflectionInvitationText,
+  stripTrailingNoteReflectionInvitation,
+} from "../util/noteReflectionGuards";
 
 describe("sanitizeOperationalAssistantText", () => {
   it("drops status-only troubleshooting chatter blocks", () => {
@@ -177,5 +181,27 @@ describe("sanitizeOperationalAssistantText", () => {
 
     expect(isInternalRewriteFollowupPrompt(prompt)).toBe(true);
     expect(normalizeVisibleUserPromptText(prompt, "Apply to note")).toBe("Apply to note");
+  });
+});
+
+describe("note reflection invitation guard", () => {
+  it("strips note rewrite/apply invitations but preserves neutral skill checkpoints", () => {
+    expect(isTrailingNoteReflectionInvitationText("Want me to rewrite this note now?")).toBe(true);
+    expect(isTrailingNoteReflectionInvitationText("This step is complete. Continue to the next study step?")).toBe(false);
+    expect(isTrailingNoteReflectionInvitationText("ここまでで一段落です。次に進みますか？")).toBe(false);
+
+    expect(
+      stripTrailingNoteReflectionInvitation(
+        ["Summary body.", "", "Want me to apply this to the note now?"].join("\n"),
+      ),
+    ).toBe("Summary body.");
+    expect(
+      stripTrailingNoteReflectionInvitation(
+        ["Summary body.", "", "This step is complete. Continue to the next study step?"].join("\n"),
+      ),
+    ).toBe(["Summary body.", "", "This step is complete. Continue to the next study step?"].join("\n"));
+    expect(
+      stripTrailingNoteReflectionInvitation(["要約本文。", "", "ここまでで一段落です。次に進みますか？"].join("\n")),
+    ).toBe(["要約本文。", "", "ここまでで一段落です。次に進みますか？"].join("\n"));
   });
 });

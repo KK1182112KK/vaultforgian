@@ -88,23 +88,18 @@ function shouldUseLearningMode(input: StudyLayerPromptOverlayInput): boolean {
   return Boolean(input.context.studyWorkflow) || matchesAnyPattern(input.prompt, EXPLANATION_PATTERNS);
 }
 
-function shouldUseStudyContract(input: StudyLayerPromptOverlayInput, learningModeActive: boolean): boolean {
+function shouldUseStudyContract(input: StudyLayerPromptOverlayInput, studyCoachActive: boolean): boolean {
   if (input.composeMode !== "chat" || input.allowVaultWrite || promptAllowsVaultWrite(input.prompt)) {
     return false;
   }
-  if (learningModeActive) {
-    return true;
-  }
-  return Boolean(
-    input.context.studyWorkflow ||
-      input.context.workflowText ||
-      input.context.paperStudyRuntimeOverlayText ||
-      input.context.paperStudyGuideText,
-  );
+  return studyCoachActive;
 }
 
-function shouldAttachStudyTurnPlan(input: StudyLayerPromptOverlayInput): boolean {
+function shouldAttachStudyTurnPlan(input: StudyLayerPromptOverlayInput, studyCoachActive: boolean): boolean {
   if (!input.studyTurnPlan || input.composeMode !== "chat" || input.allowVaultWrite || promptAllowsVaultWrite(input.prompt)) {
+    return false;
+  }
+  if (!studyCoachActive) {
     return false;
   }
   return input.turnIntentKind !== "smalltalk" && input.turnIntentKind !== "note_edit" && input.turnIntentKind !== "plan";
@@ -121,8 +116,10 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
   const context = input.context;
   const active = isStudyLayerActiveForTurn(context);
   const learningModeActive = shouldUseLearningMode(input);
-  const studyContractActive = shouldUseStudyContract(input, learningModeActive);
-  const studyTurnPlanActive = shouldAttachStudyTurnPlan(input);
+  const activeStudyQuiz = hasActiveStudyQuiz(context);
+  const studyCoachActive = learningModeActive || activeStudyQuiz;
+  const studyContractActive = shouldUseStudyContract(input, studyCoachActive);
+  const studyTurnPlanActive = shouldAttachStudyTurnPlan(input, studyCoachActive);
 
   if (!active) {
     return { statusLines, instructions, blocks, learningModeActive };
@@ -135,7 +132,6 @@ export function buildStudyLayerPromptOverlay(input: StudyLayerPromptOverlayInput
 
   if (learningModeActive) {
     const directAnswerRequested = matchesAnyPattern(input.prompt, DIRECT_ANSWER_PATTERNS);
-    const activeStudyQuiz = hasActiveStudyQuiz(context);
     if (directAnswerRequested) {
       instructions.push(
         "Learning mode is active for this tab. Use the attached LearningCoachPlan when present. Because the user explicitly asked for the direct answer in this turn, Give the direct answer first.",

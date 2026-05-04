@@ -84,4 +84,26 @@ describe("turnSkillSelection", () => {
 
     expect(refs).toEqual(["$deep-read"]);
   });
+
+  it("does not revive stale panelSessionOrigin skills for the active panel", () => {
+    const refs = collectTurnRequestedSkillRefs({
+      explicitSkillRefs: [],
+      mentionSkillRefs: [],
+      workflowSkillRefs: [],
+      tab: createTabState({
+        activeStudyRecipeId: "panel-1",
+        activeStudySkillNames: ["lecture-read", "paper-visualizer"],
+        panelSessionOrigin: {
+          panelId: "panel-1",
+          selectedSkillNames: ["homework"],
+          promptSnapshot: "Old prompt",
+          awaitingCompletionSignal: false,
+          lastAssistantMessageId: null,
+          startedAt: 1,
+        },
+      }),
+    });
+
+    expect(refs).toEqual(["$lecture-read", "$paper-visualizer"]);
+  });
 });

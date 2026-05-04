@@ -14,6 +14,7 @@ import {
   formatSkillOrchestrationPlanForPrompt,
   type SkillOrchestrationPlan,
 } from "../util/skillOrchestration";
+import { shouldSuppressSkillNoteSuggestions } from "../util/noteReflectionGuards";
 
 function buildVisibleLanguageInstructions(locale: SupportedLocale): string[] {
   const language = locale === "ja" ? "Japanese" : "English";
@@ -41,11 +42,13 @@ export function buildTurnPrompt(
     diagramGeneration?: boolean;
     studyTurnPlan?: StudyTurnPlan | null;
     skillOrchestrationPlan?: SkillOrchestrationPlan | null;
+    skillContinuation?: boolean;
     turnIntentKind?: AgentTurnIntentKind | null;
     locale?: SupportedLocale;
   } = {},
 ): string {
-  const noteSuggestionPolicy = options.noteSuggestionPolicy ?? (allowVaultWrite ? "eligible" : "never");
+  const requestedNoteSuggestionPolicy = options.noteSuggestionPolicy ?? (allowVaultWrite ? "eligible" : "never");
+  const noteSuggestionPolicy = shouldSuppressSkillNoteSuggestions(mode, prompt) ? "never" : requestedNoteSuggestionPolicy;
   const locale = options.locale ?? "en";
   const skillOrchestrationPlan =
     options.skillOrchestrationPlan ??
@@ -184,7 +187,67 @@ export function buildTurnPrompt(
       "Do not ignore any required skill. If a required skill seems only partially relevant, apply its useful constraints as supporting guidance instead of dropping it. Auto-selected skills are high-confidence support; use them when they help the request and skip only if a safety/source contract conflicts.",
     );
     instructions.push(
-      "Do not reveal the skill order, skill loading, or internal orchestration in the visible reply. Do not start the visible reply with note-change status text such as `No note changes yet` unless you are reporting an actual patch/apply result.",
+      "Visible behavior required by a skill guide is not internal orchestration. If a selected skill guide requires asking clarifying questions, brainstorming options, presenting tradeoffs, or confirming the approach before answering, do that visible process before the final answer instead of bypassing it for a concise direct reply.",
+    );
+    instructions.push(
+      "A one-line visible skill process declaration is not skill loading narration. In a multi-skill turn, if the first visible process is a question-first skill such as $brainstorming, put one line immediately before the first question: English example `First, I’ll use /brainstorming.`; Japanese example `まず /brainstorming skill を使用します。`.",
+    );
+    instructions.push(
+      "For a required brainstorming-style skill, after that one-line declaration, start with the smallest useful goal-framing question or option set required by the guide unless the user explicitly asks for a direct answer without questions.",
+    );
+    instructions.push(
+      "On the first turn of a question-first $brainstorming route, present a compact numbered option set and stop after the question; wait for the user choice before running downstream source-reading or visualizer skills.",
+    );
+    if (skillNames.includes("lecture-read")) {
+      instructions.push(
+        "When $lecture-read is active, show its visible deliverable as grounded lecture-note reading: main topics, key concepts/formulas, and confusing points or gaps from the source.",
+      );
+    }
+    if (skillNames.some((name) => /(?:visuali[sz]er|visual|diagram|map|flowchart)/iu.test(name))) {
+      instructions.push(
+        "When $paper-visualizer is active, or another visualizer skill is active, show its visible deliverable by including exactly one compact visual artifact: a small relationship map, markdown table, flow, diagram outline, or concept map. Do not merely summarize in prose.",
+      );
+    }
+    instructions.push(
+      "Do not emit `obsidian-suggest` while a selected skill is still asking questions, presenting numbered options, brainstorming choices, or waiting for the user to choose a direction.",
+    );
+    instructions.push(
+      "Do not offer an apply-to-note CTA during a skill turn unless the user explicitly asks to rewrite, edit, apply, add, or reflect content into a note.",
+    );
+    instructions.push(
+      'Do not end the skill reply with unsolicited questions like "Want me to rewrite this note now?", "Want me to apply this to the note now?", or "この内容をノートに反映しますか？".',
+    );
+    instructions.push(
+      "When Learning Mode is off, do not add study-coach `Check question`, `Next action`, forced scaffold, or quiz-like comprehension checks. This does not block clarifying questions or brainstorming questions required by the selected skill guide.",
+    );
+    if (options.skillContinuation) {
+      instructions.push(
+        "This is a continuation of the same Panel Studio skill route. The plugin already showed the persistent skill trace in an earlier turn, so do not repeat the full route in the visible reply.",
+      );
+      instructions.push(
+        "If the latest user message is a short numeric or option choice responding to a prior /brainstorming menu, treat that choice as the completed brainstorming decision; do not restart /brainstorming or ask the same menu again.",
+      );
+      instructions.push(
+        "After accepting the choice, advance to the next useful skill phase in the existing route. If a visible transition helps, use one short line like `Next, I’ll use /lecture-read, then /paper-visualizer for option 2.` before the substance.",
+      );
+      instructions.push(
+        "Complete the remaining route in this same reply instead of ending immediately after the brainstorming choice.",
+      );
+      instructions.push(
+        "After completing the remaining route, end with one short neutral skill checkpoint, not a note edit CTA. English example: `This step is complete. Continue to the next study step?` Japanese example: `ここまでで一段落です。次に進みますか？`.",
+      );
+      instructions.push(
+        "This neutral skill checkpoint is allowed even when Learning Mode is off because it controls the selected skill session, not study-coach quizzing.",
+      );
+      instructions.push(
+        "It is not a note apply/rewrite CTA. The checkpoint may offer up to three next study options such as examples, practice, or visual reorganization, but it must not mention applying, rewriting, reflecting, or adding content to a note.",
+      );
+      instructions.push(
+        "Do not stop after the brainstorming choice to ask for note rewrite/apply; continue the selected skill route unless the user explicitly requested a note edit.",
+      );
+    }
+    instructions.push(
+      "Do not reveal the skill order, skill loading, or internal orchestration in full in the visible reply; the plugin renders that trace separately. Mention only the active skill when its visible process starts or changes. Do not start the visible reply with note-change status text such as `No note changes yet` unless you are reporting an actual patch/apply result.",
     );
   }
 

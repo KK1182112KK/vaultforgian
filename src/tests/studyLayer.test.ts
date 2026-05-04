@@ -114,7 +114,7 @@ describe("StudyLayer prompt overlays", () => {
     expect(overlay.blocks).toContain("Study coach carry-forward:\n- Weak point: convolution.");
   });
 
-  it("adds contract guidance for explicit study workflow turns even when learning mode is off", () => {
+  it("does not add study-coach contract guidance when learning mode is off", () => {
     const context = createContext({
       studyWorkflow: "homework",
       workflowText: "Active study workflow: Homework\nResponse contract:",
@@ -127,9 +127,14 @@ describe("StudyLayer prompt overlays", () => {
       learningMode: false,
       skillNames: [],
       mode: "normal",
+      studyTurnPlan: STUDY_TURN_PLAN,
     });
 
-    expect(overlay.instructions.join("\n")).toContain("obsidian-study-contract");
+    expect(overlay.instructions.join("\n")).not.toContain("obsidian-study-contract");
+    expect(overlay.instructions.join("\n")).not.toContain("StudyTurnPlan");
+    expect(overlay.instructions.join("\n")).not.toContain("one short hint");
+    expect(overlay.instructions.join("\n")).not.toContain("understanding-check question");
+    expect(overlay.blocks.join("\n")).not.toContain("StudyTurnPlan");
     expect(overlay.learningModeActive).toBe(false);
   });
 
@@ -157,6 +162,8 @@ describe("StudyLayer prompt overlays", () => {
 
     expect(overlay.instructions.join("\n")).toContain("A paper-study runtime overlay is attached for this turn.");
     expect(overlay.instructions.join("\n")).toContain("A paper-study guide is attached for this turn.");
+    expect(overlay.instructions.join("\n")).not.toContain("obsidian-study-contract");
+    expect(overlay.blocks.join("\n")).not.toContain("StudyTurnPlan");
     expect(overlay.blocks).toContain("Paper-study runtime overlay:\n- SOURCE INGESTION IS CLOSED.");
     expect(overlay.blocks).toContain("Paper study guide\n- Separate claims from interpretation.");
   });

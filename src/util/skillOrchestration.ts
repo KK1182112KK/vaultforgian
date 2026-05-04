@@ -163,6 +163,19 @@ export function classifySkillOrchestrationPhase(definition: SkillOrchestrationDe
   if (includesAny(text, [/\bfinishing\b/u, /\bfinish\b/u, /\bcompletion\b/u, /\brelease\b/u])) {
     return "finish";
   }
+  if (
+    includesAny(text, [
+      /\b(?:paper-)?visuali[sz]er\b/u,
+      /\bvisuali[sz](?:e|ation|ing)?\b/u,
+      /\bvisual\b/u,
+      /\bdiagram(?:ming)?\b/u,
+      /\bflowchart\b/u,
+      /\b(?:concept|mind)[-\s]?map\b/u,
+      /\bmap(?:ping)?\b/u,
+    ])
+  ) {
+    return "execute";
+  }
   if (includesAny(text, [/\bacademic-paper\b/u, /\bpaper-writer\b/u, /\bwriter\b/u, /\bbuild(?:er|ing)?\b/u, /\bimplement\b/u, /\bcreate\b/u, /\bedit\b/u, /\bexecute\b/u])) {
     return "execute";
   }

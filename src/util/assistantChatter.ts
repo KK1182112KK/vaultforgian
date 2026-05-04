@@ -61,6 +61,8 @@ const OPERATIONAL_STATUS_PATTERNS = [
   /ローカルアクセスがまだ通っていません/iu,
   /vault 内のファイルにアクセスできない/iu,
   /現時点ではまだ .*読めていません/iu,
+  /^No note changes yet\.?$/iu,
+  /^まだノート変更はありません。?$/u,
 ];
 
 const FUTURE_PATCH_PROMISE_PATTERNS = [
@@ -192,6 +194,13 @@ function stripProposalRepairScaffolding(text: string): string {
   return kept.join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
 
+function stripLeadingNoNoteChangeStatus(text: string): string {
+  return normalizeNewlines(text)
+    .replace(/^\s*No note changes yet\.?\s*(?:\n+|\s+)/iu, "")
+    .replace(/^\s*まだノート変更はありません。?\s*(?:\n+|\s+)/u, "")
+    .trim();
+}
+
 interface MarkdownFence {
   marker: "`" | "~";
   length: number;
@@ -285,7 +294,7 @@ export function normalizeVisibleUserPromptText(
 }
 
 export function sanitizeOperationalAssistantText(text: string): string | null {
-  const sanitizedText = stripProposalRepairScaffolding(text);
+  const sanitizedText = stripLeadingNoNoteChangeStatus(stripProposalRepairScaffolding(text));
   const blocks = splitBlocksOutsideCodeFences(sanitizedText);
 
   if (blocks.length === 0) {

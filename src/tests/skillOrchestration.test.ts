@@ -48,6 +48,26 @@ describe("skillOrchestration", () => {
     expect(plan?.supportingSkillNames).toEqual(["unknown-helper"]);
   });
 
+  it("treats visualizer skills as output skills after source reading", () => {
+    expect(classifySkillOrchestrationPhase({ name: "paper-visualizer", description: "Visualize paper concepts." })).toBe("execute");
+    expect(classifySkillOrchestrationPhase({ name: "concept-map", description: "Create a concept map diagram." })).toBe("execute");
+
+    const plan = buildSkillOrchestrationPlan(["brainstorming", "paper-visualizer", "lecture-read"], {
+      definitions: [
+        { name: "brainstorming", description: "Generate options first." },
+        { name: "paper-visualizer", description: "Create compact visual maps and diagrams." },
+        { name: "lecture-read", description: "Read lecture notes and extract key concepts." },
+      ],
+    });
+
+    expect(plan?.selectedSkills).toEqual(["brainstorming", "paper-visualizer", "lecture-read"]);
+    expect(plan?.orderedSteps.map((step) => `${step.skillName}:${step.phase}`)).toEqual([
+      "brainstorming:brainstorm",
+      "lecture-read:source_read",
+      "paper-visualizer:execute",
+    ]);
+  });
+
   it("formats a hidden prompt block without dropping unknown support skills", () => {
     const plan = buildSkillOrchestrationPlan(["unknown-helper"], {
       definitions: [{ name: "unknown-helper", description: "Personal helper." }],
